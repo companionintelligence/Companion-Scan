@@ -103,7 +103,6 @@ import {
   placeWorldSlugs,
   removeLeftoverPlaceWorlds,
   removePlaceMedia,
-  removePlaceWorlds,
   uploadScansOfPlace,
   worldHoldsScansOnDisk,
   worldIsInUse,
@@ -2745,8 +2744,14 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
 async function writeWorldUnlocked(world: WorldProject): Promise<void> {
   world.updatedAt = new Date().toISOString()
   const tmp = `${worldPath(world.shareSlug)}.${crypto.randomUUID()}.tmp`
-  await Deno.writeTextFile(tmp, JSON.stringify(world, null, 2))
-  await Deno.rename(tmp, worldPath(world.shareSlug))
+  try {
+    await Deno.writeTextFile(tmp, JSON.stringify(world, null, 2))
+    await Deno.rename(tmp, worldPath(world.shareSlug))
+  } catch (err) {
+    // A write that failed leaves no copy of the whole world behind: no deletion path would look for it.
+    await Deno.remove(tmp).catch(() => {})
+    throw err
+  }
 }
 
 async function synthesizeWorld(slug: string, projectId: string | null = null): Promise<WorldProject> {
@@ -3858,8 +3863,14 @@ async function _runExportWorldJob(slug: string, jobId: string): Promise<void> {
     const exported = await composeWorldExport(world, scanGlbs)
     const path = worldExportPath(slug)
     const tmp = `${path}.${crypto.randomUUID()}.tmp`
-    await Deno.writeFile(tmp, exported.bytes)
-    await Deno.rename(tmp, path)
+    try {
+      await Deno.writeFile(tmp, exported.bytes)
+      await Deno.rename(tmp, path)
+    } catch (err) {
+      // A failed write leaves no copy of the scans' geometry behind: no deletion path would look for it.
+      await Deno.remove(tmp).catch(() => {})
+      throw err
+    }
 
     const warnings = [...exported.warnings, ...unreadable]
     const summary = `Exported ${exported.scanCount} scan${exported.scanCount === 1 ? '' : 's'} and ` +
@@ -6502,10 +6513,15 @@ app.delete('/projects/:id', async (c) => {
       }
       const childCount = projects.filter(project => project.parentProjectId === id).length
       if (childCount > 0) return { result: { deleted: false, childCount, referencePhotosRemoved: false, worldsRemoved: 0 }, save: false }
+      // The same care as for a Place that is gone: a world that still lists a scan whose file is there, under another Place, is waiting to
+      // hand that scan's notes and finished jobs to the world of the Place it is filed under, and is kept until it has.
+      const left = await removeGonePlaceWorlds(id, (world) => worldHoldsScansOnDisk(world, SCANS_DIR))
+      if (left.kept > 0) {
+        return { result: { deleted: false, childCount: 0, referencePhotosRemoved: false, worldsRemoved: left.removed, handOverWaiting: true }, save: false }
+      }
       const referencePhotosRemoved = await removePlaceMedia(PROJECT_MEDIA_DIR, id)
-      const worldsRemoved = await removePlaceWorlds(WORLDS_DIR, id)
       projects.splice(idx, 1)
-      return { result: { deleted: true, childCount: 0, referencePhotosRemoved, worldsRemoved }, save: true, removesPlace: true }
+      return { result: { deleted: true, childCount: 0, referencePhotosRemoved, worldsRemoved: left.removed }, save: true, removesPlace: true }
     })
     if (deleted.childCount > 0) {
       return c.json({ error: 'project has linked child Places', childCount: deleted.childCount }, 409)

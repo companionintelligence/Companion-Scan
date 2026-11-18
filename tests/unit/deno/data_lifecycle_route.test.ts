@@ -752,6 +752,36 @@ Deno.test('a scan with a file name near the limit of the file system can be dele
   }
 })
 
+Deno.test('deleting a Place that is in the registry keeps its world while a scan\'s notes in it are still to be handed to another Place\'s world, and hands them over once that can take them', async () => {
+  const server = await startServer({
+    seed: async (dirs) => {
+      await writeRegistry(dirs, [secretPlace('proj-a'), placeRecord('proj-z', 'Annexe')])
+      await writeScan(dirs, ZETA, sidecar('proj-z', 'Zeta', false))
+      const worldId = 'world-project-proj-a'
+      await writeWorld(dirs, secretWorld('proj-a', [row(ZETA, 'proj-a', false)], {
+        comments: [{ commentId: 'c-zeta', worldId, body: 'the annexe\'s window', scanId: scanIdOf(ZETA), actorId: 'local', actorRole: 'local', createdAt: AT }],
+        editPatches: [],
+      }))
+      await Deno.writeTextFile(`${dirs.worlds}/project-proj-z.json`, '{"worldId":"world-project-proj-z","scans":[')
+    },
+  })
+  try {
+    const refused = await server.send('DELETE', '/projects/proj-a')
+    assertEquals(refused.status, 409, refused.text)
+    assertEquals((await server.registry()).some((place) => place.projectId === 'proj-a'), true, 'the Place is kept, to be deleted once its world can be')
+    assert(await exists(`${server.dirs.worlds}/project-proj-a.json`), 'and so is its world, with the scan\'s note in it')
+    assertEquals(idsOf((await server.worldFile('project-proj-a')).comments ?? []).includes('c-zeta'), true)
+
+    await writeWorld(server.dirs, worldOf('proj-z'))
+    const done = await server.send('DELETE', '/projects/proj-a')
+    assertEquals(done.status, 200, done.text)
+    assertEquals(idsOf((await server.worldFile('project-proj-z')).comments ?? []), ['c-zeta'], 'the scan\'s note was handed over before the world went')
+    assertFalse(await exists(`${server.dirs.worlds}/project-proj-a.json`))
+  } finally {
+    await server.stop()
+  }
+})
+
 // ── A world a merge of an earlier build left behind ─────────────────────────────────────────────
 
 /** The world of a Place that is not in the registry (an earlier build's merge took it out and left its world), with its export, beside a live Place's world. */
