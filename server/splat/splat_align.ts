@@ -503,6 +503,8 @@ export async function runSplatAlign(opts: SplatAlignRunOptions): Promise<SplatAl
   //    scale from those is precisely the unbacked claim ADR 0005 rule 3
   //    forbids, so refuse and say what to do about it.
   const sessionToProject = opts.calibration?.sessionToProject
+  // A calibration that says its scan is in no Place frame places it by its own two points: the metres are real, the Place is not named.
+  const outsideFrame = (opts.calibration as { outsidePlaceFrame?: unknown } | null | undefined)?.outsidePlaceFrame === true
   if (!opts.calibration || opts.calibration.status === 'uncalibrated' || !isMatrix16(sessionToProject)) {
     return await finish(manifestPath, {
       ...base,
@@ -632,7 +634,10 @@ export async function runSplatAlign(opts: SplatAlignRunOptions): Promise<SplatAl
     // path constrains every degree of freedom at once. Stated rather than left
     // absent so a consumer can branch on one field across both tiers instead of
     // treating "no `determined` block" as a third, ambiguous case.
-    determined: { scale: true, up: true, heading: true, origin: true },
+    //
+    // Except for a scan the commit left outside the Place's frame (a bypassed floor check, `outsidePlaceFrame` on its calibration):
+    // its `sessionToProject` is its own pair's, not the Place's, so the fit sizes it and says nothing of where it sits in the Place.
+    determined: { scale: true, up: true, heading: !outsideFrame, origin: !outsideFrame },
   }
   return await finish(manifestPath, manifest, started, {
     projectTransform,
