@@ -424,8 +424,10 @@ export function runProjectCalibration(options: CalibrationOptions): Promise<Cali
    * was accepted off the floor by a same-height retry. A marker that was on a table, was seen to be wrong and was put on the floor, or
    * was taken away, no longer counts: the pair that is committed was floor-checked.
    */
-  const floorCheckBypassed = (): boolean =>
-    groundWaitOverridden || MARKER_IDS.some((id) => points[id] !== null && offFloorMarkers[id] === true)
+  const floorCheckBypassedFor = (ids: readonly MarkerId[]): boolean =>
+    groundWaitOverridden || ids.some((id) => points[id] !== null && offFloorMarkers[id] === true)
+  /** `floorCheckBypassedFor` the three markers: what a two-point commit holds. The one-point commit holds the landmark only. */
+  const floorCheckBypassed = (): boolean => floorCheckBypassedFor(MARKER_IDS)
   /**
    * Whether keeping the pair over a mismatch writes the Place's frame, and so replaces the reference the pair was compared with: it does
    * unless the floor check was bypassed (`mayWritePlaceFrame`, the rule `assessTwoPoint` applies to this very press). Then it records the
@@ -1538,6 +1540,8 @@ export function runProjectCalibration(options: CalibrationOptions): Promise<Cali
       if (commitInFlight || !mapIsSteady()) return
       // The landmark marker as it is when the button is pressed: what the photo wait is checked against afterwards.
       const pressedLandmark = points.landmark
+      // The check marker too: a tap that was being read when the button was pressed can land on it during the photo wait.
+      const pressedCheck = points.check
       // The landmark as the frame is built from it: at the floor height its own tap gave, with how that tap was measured.
       const { landmark, tap } = taps.frameLandmark(points.landmark)
       const headingMarker = points.heading
@@ -1605,7 +1609,7 @@ export function runProjectCalibration(options: CalibrationOptions): Promise<Cali
         // is left to commit), and the map can shift in it (back to the landmark): the clock is not asked, the press was in time.
         // The person may have pressed Re-place points, or Continue uncalibrated, while the photos were awaited. What they did
         // stands, and the pair they pressed this for is not the pair on the card now, or the flow has ended.
-        if (closed || stage !== pressedIn || points.landmark !== pressedLandmark || points.heading !== headingMarker) return
+        if (closed || stage !== pressedIn || points.landmark !== pressedLandmark || points.heading !== headingMarker || points.check !== pressedCheck) return
         if (taps.shifted()) return restartAfterDisturbance()
         // A point has no photo that shows it: say which, once, and the press after that saves without (./reference-photo-flow.ts).
         // The sentence names the button that was pressed, which is not "Use this alignment" on the mismatch screen.
@@ -1675,7 +1679,8 @@ export function runProjectCalibration(options: CalibrationOptions): Promise<Cali
           bearingConvention,
           existingFrame,
           calibratedAt: new Date().toISOString(),
-          floorCheckBypassed: floorCheckBypassed(),
+          // The one-point tier holds the landmark and nothing else: a heading marker it does not use was never part of its floor check.
+          floorCheckBypassed: floorCheckBypassedFor(['landmark']),
         },
         onePointOptions,
       )
