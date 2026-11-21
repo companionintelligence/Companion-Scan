@@ -188,9 +188,11 @@ test.describe('FTUE two-path start screen', () => {
     // handler as live. Clicking on visibility used to land on nothing and be
     // silently dropped (this test failed 3 runs out of 3 that way).
     //
-    // Enablement happens at the top of the boot, long before AR itself can
-    // start, so this click still lands mid-boot — which is the point: it is
-    // the regression test for that tap being honoured rather than lost.
+    // Enablement happens at the top of the boot, before project selection is
+    // ready, so this click can land first. main() remembers such a tap and opens
+    // the picker once selection is ready (it used to drop it). Whether the click
+    // lands early here is down to the boot's timing; that window is held open on
+    // purpose, and tested, in mock-start-tap-race.spec.ts.
     await expect(page.locator('#start-ar-btn')).toBeEnabled({ timeout: 30_000 })
     await page.click('#start-ar-btn')
 
