@@ -827,6 +827,31 @@ Deno.test('push: a trustworthy fit ships spatial_frame and carries each box into
   }
 })
 
+Deno.test('push: a fit that did not determine where the scan sits in the Place sizes its boxes and puts none of them in the Place frame', async () => {
+  // A scan the commit left outside the Place's frame (a bypassed floor check) is sized by the fit, but its transform is its own pair's:
+  // `position_project` under frame: 'project' would claim the Place's frame for it.
+  const srv = stubServer()
+  const dir = await tempScans('full', {
+    detectManifest: true,
+    sidecars: { 'room.splat-align.manifest.json': { ...ALIGN_MANIFEST, determined: { scale: true, up: true, heading: false, origin: false } } },
+  })
+  try {
+    const result = await pushScanToMemory(cfgFor(srv.base), SCAN, { scansDir: dir })
+    const frame = payloadOf(srv.seen).spatial_frame as Record<string, unknown>
+    assertEquals(frame.metric, true, 'the size is real')
+    assertEquals(frame.scale, 2)
+    assertEquals(frame.project_transform, null, 'but no transform into the Place is carried')
+    const sofa = objectsIn(srv.seen.eventBody!.events[0])[0]
+    assertEquals(sofa.position_project, undefined)
+    assertEquals(sofa.rotation_project, undefined)
+    assertEquals(typeof sofa.extent_metric_m, 'object', 'a length in metres is still given')
+    assertEquals(result.spatialFrameMetric, true)
+  } finally {
+    await srv.close()
+    await Deno.remove(dir, { recursive: true })
+  }
+})
+
 Deno.test('push: rotation_project composes fit-then-box, pinned on two axes that do not commute', async () => {
   // The test above uses a fit and a box that are both yaws about Y, which is
   // symmetric: it cannot tell R_fit·R_box from R_box·R_fit. This one can.

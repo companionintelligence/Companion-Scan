@@ -211,6 +211,20 @@ test('the one-point tier reads the same flag: a table landmark put on the floor 
   assert.equal(bypassed.spatialFrame, undefined, 'and it writes no Place frame, as it never did')
 })
 
+test('the one-point tier is floor-checked on the landmark alone: a heading marker it does not use, accepted off the floor, does not make it bypassed', async () => {
+  const outcome = await runScenario(runModal, scenario('one point with a table heading marker', [
+    { tap: floor(1, 2) },
+    { press: 'confirm' },
+    { tap: raised(4.5, 2, 0.4) },
+    { tap: raised(4.5, 2, 0.4) },
+    { press: 'fallback' },
+  ]))
+  const result = committed(outcome)
+  assert.equal(result.calibration['method'], 'ground-tap-compass')
+  assert.equal(result.calibration['floorCheckBypassed'], false, 'the landmark that is committed is on the floor, and the heading marker is not in the commit')
+  assert.ok(result.spatialFrame, 'so a Place with no frame is given its one-point frame')
+})
+
 // ── 2. The flag is judged by how high the tap measured ───────────────────────────────────────────────
 
 /**

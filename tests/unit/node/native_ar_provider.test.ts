@@ -59,6 +59,38 @@ test('pose events feed the ARProvider getters: pose, tracking, field of view, an
   assert.ok(Math.abs(provider.getCameraAspect() - 0.75) < 1e-9)
 })
 
+test('a camera the native layer cannot open is told to the person as a camera that was refused, at once, and not as a tracker that has not locked on', async () => {
+  // The refusal arrives as an `error` event after start() has resolved (iOS has no rejection for it, and Android's camera-in-use
+  // case is the same), so the preflight verdicts were 'Starting AR…' and then 'AR cannot lock on yet' over a black camera.
+  const plugin = fakePlugin()
+  const provider = new NativeARProvider(options(plugin))
+  const verdicts: Array<{ outcome: string; headline: string; routeToUpload?: boolean }> = []
+  provider.onPreflightVerdict((verdict) => verdicts.push(verdict))
+  await provider.start(fakeCanvas())
+  const before = verdicts.length
+  plugin.emit('error', { message: 'Camera access not authorized.' })
+  assert.equal(verdicts.length, before + 1, 'the verdict is given when the error arrives, not after the first-pose timeout')
+  const verdict = verdicts[verdicts.length - 1]!
+  assert.equal(verdict.outcome, 'unavailable')
+  assert.equal(verdict.headline, 'Camera access is blocked')
+  assert.equal(verdict.routeToUpload, true)
+  // A second error is not a second announcement, and a pose that comes after does not unsay the first (there will be none in practice).
+  plugin.emit('error', { message: 'Camera access not authorized.' })
+  assert.equal(verdicts.length, before + 1)
+})
+
+test('an error event after the first pose is only logged: the session was running', async () => {
+  const plugin = fakePlugin()
+  const provider = new NativeARProvider(options(plugin))
+  const verdicts: string[] = []
+  provider.onPreflightVerdict((verdict) => verdicts.push(verdict.headline))
+  await provider.start(fakeCanvas())
+  plugin.emit('pose', { timestamp: 1, transform: translation(1, 2, 3), projection: perspective(60, 0.75), tracking: 'normal' })
+  const before = verdicts.length
+  plugin.emit('error', { message: 'Camera access not authorized.' })
+  assert.equal(verdicts.length, before)
+})
+
 test('a malformed pose event is dropped, not believed', async () => {
   const plugin = fakePlugin()
   const warnings: unknown[] = []

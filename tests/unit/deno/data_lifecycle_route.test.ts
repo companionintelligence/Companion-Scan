@@ -604,6 +604,184 @@ Deno.test({
   }
 })
 
+// ── What a second look at a merge found (the review of the fix stack) ──────────────────────────────
+
+Deno.test('a second merge, with nothing reading the world in between, hands over the notes of a scan the first one brought without a row', async () => {
+  const server = await startServer({
+    seed: async (dirs) => {
+      await writeRegistry(dirs, [secretPlace('proj-x'), placeRecord('proj-a', 'House A'), placeRecord('proj-b', 'House B')])
+      await writeScan(dirs, HALL, sidecar('proj-x', 'Hall', false))
+      await writeWorld(dirs, secretWorld('proj-x', [row(HALL, 'proj-x', false)]))
+      await writeWorld(dirs, worldOf('proj-a', { name: 'House A' }))
+      await writeWorld(dirs, worldOf('proj-b', { name: 'House B' }))
+    },
+  })
+  try {
+    const first = await server.send('POST', '/projects/proj-a/merge', { sourceProjectId: 'proj-x' })
+    assertEquals(first.status, 200, first.text)
+    // The hall is placed by its world's origin, so it reaches House A with its notes and no row; nothing opens House A's world now.
+    const second = await server.send('POST', '/projects/proj-b/merge', { sourceProjectId: 'proj-a' })
+    assertEquals(second.status, 200, second.text)
+    const houseB = await server.worldFile('project-proj-b')
+    assert(idsOf(houseB.comments ?? []).includes('c-hall'), 'the hall\'s note was handed over to House B before House A\'s world went')
+    assert(idsOf(houseB.editPatches ?? []).includes('p-note-hall'), 'and so was its note on the scan')
+    assertEquals((await server.send('GET', '/projects')).status, 200)
+  } finally {
+    await server.stop()
+  }
+})
+
+Deno.test({
+  name: 'a world that cannot be read is not taken for another Place\'s: the merge and the delete say they were not done, and a retry finishes them',
+  ignore: !CAN_MAKE_A_PERMISSION_FAILURE,
+}, async () => {
+  // A Place with no scans, which is the one a DELETE takes out of the registry (one that holds scans is refused before any world is read).
+  const server = await startServer({
+    seed: async (dirs) => {
+      await writeRegistry(dirs, [secretPlace('proj-a'), placeRecord('proj-b', 'House B')])
+      await writeWorld(dirs, secretWorld('proj-a', []))
+    },
+  })
+  const worldPath = `${server.dirs.worlds}/project-proj-a.json`
+  try {
+    await Deno.chmod(worldPath, 0o000)
+    try {
+      const refused = await server.send('DELETE', '/projects/proj-a')
+      assertEquals(refused.status, 500, refused.text)
+      assertFalse(refused.text.includes(server.dirs.root), 'the answer names no path')
+    } finally {
+      await Deno.chmod(worldPath, 0o644)
+    }
+    // The Place was kept (a delete that stopped on an error does not take it out of the registry), so it can be asked for again.
+    assertEquals((await server.registry()).some((place) => place.projectId === 'proj-a'), true)
+    const done = await server.send('DELETE', '/projects/proj-a')
+    assertEquals(done.status, 200, done.text)
+    assertFalse(await exists(worldPath))
+  } finally {
+    await server.stop()
+  }
+})
+
+Deno.test({
+  name: 'a merge whose world cannot be read says it could not remove it, instead of saying it is gone',
+  ignore: !CAN_MAKE_A_PERMISSION_FAILURE,
+}, async () => {
+  const server = await startServer({ seed: seedHouses })
+  const worldPath = `${server.dirs.worlds}/project-proj-a.json`
+  try {
+    await Deno.chmod(worldPath, 0o000)
+    try {
+      const merged = await server.send('POST', '/projects/proj-b/merge', { sourceProjectId: 'proj-a' })
+      assertEquals(merged.status, 500, merged.text)
+      assertStringIncludes((merged.json as { error: string }).error, 'could not be removed')
+    } finally {
+      await Deno.chmod(worldPath, 0o644)
+    }
+    const again = await server.send('POST', '/projects/proj-b/merge', { sourceProjectId: 'proj-a' })
+    assertEquals(again.status, 200, again.text)
+    assertEquals((again.json as { sourceWorldRemoved?: boolean }).sourceWorldRemoved, true)
+    assertFalse(await exists(worldPath))
+  } finally {
+    await server.stop()
+  }
+})
+
+Deno.test({
+  name: 'a repeat of a merge whose first run could not refile the scans refiles them and then takes the world: asking again does what the privacy text says',
+  ignore: !CAN_MAKE_A_PERMISSION_FAILURE,
+}, async () => {
+  const server = await startServer({ seed: seedHouses })
+  try {
+    await Deno.chmod(server.dirs.scans, 0o555)
+    try {
+      const merged = await server.send('POST', '/projects/proj-b/merge', { sourceProjectId: 'proj-a' })
+      assertEquals(merged.status, 200, merged.text)
+      assertEquals((merged.json as { sourceWorldRemoved?: boolean }).sourceWorldRemoved, false)
+    } finally {
+      await Deno.chmod(server.dirs.scans, 0o755)
+    }
+    const again = await server.send('POST', '/projects/proj-b/merge', { sourceProjectId: 'proj-a' })
+    assertEquals(again.status, 200, again.text)
+    assertEquals((again.json as { alreadyMerged: boolean }).alreadyMerged, true)
+    assertEquals((again.json as { sourceWorldRemoved?: boolean }).sourceWorldRemoved, true, 'the scans are filed under House B now, so the world goes')
+    assertFalse(await exists(`${server.dirs.worlds}/project-proj-a.json`))
+    assertEquals(await filesHolding(server.dirs.root, SECRETS), [])
+    assertEquals((await server.send('DELETE', '/projects/proj-a')).status, 404, 'and there is nothing left of the Place to delete')
+  } finally {
+    await server.stop()
+  }
+})
+
+Deno.test('a merge sent twice at once says once that a placement went with the world, and never says it was kept', async () => {
+  const server = await startServer({ seed: seedHouses })
+  try {
+    const answers = await Promise.all([
+      server.send('POST', '/projects/proj-b/merge', { sourceProjectId: 'proj-a' }),
+      server.send('POST', '/projects/proj-b/merge', { sourceProjectId: 'proj-a' }),
+    ])
+    for (const answer of answers) {
+      assertEquals(answer.status, 200, answer.text)
+      const body = answer.json as { sourceWorldRemoved?: boolean; handOver?: { placementsKept?: number } }
+      assertEquals(body.sourceWorldRemoved, true)
+      assertEquals(body.handOver?.placementsKept, undefined, 'a world that is gone keeps nothing')
+    }
+    const counted = answers.filter((answer) => (answer.json as { placementsRemoved?: number }).placementsRemoved === 1)
+    assertEquals(counted.length, 1, 'the request that removed the world counts the hall\'s placement; the other finds nothing to count')
+  } finally {
+    await server.stop()
+  }
+})
+
+Deno.test('a scan with a file name near the limit of the file system can be deleted: the longer names derived from it are not files that failed to go', async () => {
+  const long = `1700000000099_${'k'.repeat(228)}.glb`
+  const server = await startServer({
+    seed: async (dirs) => {
+      await writeRegistry(dirs, [placeRecord('proj-b', 'House B')])
+      await writeScan(dirs, long, sidecar('proj-b', 'Long', false))
+    },
+  })
+  try {
+    const deleted = await server.send('DELETE', `/scans/${encodeURIComponent(long)}`)
+    assertEquals(deleted.status, 200, deleted.text)
+    assertFalse(await exists(`${server.dirs.scans}/${long}`), 'the scan is gone')
+    // A name that is too long for any file is not a scan either: a 404, not a failure.
+    const none = await server.send('DELETE', `/scans/${encodeURIComponent(`${'z'.repeat(250)}.glb`)}`)
+    assertEquals(none.status, 404, none.text)
+  } finally {
+    await server.stop()
+  }
+})
+
+Deno.test('deleting a Place that is in the registry keeps its world while a scan\'s notes in it are still to be handed to another Place\'s world, and hands them over once that can take them', async () => {
+  const server = await startServer({
+    seed: async (dirs) => {
+      await writeRegistry(dirs, [secretPlace('proj-a'), placeRecord('proj-z', 'Annexe')])
+      await writeScan(dirs, ZETA, sidecar('proj-z', 'Zeta', false))
+      const worldId = 'world-project-proj-a'
+      await writeWorld(dirs, secretWorld('proj-a', [row(ZETA, 'proj-a', false)], {
+        comments: [{ commentId: 'c-zeta', worldId, body: 'the annexe\'s window', scanId: scanIdOf(ZETA), actorId: 'local', actorRole: 'local', createdAt: AT }],
+        editPatches: [],
+      }))
+      await Deno.writeTextFile(`${dirs.worlds}/project-proj-z.json`, '{"worldId":"world-project-proj-z","scans":[')
+    },
+  })
+  try {
+    const refused = await server.send('DELETE', '/projects/proj-a')
+    assertEquals(refused.status, 409, refused.text)
+    assertEquals((await server.registry()).some((place) => place.projectId === 'proj-a'), true, 'the Place is kept, to be deleted once its world can be')
+    assert(await exists(`${server.dirs.worlds}/project-proj-a.json`), 'and so is its world, with the scan\'s note in it')
+    assertEquals(idsOf((await server.worldFile('project-proj-a')).comments ?? []).includes('c-zeta'), true)
+
+    await writeWorld(server.dirs, worldOf('proj-z'))
+    const done = await server.send('DELETE', '/projects/proj-a')
+    assertEquals(done.status, 200, done.text)
+    assertEquals(idsOf((await server.worldFile('project-proj-z')).comments ?? []), ['c-zeta'], 'the scan\'s note was handed over before the world went')
+    assertFalse(await exists(`${server.dirs.worlds}/project-proj-a.json`))
+  } finally {
+    await server.stop()
+  }
+})
+
 // ── A world a merge of an earlier build left behind ─────────────────────────────────────────────
 
 /** The world of a Place that is not in the registry (an earlier build's merge took it out and left its world), with its export, beside a live Place's world. */

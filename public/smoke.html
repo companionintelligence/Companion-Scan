@@ -189,37 +189,37 @@
         }
       }
 
-      // 3. Tiny /infer round-trip — 64×64 sofa-orange canvas (CV palette, src/shared/cv-palette.ts)
+      // 3. /infer round-trip on a real room photo (public/test-fixtures/room.jpg).
+      // PASS: a detection array in under 30 s. WARN: 30 s or more, or 503 model-loading. FAIL: anything else.
       async function checkInfer() {
-        const canvas = document.createElement('canvas')
-        canvas.width = 64
-        canvas.height = 64
-        const ctx = canvas.getContext('2d')
-        ctx.fillStyle = '#ff6d00' // rgb(255,109,0) → "sofa" in the mock engine
-        ctx.fillRect(0, 0, 64, 64)
-        const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.92))
-        if (!blob) return { status: 'FAIL', detail: 'canvas.toBlob returned null' }
+        const photo = await fetch('/test-fixtures/room.jpg', { signal: AbortSignal.timeout(8000) })
+        if (!photo.ok) return { status: 'FAIL', detail: 'fixture HTTP ' + photo.status + ' · /test-fixtures/room.jpg' }
+        const blob = await photo.blob()
 
         const form = new FormData()
-        form.append('image', blob, 'smoke.jpg')
+        form.append('image', blob, 'room.jpg')
         const t0 = performance.now()
-        // 75s: past the server's 60s inference cap, so a slow/cold model
-        // yields the server's typed 504 rather than a client-side abort.
-        const resp = await fetch('/infer', { method: 'POST', body: form, signal: AbortSignal.timeout(75000) })
-        const wallMs = Math.round(performance.now() - t0)
+        // 90s: past both server caps (55s in the Ollama engine, 60s on the route), so the client
+        // does not abort before the server has answered.
+        const resp = await fetch('/infer', { method: 'POST', body: form, signal: AbortSignal.timeout(90000) })
+        const elapsed = (performance.now() - t0) / 1000
+        const secs = elapsed.toFixed(1) + ' s'
 
-        if (resp.status === 503) {
+        if (!resp.ok) {
           const body = await resp.json().catch(() => ({}))
-          return body.code === 'model-loading'
-            ? { status: 'WARN', detail: 'HTTP 503 model-loading — model warming up, retry shortly' }
-            : { status: 'FAIL', detail: 'HTTP 503 · ' + (body.code || body.error || 'unavailable') }
+          if (resp.status === 503 && body.code === 'model-loading') {
+            return { status: 'WARN', detail: 'HTTP 503 model-loading — model warming up, retry shortly · ' + secs }
+          }
+          const reason = body.error || body.code
+          return { status: 'FAIL', detail: 'HTTP ' + resp.status + (reason ? ' · ' + reason : '') + ' · ' + secs }
         }
-        if (!resp.ok) return { status: 'FAIL', detail: 'HTTP ' + resp.status }
-        const json = await resp.json()
-        if (!Array.isArray(json)) return { status: 'FAIL', detail: 'response is not a JSON array' }
-        const match = (resp.headers.get('server-timing') || '').match(/infer;dur=(\d+)/)
-        const latency = match ? match[1] + ' ms (Server-Timing)' : wallMs + ' ms (wall clock)'
-        return { status: 'PASS', detail: json.length + ' detection(s) · ' + latency }
+        const json = await resp.json().catch(() => null)
+        if (!Array.isArray(json)) return { status: 'FAIL', detail: 'response is not a JSON array · ' + secs }
+        const wellFormed = json.every((d) => d && typeof d.label === 'string'
+          && Array.isArray(d.bbox) && d.bbox.length === 4 && d.bbox.every((n) => typeof n === 'number'))
+        if (!wellFormed) return { status: 'FAIL', detail: 'detection has no string label or 4-number bbox · ' + secs }
+        if (elapsed >= 30) return { status: 'WARN', detail: json.length + ' detection(s) · ' + secs + ' · over the 30 s budget' }
+        return { status: 'PASS', detail: json.length + ' detection(s) · ' + secs }
       }
 
       // 4. /events WebSocket

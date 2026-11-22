@@ -103,7 +103,6 @@ import {
   placeWorldSlugs,
   removeLeftoverPlaceWorlds,
   removePlaceMedia,
-  removePlaceWorlds,
   uploadScansOfPlace,
   worldHoldsScansOnDisk,
   worldIsInUse,
@@ -166,7 +165,7 @@ import {
   pushScanToMemory,
   registerMemoryPush,
 } from './memory_push.ts'
-import { calibrationFromMeta, calibrationGroundYFromMeta, calibrationScaleFromMeta, withReplacedCalibration } from './calibration_fields.ts'
+import { calibrationFromMeta, calibrationGroundYFromMeta, calibrationScaleFromMeta, asOutsidePlaceFrame, withReplacedCalibration } from './calibration_fields.ts'
 import { frameEpochFieldsFromMeta } from './frame_epoch_fields.ts'
 import {
   PlacementRefused,
@@ -2745,8 +2744,14 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
 async function writeWorldUnlocked(world: WorldProject): Promise<void> {
   world.updatedAt = new Date().toISOString()
   const tmp = `${worldPath(world.shareSlug)}.${crypto.randomUUID()}.tmp`
-  await Deno.writeTextFile(tmp, JSON.stringify(world, null, 2))
-  await Deno.rename(tmp, worldPath(world.shareSlug))
+  try {
+    await Deno.writeTextFile(tmp, JSON.stringify(world, null, 2))
+    await Deno.rename(tmp, worldPath(world.shareSlug))
+  } catch (err) {
+    // A write that failed leaves no copy of the whole world behind: no deletion path would look for it.
+    await Deno.remove(tmp).catch(() => {})
+    throw err
+  }
 }
 
 async function synthesizeWorld(slug: string, projectId: string | null = null): Promise<WorldProject> {
@@ -3858,8 +3863,14 @@ async function _runExportWorldJob(slug: string, jobId: string): Promise<void> {
     const exported = await composeWorldExport(world, scanGlbs)
     const path = worldExportPath(slug)
     const tmp = `${path}.${crypto.randomUUID()}.tmp`
-    await Deno.writeFile(tmp, exported.bytes)
-    await Deno.rename(tmp, path)
+    try {
+      await Deno.writeFile(tmp, exported.bytes)
+      await Deno.rename(tmp, path)
+    } catch (err) {
+      // A failed write leaves no copy of the scans' geometry behind: no deletion path would look for it.
+      await Deno.remove(tmp).catch(() => {})
+      throw err
+    }
 
     const warnings = [...exported.warnings, ...unreadable]
     const summary = `Exported ${exported.scanCount} scan${exported.scanCount === 1 ? '' : 's'} and ` +
@@ -3992,6 +4003,9 @@ async function _runSplatAlignJob(slug: string, jobId: string): Promise<void> {
       const candidate = raw['calibration']
       if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
         calibration = candidate as ScanCalibration
+        // The statement that the scan is in no Place frame (the record's, or the flat key that outlives a replaced record) goes
+        // with the calibration, so the fit does not call it placed in the Place.
+        if (asOutsidePlaceFrame(candidate, raw['calibrationOutsidePlaceFrame'])) calibration = { ...calibration, outsidePlaceFrame: true } as ScanCalibration
       }
     } catch {
       // No sidecar, or malformed JSON — indistinguishable from "not calibrated" here,
@@ -6499,10 +6513,15 @@ app.delete('/projects/:id', async (c) => {
       }
       const childCount = projects.filter(project => project.parentProjectId === id).length
       if (childCount > 0) return { result: { deleted: false, childCount, referencePhotosRemoved: false, worldsRemoved: 0 }, save: false }
+      // The same care as for a Place that is gone: a world that still lists a scan whose file is there, under another Place, is waiting to
+      // hand that scan's notes and finished jobs to the world of the Place it is filed under, and is kept until it has.
+      const left = await removeGonePlaceWorlds(id, (world) => worldHoldsScansOnDisk(world, SCANS_DIR))
+      if (left.kept > 0) {
+        return { result: { deleted: false, childCount: 0, referencePhotosRemoved: false, worldsRemoved: left.removed, handOverWaiting: true }, save: false }
+      }
       const referencePhotosRemoved = await removePlaceMedia(PROJECT_MEDIA_DIR, id)
-      const worldsRemoved = await removePlaceWorlds(WORLDS_DIR, id)
       projects.splice(idx, 1)
-      return { result: { deleted: true, childCount: 0, referencePhotosRemoved, worldsRemoved }, save: true, removesPlace: true }
+      return { result: { deleted: true, childCount: 0, referencePhotosRemoved, worldsRemoved: left.removed }, save: true, removesPlace: true }
     })
     if (deleted.childCount > 0) {
       return c.json({ error: 'project has linked child Places', childCount: deleted.childCount }, 409)
@@ -6607,13 +6626,25 @@ app.post('/projects/:id/merge', async (c) => {
   if (!merged.target) return c.json({ error: 'Target project not found' }, 404)
   if (merged.photosFailed) return c.json({ error: 'Could not remove the merged Place\'s reference photos, so nothing was merged. Try again.' }, 500)
   if (merged.mismatch) return c.json(merged.mismatch, 409)
-  const handOver = merged.alreadyMerged ? {} : await rewriteProjectReferences(sourceProjectId, targetProjectId)
-  // The merged-away Place is gone from the registry and its scans are filed under the target: its world, which holds its name,
-  // location, Things and share tokens, goes too (PRIVACY.md, section 5), once nothing is waiting in it. A repeat of the merge
-  // comes here as well, and finishes what stayed.
+  // The registry entry is saved before the sidecars are rewritten, so a repeat of the merge is how a rewrite that failed (a full disk, a
+  // kill between the two) is finished: it refiles whatever still names the merged-away Place, which only the sidecars that still do.
+  // For an id that no scan names there is nothing to do.
+  let handOver: HandOverReport = {}
   let removal: MergedAwayWorld
   try {
-    removal = await removeMergedAwayWorld(sourceProjectId)
+    // The rest of the merge runs under one lock per merged-away Place, with the clean-up DELETE of that id, so that a double submit or
+    // a DELETE sent while the merge runs cannot each see half of it: the answer says what this request did and the other finds nothing.
+    const done = await withWorldLock(mergeLockKey(sourceProjectId), async () => {
+      const handed = !merged.alreadyMerged || await countScansForProject(sourceProjectId) > 0
+        ? await rewriteProjectReferences(sourceProjectId, targetProjectId)
+        : {}
+      // The merged-away Place is gone from the registry and its scans are filed under the target: its world, which holds its name,
+      // location, Things and share tokens, goes too (PRIVACY.md, section 5), once nothing is waiting in it. A repeat of the merge
+      // comes here as well, and finishes what stayed.
+      return { handed, removed: await removeMergedAwayWorld(sourceProjectId) }
+    })
+    handOver = done.handed
+    removal = done.removed
   } catch (err) {
     console.error(`[project merge] could not remove the merged Place's world (${err instanceof Error ? err.name : 'Error'})`)
     return c.json({ error: 'The Places were merged, but the merged Place\'s world could not be removed, so it was kept. Ask for the merge again to finish.' }, 500)
@@ -6621,7 +6652,7 @@ app.post('/projects/:id/merge', async (c) => {
   // ADR 0011 keeps a placement a person set by hand in the world a scan left, because it is a position in that world. A world that
   // is gone keeps nothing: `handOver.placementsKept` is not said of it, and what went with it is counted from the world's own file
   // as `placementsRemoved` (a repeat of the merge, which has nothing to hand over, counts it too), so the person can be told.
-  const report = removal.worldsRemoved > 0 ? { ...handOver, placementsKept: undefined } : handOver
+  const report = removal.gone ? { ...handOver, placementsKept: undefined } : handOver
   return c.json({
     ok: true,
     project: merged.target,
@@ -6639,11 +6670,43 @@ app.post('/projects/:id/merge', async (c) => {
  * and is then removed with its export unless `keep` holds it back (server/place_deletion.ts). Resolves how many worlds were
  * removed and how many were kept. Throws when one cannot be removed.
  */
+/** The lock a merge and the clean-up of its merged-away Place's world take, one per merged-away id. Not a world's slug. */
+const mergeLockKey = (sourceProjectId: string): string => `merge:${sourceProjectId}`
+
 async function removeGonePlaceWorlds(projectId: string, keep: KeepWorld): Promise<LeftoverWorlds> {
   const slugs = await placeWorldSlugs(WORLDS_DIR, projectId)
+  // A scan that is not placed by its own record comes to a world with no row (ADR 0011), and its notes, patches and finished jobs sit
+  // in that world until it is next read. A second merge would remove this world with them: each is given its row first, so the read
+  // below hands the scan over with everything that was made of it.
+  for (const slug of slugs) await giveRecordsTheirScanRows(slug)
   // No scans to wait for: one read of each world, which hands over what can be handed over, and says nothing of it.
   if (slugs.length > 0) await worldHandOver.settle(new Map(slugs.map((slug) => [slug, new Set<string>()])))
   return await removeLeftoverPlaceWorlds(WORLDS_DIR, projectId, keep)
+}
+
+/**
+ * Gives every scan that a comment, a patch or a job of the world names, and that has no row in it, the row a read of the world
+ * would have made for it, when exactly one stored scan has that id. A record whose scan is not on disk is left as it is, and so
+ * is one whose id two scans share (the collision `deno task migrate-scan-ids` resolves): neither can be said to be waiting.
+ */
+async function giveRecordsTheirScanRows(slug: string): Promise<void> {
+  const stored = await listStoredScans()
+  const byId = new Map<string, StoredScanInfo[]>()
+  for (const scan of stored) byId.set(scanIdFor(scan.filename), [...(byId.get(scanIdFor(scan.filename)) ?? []), scan])
+  await updateWorld(slug, (world) => {
+    ensureWorldProjectCollections(world)
+    const hasRow = new Set(world.scans.map((scan) => scan.scanId))
+    const named = new Set<string>()
+    for (const records of [world.comments, world.editPatches, world.jobs] as Array<Array<{ scanId?: unknown }> | undefined>) {
+      for (const record of records ?? []) if (typeof record?.scanId === 'string' && record.scanId !== '') named.add(record.scanId)
+    }
+    for (const scanId of named) {
+      if (hasRow.has(scanId)) continue
+      const matches = byId.get(scanId)
+      if (!matches || matches.length !== 1) continue
+      world.scans.push(scanManifestFromStored(matches[0]!, world.originGeoPose, world.scans.length, world.shareSlug))
+    }
+  })
 }
 
 /** What `removeMergedAwayWorld` did. */

@@ -282,6 +282,11 @@ export class NativeARProvider implements ARProvider, ImageHitTestContract {
   private frameHandle: unknown = null
   private captureInFlight = false
   private firstPoseAt: number | null = null
+  /**
+   * What the native layer reported through its `error` event before the first pose. A camera it cannot open (a refusal on iOS, a
+   * camera another app holds on Android) arrives this way, after `start()` has resolved, and is the reason there will be no pose.
+   */
+  private cameraError: string | null = null
   private pose: Pose = identityPose()
   private transform: number[] | null = null
   private projection: number[] | null = null
@@ -401,7 +406,7 @@ export class NativeARProvider implements ARProvider, ImageHitTestContract {
       plugin.addListener('points', (e) => this.onPoints(e)),
       plugin.addListener('hits', (e) => this.onHits(e)),
       plugin.addListener('tracking', (e) => this.onTracking(e.state)),
-      plugin.addListener('error', (e) => console.warn('[native-ar]', e.message)),
+      plugin.addListener('error', (e) => this.onNativeError(e.message)),
     ])
     // Only a platform that keeps world maps is asked for one. Android would ignore the name, and a null result would
     // then read as "none was asked for", so 'unsupported' says what happened instead.
@@ -622,8 +627,24 @@ export class NativeARProvider implements ARProvider, ImageHitTestContract {
     this.verdictTimer = timer
   }
 
+  /**
+   * An `error` event of the native layer. Before the first pose it is the reason there will be none, so the person is told what it
+   * says as a start failure is told (a camera that was refused reads as a camera that was refused), at once and not after the
+   * first-pose timeout. After the first pose it is only logged: the session was running.
+   */
+  private onNativeError(message: string): void {
+    console.warn('[native-ar]', message)
+    if (this.firstPoseAt !== null || this.cameraError !== null || this.delegate) return
+    this.cameraError = message
+    this.emitVerdict()
+  }
+
   private emitVerdict(): void {
     if (!this.verdictCallback) return
+    if (this.cameraError !== null && this.firstPoseAt === null) {
+      this.verdictCallback(startFailureVerdict(new Error(this.cameraError)))
+      return
+    }
     this.verdictCallback(firstFrameVerdict({
       sawCameraFrame: this.nativeRunning,
       sawPose: this.firstPoseAt !== null,

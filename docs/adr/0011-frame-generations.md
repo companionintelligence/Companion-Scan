@@ -44,9 +44,9 @@ world.
 
 **1. A frame is immutable once written, and replacing it is a new generation.** A frame carries a `frameId`, minted by
 the capture client when its calibration builds the frame (`newFrameId`, `src/world/frame-generations.ts`: a UUID, or on a
-page without `randomUUID` the time and random bytes, as `newArRunId` does). The server never mints one, and no client in
-the tree this slice was built on calls `newFrameId`: that is the client slice's (WP-08c), and until it is merged every
-frame there is has no id and is an unknown generation (decision 3). Replacing the Place's frame writes another
+page without `randomUUID` the time and random bytes, as `newArRunId` does). The server never mints one. The capture client
+calls `newFrameId` when its calibration builds a frame (`planFrameGeneration`, `src/world/frame-replacement.ts`, called from
+`src/ar/calibration-run.ts`); a frame an earlier build wrote has no id and is an unknown generation (decision 3). Replacing the Place's frame writes another
 frame with another id. The server keeps what it replaced in `Project.frameHistory`: `{ frameId, createdAt, method,
 separationM, supersededAt, reason }`, oldest first. An id names one reference, for good: the id of the held frame on a
 frame that is not the held one is refused (`frame-id-reused`), and so is the id of any frame the Place held before (its
@@ -297,9 +297,10 @@ every world file, and not as an emptied world with no scans. That is how the ser
 it is not new to a merge, and it is not decided here: the owner may want such an address to be a 404. No route removes a
 world that says it is no Place's.
 
-**The editor's Places panel does not read the new answers yet.** `src/viewer/places.ts` calls merge and assign without looking at
-the status, so a refused move is silently nothing there; it is behind `VITE_ENABLE_PLACE_COMPOSER`, which is off. WP-08c reads the
-409 and sends `acceptFrameMismatch`, and the composer should stay off until that is merged.
+**The editor's Places panel reads the refusal, and not yet the new answer keys.** `src/viewer/places.ts` sends a merge through
+`sendUnlessReferencesDiffer`: a 409 for differing references is put to the person, who may send `acceptFrameMismatch`. It does not
+read `sourceWorldRemoved`, `placementsRemoved` or `handOver` of a merge's answer, so it cannot yet tell the person that hand-set
+placements went with the merged-away Place's world; the composer is behind `VITE_ENABLE_PLACE_COMPOSER`, which is off.
 
 **What this does not do, and does not claim.** A generation id says which reference a scan was measured against. It does
 not say the scan is right: ADR 0005 rule 3 still decides what "verified" may mean, and nothing here changes it. An unknown

@@ -110,6 +110,9 @@ async function removeEntry(path: string, recursive: boolean): Promise<Outcome> {
     return 'removed'
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) return 'absent'
+    // A name the file system cannot hold names no file: the derived names are longer than the GLB's (".splat-finish.manifest.json"),
+    // so a scan with a very long file name asks for one that cannot exist, and that is as good as absent, not a failure to remove.
+    if ((error as { code?: string }).code === 'ENAMETOOLONG') return 'absent'
     console.error(`[scan delete] could not remove a file (${error instanceof Error ? error.name : 'Error'})`)
     return 'failed'
   }

@@ -27,7 +27,7 @@
     "test:api-base": "node --experimental-strip-types --no-warnings --test tests/unit/node/api_base.test.ts",
     "test:native-art": "node --experimental-strip-types --no-warnings --test tests/unit/node/native_art.test.ts",
     "test:shell-sign-in": "node --experimental-strip-types --no-warnings --test tests/unit/node/shell_sign_in.test.ts",
-    "test:native-ar": "node --experimental-strip-types --no-warnings --test tests/unit/node/native_ar_codec.test.ts tests/unit/node/native_ar_provider.test.ts tests/unit/node/native_ar_bridge.test.ts",
+    "test:native-ar": "node --experimental-strip-types --no-warnings --test tests/unit/node/native_ar_codec.test.ts tests/unit/node/native_ar_provider.test.ts tests/unit/node/native_ar_bridge.test.ts tests/unit/node/native_ar_runtime_select.test.ts",
     "test:shell-session": "node --experimental-strip-types --no-warnings --test tests/unit/node/shell_session.test.ts tests/unit/node/shell_session_server.test.ts",
     "test:origin": "node --experimental-strip-types --no-warnings --test tests/unit/node/origin_*.test.ts",
     "test:server-setting": "node --experimental-strip-types --no-warnings --test tests/unit/node/server_setting.test.ts",

@@ -420,6 +420,18 @@ function matrix16(value: unknown): number[] | null {
 }
 
 /**
+ * The transform a fit may put boxes in the Place's frame by: its `projectTransform` when it determined where the scan sits in the
+ * Place (its heading and origin), and none when it did not. A fit that did not (a scan the commit left outside the Place's frame,
+ * whose calibration is its own pair's, or the known-distance tier) sizes the scan and says nothing in the Place's frame, so no
+ * position is claimed in it. A manifest with no `determined` block is an older whole-path fit and is taken as it always was.
+ */
+function placementTransform(align: SplatAlignManifest | null): number[] | null {
+  if (!align) return null
+  const placed = !align.determined || (align.determined.heading === true && align.determined.origin === true)
+  return placed ? matrix16(align.projectTransform) : null
+}
+
+/**
  * The fit, only if it may be trusted to convert a length. Every gate here is a
  * number the aligner itself recorded — none of them is a default standing in
  * for a measurement that was never made.
@@ -437,7 +449,7 @@ function metricFit(align: SplatAlignManifest | null): MetricFit | null {
   if (typeof params.minCorrespondences === 'number' && (align.correspondenceCount ?? 0) < params.minCorrespondences) {
     return null
   }
-  const transform = matrix16(align.projectTransform)
+  const transform = placementTransform(align)
   const rotationQuat = transform ? similarityRotationQuat(transform) : null
   return { scale, transform: rotationQuat ? transform : null, rotationQuat, residualM }
 }
@@ -557,7 +569,7 @@ function spatialFrame(align: SplatAlignManifest | null, scan: ScanManifest, fit:
     max_residual_m: params.maxResidualM ?? null,
     correspondence_count: align?.correspondenceCount ?? null,
     min_correspondences: params.minCorrespondences ?? null,
-    project_transform: matrix16(align?.projectTransform),
+    project_transform: placementTransform(align),
     transform_convention:
       'row-major 4x4 mapping the splat/SfM frame into the Place project frame, scale already folded in',
     /** Which calibration tier supplied the metric side of the fit. */

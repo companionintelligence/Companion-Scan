@@ -17,6 +17,8 @@ import { startArScan } from './support/start-scan'
 interface FakeScanAROptions {
   /** A message to reject start() with, to exercise the fallback. Null starts the session. */
   failStart: string | null
+  /** How many capabilities() answers say ARCore is still checking, before the answer settles as supported. */
+  checkingAnswers?: number
 }
 
 /** Installs a Capacitor shell with a fake ScanAR plugin before any page script runs. */
@@ -49,8 +51,20 @@ async function installFakeScanAR(page: Page, options: FakeScanAROptions): Promis
     let poseTimer: ReturnType<typeof setInterval> | null = null
     let pointsTimer: ReturnType<typeof setInterval> | null = null
 
+    let capabilityAnswers = 0
     const plugin = {
       async capabilities() {
+        capabilityAnswers += 1
+        if (capabilityAnswers <= (opts.checkingAnswers ?? 0)) {
+          return {
+            platform: 'android',
+            engine: 'none',
+            supported: false,
+            depth: false,
+            checking: true,
+            reason: 'ARCore is still checking this device. Try again in a moment.',
+          }
+        }
         return { platform: 'android', engine: 'arcore', supported: true, depth: false }
       },
       async start() {
@@ -156,5 +170,14 @@ test.describe('native AR runtime', () => {
     // Points still accumulate: the 8th Wall mock took over the session.
     await expect(page.locator('#scan-stats')).toHaveText(/\d+ pts/, { timeout: 30_000 })
     await expect(page.locator('#place-skip-btn')).toBeHidden()
+  })
+
+  test('a phone whose ARCore check has not settled at boot still starts on the native session', async ({ page }) => {
+    await installFakeScanAR(page, { failStart: null, checkingAnswers: 2 })
+    await startArScan(page, { url: '/?ar=native&mock=xr8' })
+
+    const counters = await page.evaluate(() => (window as unknown as { __scanAR: { started: number } }).__scanAR)
+    expect(counters.started).toBeGreaterThanOrEqual(1)
+    await expect(page.locator('html')).toHaveClass(/native-ar/)
   })
 })
