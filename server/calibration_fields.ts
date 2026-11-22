@@ -249,8 +249,8 @@ function recordBackingTier(record: unknown, tier: ScanManifest['calibrationMetho
  *     record, when it describes the same tier, like the measurements above. The frame generation is read
  *     from a flat `calibrationFrameId` key first and from the record second: it names the frame the scan
  *     was placed by, as the flat tier does, and the `splat-align` job replaces the nested record
- *     (see `recordBackingTier`). No sidecar carries the flat key until a writer stamps it, so today
- *     the record is what answers. Each of the five is left off when it is absent or not what its type
+ *     (see `recordBackingTier`). The exporter writes the flat key beside the nested record at upload
+ *     (`src/export/gltf.ts`), so on a scan the job has not run on both answer the same. Each of the five is left off when it is absent or not what its type
  *     says, never set to null. The check and the fit are held together: the fit's figures are read only
  *     when it is a fit of `MIN_FIT_POINTS` or more, and `'constellation'` only when such a fit backs it
  *     (`asCalibrationCheckedBy`), so the manifest never says a measurement was made that the record

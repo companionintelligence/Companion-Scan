@@ -25,7 +25,10 @@ import { expect, type Page } from '@playwright/test'
  * a loaded worker that is well past Playwright's default click timeout. 30s
  * rather than the 20s that reads as generous: the first test in a cold run pays
  * Vite's transform cost on top, and was observed missing a 20s deadline with
- * the sheet never appearing at all, then passing on retry.
+ * the sheet never appearing at all, then passing on retry. A longer wait only
+ * covers a slow sheet. A sheet that never appears is also what a Scan tap
+ * dropped by main() looked like, before main() remembered early taps (see
+ * startArScan), and no deadline would have saved that one.
  */
 export async function dismissPlacePicker(page: Page): Promise<void> {
   const skip = page.locator('#place-skip-btn')
@@ -71,9 +74,14 @@ export async function startArScan(page: Page, options: StartArScanOptions = {}):
   // live. Clicking on visibility used to land on nothing and be silently
   // dropped (that failed 3 runs out of 3).
   //
-  // Enablement happens at the top of the boot, long before AR itself can start,
-  // so this click still lands mid-boot — which is the point: it is the
-  // regression test for that tap being honoured rather than lost.
+  // Enablement happens at the top of the boot, before project selection is
+  // ready (the IndexedDB stores open, the Place list back), so this click can
+  // land first. main() remembers such a tap and opens the Place picker as soon
+  // as selection is ready, which is what dismissPlacePicker() waits for. It used
+  // to answer that tap with a status line and drop it, and the wait below then
+  // timed out about one run in 25 on a loaded machine. Whether the click lands
+  // early here is down to the boot's timing; mock-start-tap-race.spec.ts holds
+  // that window open on purpose, and is where it is tested.
   await expect(page.locator('#start-ar-btn')).toBeEnabled({ timeout: 30_000 })
   await page.click('#start-ar-btn')
 

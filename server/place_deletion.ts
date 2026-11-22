@@ -130,7 +130,11 @@ export async function placeWorldSlugs(worldsDir: string, projectId: string): Pro
     try {
       const parsed: unknown = JSON.parse(await Deno.readTextFile(`${worldsDir}/${name}`))
       if (parsed && typeof parsed === 'object' && (parsed as StoredWorld)['projectId'] === projectId) slugs.push(name.slice(0, -'.json'.length))
-    } catch { /* not a world this Place can own: unreadable, or already gone */ }
+    } catch (error) {
+      // A file that is not JSON, or that went between the listing and the read, is not a world this Place can own. A read that
+      // failed for any other reason (EACCES, EIO, EMFILE) may be one: it is not skipped, so nothing says "gone" over it.
+      if (!(error instanceof SyntaxError || error instanceof Deno.errors.NotFound)) throw error
+    }
   }
   return slugs
 }
@@ -155,8 +159,11 @@ async function removeWorldsOf(worldsDir: string, projectId: string, keep?: KeepW
       let parsed: unknown
       try {
         parsed = JSON.parse(await Deno.readTextFile(`${worldsDir}/${name}`))
-      } catch {
-        return 'not-ours' // not a world this Place can own: unreadable, or already gone
+      } catch (error) {
+        // Not JSON, or already gone: not a world this Place can own. Any other failure to read the file (EACCES, EIO, EMFILE) may
+        // be one, so it is not read as "not ours": it stops the removal, and the merge and the DELETE answer that it was not done.
+        if (error instanceof SyntaxError || error instanceof Deno.errors.NotFound) return 'not-ours'
+        throw error
       }
       if (!parsed || typeof parsed !== 'object' || (parsed as StoredWorld)['projectId'] !== projectId) return 'not-ours'
       if (keep && await keep(parsed as StoredWorld)) return 'kept'

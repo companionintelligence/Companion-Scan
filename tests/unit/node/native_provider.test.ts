@@ -1161,7 +1161,8 @@ function registrationProblems(
   swiftSources: () => Array<[string, string]> = iosSwiftSources,
 ): string[] {
   const problems: string[] = []
-  const bridgeController = readSource('mobile/ios/App/App/ScanBridgeViewController.swift')
+  // Code, not text: a registration that is only in a comment registers nothing.
+  const bridgeController = swiftCode(readSource('mobile/ios/App/App/ScanBridgeViewController.swift'))
   const storyboard = readSource('mobile/ios/App/App/Base.lproj/Main.storyboard')
   const pbxproj = readSource('mobile/ios/App/App.xcodeproj/project.pbxproj')
   if (!new RegExp(`bridge\\?\\.registerPluginInstance\\(${plugin}\\(\\)\\)`).test(bridgeController)) {
@@ -1197,7 +1198,8 @@ function registrationProblems(
     }
   }
 
-  const activity = readSource('mobile/android/app/src/main/java/com/companionintelligence/scan/MainActivity.java')
+  // Java has the comments and string literals Swift has, so the same stripper reads it.
+  const activity = swiftCode(readSource('mobile/android/app/src/main/java/com/companionintelligence/scan/MainActivity.java'))
   const registerAt = activity.indexOf(`registerPlugin(${plugin}.class)`)
   if (registerAt < 0) problems.push(`MainActivity.java does not register ${plugin}`)
   else if (!(registerAt < activity.indexOf('super.onCreate(savedInstanceState)'))) {
@@ -1226,6 +1228,12 @@ test('the registration check fails for a shell that no longer registers ScanAR, 
 
   const noAndroid = registrationProblems('ScanARPlugin', withEdit(activity, (t) => t.replace('registerPlugin(ScanARPlugin.class);', '')))
   assert.deepEqual(noAndroid, ['MainActivity.java does not register ScanARPlugin'])
+
+  // The line commented out is the way a registration is usually lost, and the check must not be satisfied by the comment.
+  const commentedIos = registrationProblems('ScanARPlugin', withEdit(swift, (t) => t.replace('registerPluginInstance(ScanARPlugin())', '// bridge?.registerPluginInstance(ScanARPlugin())').replace(/bridge\?\.\/\/ bridge/, '// bridge')))
+  assert.deepEqual(commentedIos, ['ScanBridgeViewController.swift does not register ScanARPlugin on its bridge'])
+  const commentedAndroid = registrationProblems('ScanARPlugin', withEdit(activity, (t) => t.replace('registerPlugin(ScanARPlugin.class);', '/* registerPlugin(ScanARPlugin.class); */')))
+  assert.deepEqual(commentedAndroid, ['MainActivity.java does not register ScanARPlugin'])
 
   const late = registrationProblems('ScanARPlugin', withEdit(activity, (t) => t.replace('registerPlugin(ScanARPlugin.class);\n        super.onCreate(savedInstanceState);', 'super.onCreate(savedInstanceState);\n        registerPlugin(ScanARPlugin.class);')))
   assert.deepEqual(late, ['MainActivity.java registers ScanARPlugin after the bridge is created, so the web app cannot reach it'])

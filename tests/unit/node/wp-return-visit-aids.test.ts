@@ -1004,6 +1004,35 @@ withVisit('a tap that was on its way when Commit was pressed moves a marker unde
   near(frame.separationM, Math.hypot(moved.x - a.x, moved.z - a.z), 1e-6, 'what is committed is the pair as it was moved to')
 })
 
+withVisit('a tap that was on its way when Commit was pressed moves the check marker under the commit: that commit is not carried out either', {}, async (visit) => {
+  // The landmark and the heading marker are guarded across the photo wait; the check marker the commit holds is too.
+  const a = await visit.tap(0.5, 0.6)
+  await visit.press('confirm')
+  visit.camera.pose = poseFrom({ x: START_POSE.position.x, y: START_POSE.position.y, z: START_POSE.position.z - 3 }, -35, 0)
+  await visit.tap(0.5, 0.6)
+  assert.match(visit.part('project-calibration-title').textContent ?? '', /check point/i, 'a first visit is offered the check point')
+  // C's photo is held, so the commit pressed below has a wait to be moved under.
+  visit.capture.mode = 'hold'
+  const c = await visit.tap(0.15, 0.6)
+  // Select C where it is, so that the next tap moves it; that tap's hit test has not answered when Commit is pressed.
+  await visit.tap(0.15, 0.6)
+  visit.hits.mode = 'hold'
+  const moved = await visit.tap(0.2, 0.6)
+  assert.ok(Math.hypot(moved.x - c.x, moved.z - c.z) > 0.01, 'the tap is somewhere else')
+  await visit.press('commit')
+  assert.equal(visit.status(), 'Saving reference photos…')
+
+  visit.hits.release()
+  await visit.settle()
+  for (let i = 0; i < 3; i++) {
+    visit.capture.release()
+    await visit.settle()
+  }
+  assert.equal(visit.closed(), false, 'the check point the commit was pressed for is not the one on the card')
+  assert.equal(visit.scene.getObjectByName('calibration origin'), undefined, 'and none of it was dropped into the scene')
+  assert.ok(a.x !== undefined)
+})
+
 for (const via of ['a first visit', 'a return visit that uses the pair anyway'] as const) {
   withVisit(`Continue uncalibrated pressed while ${via === 'a first visit' ? 'the commit' : 'Use anyway'} waits for its photos ends the flow: nothing is dropped into the scene when they arrive`, { stored: via === 'a first visit' ? undefined : storedPair({ separationM: 3.2, photos: true }) }, async (visit) => {
     const mismatch = via !== 'a first visit'

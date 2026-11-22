@@ -25,6 +25,8 @@ export interface NativeARCapabilities {
   worldMap?: boolean
   /** Why `supported` is false, when the native layer knows. */
   reason?: string
+  /** True while the native layer is still checking the device (ARCore, at boot). That answer is not final: ask again. */
+  checking?: boolean
 }
 
 /** A rectangle in CSS pixels, relative to the WebView. */

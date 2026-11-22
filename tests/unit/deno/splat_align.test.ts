@@ -486,6 +486,22 @@ function framesFor(locals: Vec3Tuple[]): Frame[] {
   })
 }
 
+Deno.test('runSplatAlign sizes a scan its commit left outside the Place frame and does not say where it sits in the Place', async () => {
+  const root = await Deno.makeTempDir()
+  const sessionDir = `${root}/sess-align-outside`
+  await writeSession(sessionDir, framesFor(CLOUD), ['kf-00004.jpg', 'kf-00000.jpg', 'kf-00007.jpg', 'kf-00002.jpg', 'kf-00005.jpg', 'kf-00001.jpg', 'kf-00003.jpg'])
+  try {
+    const placed = await runSplatAlign({ sessionDir, calibration: CALIBRATION })
+    assertEquals(placed.manifest.determined, { scale: true, up: true, heading: true, origin: true })
+    const outside = await runSplatAlign({ sessionDir, calibration: { ...CALIBRATION, outsidePlaceFrame: true } as typeof CALIBRATION })
+    assertEquals(outside.status, 'ok')
+    assert(close(outside.scale!, TRUTH_S, 1e-6), 'the size is the same: the metres are real')
+    assertEquals(outside.manifest.determined, { scale: true, up: true, heading: false, origin: false })
+  } finally {
+    await Deno.remove(root, { recursive: true })
+  }
+})
+
 Deno.test('runSplatAlign recovers metric scale, pairing by filename rather than index', async () => {
   const root = await Deno.makeTempDir()
   const sessionDir = `${root}/sess-align-ok`

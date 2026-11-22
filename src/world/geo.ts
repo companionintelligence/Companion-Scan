@@ -314,10 +314,9 @@ export function northYawInSessionDeg(
  * bearing computed under the old one: that hybrid would compare neither rule,
  * and would disagree with the HUD's {@link originHeadingBearingDeg} for the same
  * arrow. `convention` defaults to the current rule, so a caller that does not
- * pass it keeps the current sign: the fit branch of `buildTwoPointCommit`
- * (src/ar/calibration-commit.ts) is one, and until it passes its
- * `bearingConvention` on, a fitted record written under `?bearing=1` is the
- * hybrid this paragraph describes.
+ * pass it keeps the current sign. The fit branch of `buildTwoPointCommit`
+ * (src/ar/calibration-commit.ts) passes its `bearingConvention` on, so a fitted
+ * record written under `?bearing=1` follows the old rule too.
  *
  * `null` when there is no compass reading. Data only for now: nothing places a
  * scan with it.
@@ -539,7 +538,7 @@ export function twoPointToProjectTransform(landmark: Vec3, headingMarker: Vec3):
   return anchorToProjectTransform(landmark, -twoPointHeadingDeg(landmark, headingMarker))
 }
 
-/** Compass-convention bearing, in degrees, of the landmark→marker baseline. */
+/** Session yaw, in degrees, of the landmark→marker baseline: atan2(x, z), 0 at +Z and growing counter-clockwise seen from above (not a compass bearing; see {@link projectBearingDeg}). */
 export function twoPointHeadingDeg(landmark: Vec3, headingMarker: Vec3): number {
   return Math.atan2(headingMarker.x - landmark.x, headingMarker.z - landmark.z) * RAD_TO_DEG
 }
@@ -565,8 +564,8 @@ export interface OriginDecalPlan {
   /** Crosshair centre: the origin, on the ground at its committed height. */
   origin: Vec3
   /**
-   * Arrow yaw in degrees on the compass convention (0 = +Z), the same one
-   * `twoPointHeadingDeg` uses. Null when there is no heading point.
+   * Arrow yaw in degrees as a session yaw (atan2(x, z): 0 = +Z, growing counter-clockwise seen
+   * from above), the same one `twoPointHeadingDeg` returns. Null when there is no heading point.
    */
   headingDeg: number | null
   /**
@@ -633,10 +632,10 @@ export function originDecalPlan(
  * It comes from the same single compass fix as the north tick, so it is only as
  * good as that tick: indoor compass readings can be well off. It is the arrow as
  * drawn, which is the landmark→heading-marker baseline that was tapped. On a
- * return visit that fitted three points, under the current rule, the record's
- * bearing follows the fit's heading instead (`ScanCalibration.fit.headingResidualDeg`
- * apart); under `?bearing=1` that record is also the hybrid described at
- * {@link projectBearingDeg}, which this number is not. Null when there is no arrow
+ * return visit that fitted three points the record's bearing follows the fit's
+ * heading instead, `ScanCalibration.fit.headingResidualDeg` apart from this number
+ * under either convention (the record is the needle's value plus that residual under
+ * `?bearing=1`, and minus it under the current rule). Null when there is no arrow
  * or no compass fix, since then there is no bearing to show.
  */
 export function originHeadingBearingDeg(

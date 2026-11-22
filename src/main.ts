@@ -13,7 +13,7 @@
 import { createEighthWallProvider } from './ar/eighthwall'
 import { createNativeARProvider, NativeARProvider } from './ar/native'
 import { probeNativeAR } from './ar/native-bridge'
-import { preferNativeRuntime } from './ar/runtime-select'
+import { chooseNativeRuntime, settleNativeProbe } from './ar/runtime-select'
 import { createWebXRProvider, WebXRProvider, isImmersiveARSupported } from './ar/webxr'
 import { ScanFrameEpochLog } from './ar/frame-epoch'
 import { ReanchorFlow, autosplitRequested } from './ar/reanchor-flow'
@@ -392,10 +392,16 @@ async function main() {
   // window (~6.5s, measured on a mobile-emulated run) reached no listener at
   // all: no feedback, start screen still up, nothing started.
   //
-  // The handler is still the user gesture itself — a tap is never replayed or
-  // synthesized later, only allowed to arrive earlier — so iOS Safari's rule
-  // that DeviceOrientation/DeviceMotion requestPermission() be called
-  // synchronously inside a real click handler still holds.
+  // The handler is still the user gesture itself: iOS Safari's rule that
+  // DeviceOrientation/DeviceMotion requestPermission() be called synchronously
+  // inside a real click handler holds because that request runs from the tap on
+  // the Place picker (beginArSession) — a real one, never a replayed one.
+  //
+  // A tap that lands before project selection is ready (the stores below open
+  // and the Place list back) has no picker to open yet. It is remembered
+  // (`pendingStartTap`) rather than dropped, and the end of section 1 runs this
+  // handler again for it. Only the picker is deferred, and opening it needs no
+  // gesture.
   //
   // A first-run visitor can't tap through the onboarding overlay to get here:
   // it covers the start screen and is dismissed before section 4b returns.
@@ -404,6 +410,11 @@ async function main() {
   let selectedProject: Project | null = null
   let selectedAreaId: string | null = null
   let projectSelectionReady = false
+  // A Scan tap came in before project selection was ready and is still owed its
+  // answer, the Place picker. One flag, so any number of early taps opens one.
+  let pendingStartTap = false
+  // The click handler below, by name, so the end of section 1 can run it again.
+  let onStartTap: () => void = () => {}
   let resolveStartAr: () => void = () => {}
   /**
    * Set by section 3 when no AR runtime could be created — the one path where
@@ -465,8 +476,11 @@ async function main() {
 
   const startArPressed = new Promise<void>((resolve) => {
     resolveStartAr = resolve
-    startBtn?.addEventListener('click', () => {
+    startBtn?.addEventListener('click', onStartTap = () => {
       if (startPressed) return
+      // Too early to open the picker: remember the tap. The end of section 1 runs
+      // this again, with selection ready, which clears the flag.
+      pendingStartTap = !projectSelectionReady
       if (!projectSelectionReady) {
         overlay.setStatus('Preparing projects…')
         return
@@ -481,8 +495,10 @@ async function main() {
   // index.html, so it never advertises itself as pressable before this point —
   // the gap is now only the ~50ms until this line runs, plus the case where
   // the bundle never loads at all, where staying disabled is the honest state.
-  // Enabling here rather than at section 5 is the whole fix: the handler above
-  // is live, so the tap has somewhere to land.
+  // Enabling here rather than at section 5 is what gives a tap somewhere to
+  // land: the handler above is live. A tap this early cannot be answered yet
+  // (project selection is not ready), so it is remembered and answered at the
+  // end of section 1. It used to get only a status line, and was lost.
   setStartButtonState('ready')
 
   // ── 1. Store + scan accumulators ────────────────────────────────────────────
@@ -645,6 +661,15 @@ async function main() {
     if (fix) updateGeoIndicator(fix)
     if (fix?.address) overlay.setStatus(fix.address)
   })
+
+  // End of section 1: project selection is ready and the picker is wired
+  // (requestPlaceSelection, above), and nothing has awaited since
+  // `projectSelectionReady` was set, so no tap can have landed in between.
+  // Answer a Scan tap that came earlier by running the handler again: with
+  // selection ready it opens the picker exactly as a live tap does, under the
+  // same `startPressed` and, through beginArSession, `arRuntimeError` guards. It
+  // runs once, however many early taps there were.
+  if (pendingStartTap) onStartTap()
 
   // ── 2. Inference router & early UI mounting (prevents test timeouts) ───────
   const router = new InferenceRouter()
@@ -886,8 +911,15 @@ async function main() {
   // Native first, where the shell's ScanAR plugin reports that ARKit or ARCore can run. Native
   // being available also skips the wait for the 8th Wall engine: a native phone never needs it
   // unless the native session fails to start, and then createWebRuntimeProvider loads it.
-  const nativeProbe = await probeNativeAR()
-  nativeActive = nativeProbe !== null && preferNativeRuntime({ forced: forcedMode, nativeSupported: nativeProbe.supported })
+  // ARCore can still be checking at boot: settleNativeProbe asks again, a bounded number of times.
+  const nativeProbe = await settleNativeProbe(
+    forcedMode,
+    await probeNativeAR(),
+    probeNativeAR,
+    (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+  )
+  const nativeChoice = chooseNativeRuntime(forcedMode, nativeProbe)
+  nativeActive = nativeChoice.native
   // If the engine never arrives we fall back to WebXR. index.html skips loading
   // xr.js entirely when ?ar=webxr is set. The wait follows xr.js's own state, not
   // a short timer: the page preloads a 5.5 MB `slam` chunk (data-preload-chunks), and
@@ -911,7 +943,7 @@ async function main() {
     try {
       provider = await createEighthWallProvider()
       use8thWall = true
-      overlay.setStatus('8th Wall ready')
+      overlay.setStatus(nativeChoice.note ?? '8th Wall ready')
     } catch (e) {
       console.warn('[main] 8th Wall init failed, falling back to WebXR:', e)
       provider = await createWebXRProvider()
@@ -3059,9 +3091,11 @@ async function checkStorageQuota(store: DetectionStore, overlay: ReturnType<type
  * only thing that clears it.
  *
  * The handler can't move any later than a real gesture — the iOS
- * motion-permission request must run synchronously inside the click, so an
- * early tap can never be buffered and replayed. Attaching early is what makes
- * the tap land somewhere instead of vanishing with no feedback.
+ * motion-permission request must run synchronously inside a click, so that
+ * request is never buffered and replayed. Attaching early is what makes a tap
+ * land somewhere instead of vanishing with no feedback; one that lands before
+ * project selection is ready is remembered, and the Place picker (which needs
+ * no gesture) opens for it once it is.
  *
  * 'unavailable' is terminal: the boot paths that give up (insecure context, no
  * AR runtime, a crash in main()) call it so the card stops advertising a wait

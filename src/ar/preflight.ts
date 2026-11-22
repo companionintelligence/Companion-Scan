@@ -270,7 +270,7 @@ export function startFailureVerdict(err: unknown): PreflightVerdict {
 
   const isPermission = name === 'NotAllowedError'
     || name === 'SecurityError'
-    || /permission|denied|NotAllowedError/i.test(message)
+    || /permission|denied|NotAllowedError|(?:not |un)authori[sz]ed/i.test(message)
   if (isPermission) {
     return {
       outcome: 'unavailable',

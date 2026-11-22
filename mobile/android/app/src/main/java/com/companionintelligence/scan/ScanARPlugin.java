@@ -126,6 +126,7 @@ public class ScanARPlugin extends Plugin {
         if (!installed) {
             result.put("reason", reasonFor(availability));
         }
+        result.put("checking", stillChecking(availability));
         call.resolve(result);
     }
 
@@ -150,6 +151,19 @@ public class ScanARPlugin extends Plugin {
                 return "ARCore needs an update. Update Google Play Services for AR.";
             default:
                 return "ARCore is still checking this device. Try again in a moment.";
+        }
+    }
+
+    /** The answers reasonFor() words as "still checking": every state it does not name. */
+    private static boolean stillChecking(ArCoreApk.Availability availability) {
+        switch (availability) {
+            case UNSUPPORTED_DEVICE_NOT_CAPABLE:
+            case SUPPORTED_NOT_INSTALLED:
+            case SUPPORTED_APK_TOO_OLD:
+            case SUPPORTED_INSTALLED:
+                return false;
+            default:
+                return true;
         }
     }
 
