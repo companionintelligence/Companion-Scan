@@ -96,7 +96,18 @@ Only one Gradle build runs at a time. Ticket 0002 moves the tree into the repo a
 
 ## Atlas
 
-This wave's atlas pass adds the Quest app and the RealityKit view to "Delivery & Distribution" and "AR Capture", adds `VITE_AR_RUNTIME` to "Config variables", and adds a wave card. Until that pass, the atlas did not mention a native Quest target.
+This wave's atlas pass, on 2026-11-23, added:
+
+- a wave card;
+- planned before/after diffs for tickets 0002 to 0010, in "AR Capture", "Inference & Jobs", "World & Viewer", "Server & Auth" and "Delivery & Distribution";
+- a `VITE_AR_RUNTIME` row in "Config variables".
+
+Until that pass, the atlas:
+
+- did not describe the shells' native AR runtimes (gap filled: the "Native AR runtimes (ScanAR)" card);
+- listed no build-time `VITE_` variable (only `VITE_AR_RUNTIME` was added);
+- had no wave cards for the two wave-12 folders (not added by this pass);
+- did not mention a native Quest target (gap filled).
 
 ## Verification available on this machine
 
