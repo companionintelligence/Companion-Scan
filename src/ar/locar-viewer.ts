@@ -5,22 +5,47 @@
  * (exact ENU, declination turned into the compass frame). In the iOS shell it hands the pins to the native geo view
  * instead: ScanAR.openGeoView, ARKit-CoreLocation on SceneKit (docs/factory/13-ar-runtime-targets/0006-ios-geo-view.md).
  *
- * It reads only GET /project-locations, the map's own pins route, uses only each Place's id, name and pin, and sends
- * nothing anywhere. It is a viewer, not a capture path: GPS places content to metres, so it finds a Place but cannot
- * align a scan to one.
+ * It reads GET /project-locations, the map's own pins route, and uses only each Place's id, name and pin. It writes
+ * nothing. It is a viewer, not a capture path: GPS places content to metres, so it finds a Place but cannot align a
+ * scan to one.
+ *
+ * A native shell's page is not on the server's origin, so there the page needs the Scan server's address first. It
+ * uses the editor's server dialog (changeServer, src/viewer/shell-menu.ts), which tests an address with GET /health,
+ * saves it on the device and reloads the page. A browser never shows it: its server is the page's own origin.
  */
 import * as THREE from 'three'
 import * as LocAR from 'locar'
 import type { GpsReceivedEvent, WebcamStartedEvent } from 'locar'
-import { apiUrl, isAndroidShell, isCapacitorShell } from '../shared/api-base.ts'
+import { apiBase, apiUrl, isAndroidShell, isCapacitorShell, isNativeShell } from '../shared/api-base.ts'
 import { compassReadingFromEvent } from '../geo/compass-heading.ts'
 import { trueBearingDeg } from '../world/declination.ts'
 import { openLegalNotices } from '../ui/legal-notices.ts'
+import { changeServer } from '../viewer/shell-menu.ts'
 import { scanARPlugin } from './native-bridge.ts'
 import { describePlace, pinnedPlaces, scenePlacement, type PinnedPlace, type PlaceLocation } from './locar-placement.ts'
 
 /** How many Places the list shows, nearest first. */
 const LIST_LIMIT = 20
+
+/** The places flag while a shell has no Scan server to read pins from. */
+const NO_SERVER = 'no Scan server set'
+
+/**
+ * True in a native shell with no Scan server saved or built in. There a root-relative path reaches the app's own
+ * bundle, which can answer 200 with a page, so the pins are not asked for at all.
+ */
+function serverMissing(): boolean {
+  return isNativeShell() && !apiBase()
+}
+
+/** The host of a server origin, for the button. A build-time base that does not parse is shown as it is. */
+function hostOf(origin: string): string {
+  try {
+    return new URL(origin).host
+  } catch {
+    return origin
+  }
+}
 
 interface ViewerFlags {
   camera: string
@@ -100,13 +125,32 @@ function renderList(lat: number, lng: number): void {
 
 async function loadPins(): Promise<PinnedPlace[]> {
   const response = await fetch(apiUrl('/project-locations'))
+  if (response.status === 401 || response.status === 403) throw new Error(`HTTP ${response.status}: this server asks for sign-in`)
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   return pinnedPlaces(await response.json() as PlaceLocation[])
+}
+
+/**
+ * In a shell, the Scan server this page reads and the way to change it. Drawn only in a shell: a browser reads its own
+ * origin and never the saved address.
+ */
+function mountServerButton(): void {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.id = 'viewer-server'
+  const origin = apiBase()
+  button.textContent = `Scan server: ${origin ? hostOf(origin) : 'none set'}`
+  button.addEventListener('click', () => {
+    changeServer()
+  })
+  document.getElementById('viewer-actions')?.prepend(button)
 }
 
 function startNative(plugin: NonNullable<ReturnType<typeof scanARPlugin>>): void {
   hook.native = true
   render()
+  // With no server there is nothing to hand over. The server dialog is open, and a save reloads the page.
+  if (serverMissing()) return
   loadPins()
     .then((places) => {
       hook.places = places
@@ -151,6 +195,8 @@ function startLocar(): void {
   window.addEventListener('deviceorientation', onOrientation)
 
   async function addPlaces(locar: LocAR.LocAR): Promise<void> {
+    // The places flag already says so, and a save in the server dialog reloads the page.
+    if (serverMissing()) return
     try {
       const places = await loadPins()
       hook.places = places
@@ -201,10 +247,16 @@ function startLocar(): void {
     })
 }
 
+if (serverMissing()) flags.places = NO_SERVER
 const plugin = scanARPlugin()
 if (isCapacitorShell() && !isAndroidShell() && plugin && typeof plugin.openGeoView === 'function') {
   startNative(plugin)
 } else {
   startLocar()
+}
+if (isNativeShell()) {
+  mountServerButton()
+  // This page can show no Place without a server, so a shell asks for one straight away, as the editor does.
+  if (serverMissing()) changeServer()
 }
 render()

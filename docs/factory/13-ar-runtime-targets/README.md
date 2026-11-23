@@ -50,7 +50,8 @@ So locar cannot scan a room, and ADR 0012 makes it a viewer.
 - **Heading.** Read with the scanner's own `compassReadingFromEvent` (`src/geo/compass-heading.ts`): iOS's `webkitCompassHeading`, or an absolute orientation event. A relative event counts from wherever the phone faced at page load, so it is ignored.
 - **Camera.** The page reports the camera from the webcam's own `webcamstarted` event. `App.start()` resolves on the orientation grant and says nothing about the camera.
 - **Stacking.** locar puts its canvas at z-index 999. The pages put their status, list and Legal notices button above it, or the canvas takes every tap.
-- **Pins.** The viewer reads `GET /project-locations`, the map's own pins route, and uses each Place's id, name and pin. It sends nothing anywhere. When sign-in is off and `SCAN_REQUIRE_AUTH` is unset, that route answers any caller, as it already does for the map.
+- **Pins.** The viewer reads `GET /project-locations`, the map's own pins route, and uses each Place's id, name and pin. It writes nothing. When sign-in is off and `SCAN_REQUIRE_AUTH` is unset, that route answers any caller, as it already does for the map.
+- **Server.** In a native shell the page is not on the server's origin. With no server saved, the viewer opens the editor's server dialog (`changeServer`, `src/viewer/shell-menu.ts`). The dialog tests an address with `GET /health`, saves it on the device and reloads the page. Until then the viewer asks nobody for pins. It has no sign-in control, so in the locar wrapper, which holds no session, it reads pins only from a server that answers without sign-in. A browser reads its own origin and shows no setting.
 
 ## Decisions
 
@@ -78,7 +79,7 @@ So locar cannot scan a room, and ADR 0012 makes it a viewer.
 ## Verification at commit
 
 - `npm run verify`: each of its 98 steps was run on its own, so one failure cannot hide another, and 98 of 98 pass. That includes `deno task test`, whose retention test now pins its clock (`runKeyframePurge` takes an optional `now`), `test:quarantine`, and the new `test:locar`.
-- Chromium, against a preview of the built site: the two spike tests and the viewer test pass with retries off.
+- Chromium, against a preview of the built site: the two spike tests and the three viewer tests (a browser, and stand-in Android and iOS shells) pass with retries off.
 - `deno install --frozen` passes, so `deno.lock` matches the manifests.
 - Not run on any device. The iOS Swift is compiled only by the Mobile Build workflow.
 

@@ -8,8 +8,13 @@
  * It checks that only usable pins are drawn, that each sits where the declination turn puts it (a Place due true
  * east lands at (100 cos D, -100 sin D) in the compass frame), that the list is nearest first with true distances
  * and bearings, that Legal notices opens, and that the page reads the pins route and never the full Places list.
+ *
+ * Two more tests stand in for the native shells with a stand-in Capacitor bridge: the page is not on the server's
+ * origin there, so it asks for the Scan server first. It must not read pins from its own origin, must refuse an
+ * address the shared form refuses, and must read the pins from the saved server after the dialog's reload. On
+ * Android it draws them on locar. On iOS it hands them to the native geo view.
  */
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 const FIX = { latitude: 47.6062, longitude: -122.3321 }
 const NORTH_M_PER_DEG = 111182.6575
@@ -30,6 +35,50 @@ interface ViewerState {
 }
 
 type ViewerWindow = { __locarViewer?: ViewerState }
+
+interface GeoViewCall {
+  places: Array<{ name: string; lat: number; lng: number }>
+}
+
+type ShellWindow = { __geoViewCalls: GeoViewCall[] }
+
+/** A Scan server on another origin than the page, as a shell sees its server. */
+const SERVER = 'https://scan.example.test'
+/** SCAN_SERVER_KEY, src/shared/storage-keys.ts. */
+const SERVER_KEY = 'companion-scan-server'
+
+/**
+ * Makes the page believe it runs in the Capacitor shell, before any page script, as the shell's bridge does. On iOS
+ * the ScanAR plugin has openGeoView, which records what it is handed.
+ */
+async function emulateShell(page: Page, platform: 'android' | 'ios'): Promise<void> {
+  await page.addInitScript((os) => {
+    const calls: GeoViewCall[] = []
+    const win = window as unknown as ShellWindow & { Capacitor: unknown }
+    win.__geoViewCalls = calls
+    const openGeoView = async (options: GeoViewCall) => {
+      calls.push(options)
+      return { shown: options.places.length }
+    }
+    win.Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => os,
+      Plugins: os === 'ios' ? { ScanAR: { openGeoView } } : {},
+    }
+  }, platform)
+}
+
+/** The Scan server at SERVER: /health answers as a Scan server does, /project-locations with the pins. */
+async function serveScanServer(page: Page): Promise<void> {
+  await page.route(`${SERVER}/**`, (route) => {
+    // The page is on another origin, so the answers need CORS, as the real server sends for an allowed origin.
+    const headers = { 'access-control-allow-origin': '*' }
+    const path = new URL(route.request().url()).pathname
+    if (path === '/health') return route.fulfill({ json: { status: 'ok', model: 'test' }, headers })
+    if (path === '/project-locations') return route.fulfill({ json: LOCATIONS, headers })
+    return route.fulfill({ status: 404, headers })
+  })
+}
 
 test.describe('locar.js viewer', () => {
   test.beforeEach(async ({ context }) => {
@@ -70,8 +119,88 @@ test.describe('locar.js viewer', () => {
     await page.getByRole('button', { name: 'Legal notices' }).click()
     await expect(page.locator('dialog[open]')).toHaveCount(1)
 
+    // A browser reads its own origin, so it has no server setting.
+    await expect(page.locator('#viewer-server')).toHaveCount(0)
     expect(requested).toContain('/project-locations')
     expect(requested.filter((path) => path === '/projects')).toEqual([])
+    expect(problems).toEqual([])
+  })
+
+  test('in the Android shell, asks for the Scan server first, then reads the pins from it', async ({ page }) => {
+    const problems: string[] = []
+    const requested: string[] = []
+    page.on('pageerror', (error) => problems.push(error.message))
+    page.on('request', (request) => requested.push(request.url()))
+    await emulateShell(page, 'android')
+    await serveScanServer(page)
+
+    await page.goto('/locar-viewer.html')
+    const dialog = page.locator('dialog[open]')
+    await expect(dialog.getByRole('heading', { name: 'Scan server' })).toBeVisible()
+    await expect(page.locator('#viewer-server')).toHaveText('Scan server: none set')
+
+    // A fix arrives while the dialog is open. With no server the page asks nobody for pins.
+    await page.waitForFunction(() => (window as unknown as ViewerWindow).__locarViewer?.flags.gps.startsWith('±') === true, undefined, { timeout: 30_000 })
+    expect(await page.evaluate(() => (window as unknown as ViewerWindow).__locarViewer?.flags.places)).toBe('no Scan server set')
+
+    // The shared form refuses plain http, and nothing is saved.
+    const field = dialog.getByLabel('Scan server address')
+    await field.fill('http://scan.example.test')
+    await dialog.getByRole('button', { name: 'Save' }).click()
+    await expect(dialog.getByRole('status')).toContainText('Use an https:// address')
+    expect(await page.evaluate((key) => localStorage.getItem(key), SERVER_KEY)).toBeNull()
+    expect(requested.filter((url) => new URL(url).pathname === '/project-locations')).toEqual([])
+
+    // A good address is saved and tested. The server answers, so the dialog closes itself and the page reloads.
+    const reloaded = page.waitForEvent('load')
+    await field.fill('scan.example.test')
+    await dialog.getByRole('button', { name: 'Save' }).click()
+    await reloaded
+    await page.waitForFunction(() => ((window as unknown as ViewerWindow).__locarViewer?.markers.length ?? 0) >= 2, undefined, { timeout: 30_000 })
+
+    expect(await page.evaluate((key) => localStorage.getItem(key), SERVER_KEY)).toBe(SERVER)
+    await expect(page.locator('dialog[open]')).toHaveCount(0)
+    await expect(page.locator('#viewer-places li')).toHaveCount(2)
+    await expect(page.locator('#viewer-server')).toHaveText('Scan server: scan.example.test')
+    expect(requested).toContain(`${SERVER}/health`)
+    expect(requested).toContain(`${SERVER}/project-locations`)
+    // The pins came from the saved server only, never from the app's own origin.
+    expect(requested.filter((url) => new URL(url).pathname === '/project-locations' && !url.startsWith(`${SERVER}/`))).toEqual([])
+
+    // The button opens the same dialog with the saved address. Closing it without a save changes nothing.
+    await page.locator('#viewer-server').click()
+    await expect(dialog.getByLabel('Scan server address')).toHaveValue(SERVER)
+    await dialog.getByRole('button', { name: 'Close' }).click()
+    await expect(page.locator('dialog[open]')).toHaveCount(0)
+    expect(problems).toEqual([])
+  })
+
+  test('in the iOS shell, asks for the Scan server first, then hands the pins to the native geo view', async ({ page }) => {
+    const problems: string[] = []
+    const requested: string[] = []
+    page.on('pageerror', (error) => problems.push(error.message))
+    page.on('request', (request) => requested.push(request.url()))
+    await emulateShell(page, 'ios')
+    await serveScanServer(page)
+
+    await page.goto('/locar-viewer.html')
+    const dialog = page.locator('dialog[open]')
+    await expect(dialog.getByRole('heading', { name: 'Scan server' })).toBeVisible()
+    await expect(page.locator('#viewer-status')).toContainText('places: no Scan server set')
+    expect(await page.evaluate(() => (window as unknown as ShellWindow).__geoViewCalls.length)).toBe(0)
+    expect(requested.filter((url) => new URL(url).pathname === '/project-locations')).toEqual([])
+
+    const reloaded = page.waitForEvent('load')
+    await dialog.getByLabel('Scan server address').fill(SERVER)
+    await dialog.getByRole('button', { name: 'Save' }).click()
+    await reloaded
+    await page.waitForFunction(() => (window as unknown as ShellWindow).__geoViewCalls.length > 0, undefined, { timeout: 30_000 })
+
+    const calls = await page.evaluate(() => (window as unknown as ShellWindow).__geoViewCalls)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].places.map((place) => place.name).sort()).toEqual(['East test place', 'South test place'])
+    await expect(page.locator('#viewer-status')).toContainText('places: 2 shown in the native geo view')
+    expect(requested.filter((url) => new URL(url).pathname === '/project-locations')).toEqual([`${SERVER}/project-locations`])
     expect(problems).toEqual([])
   })
 })

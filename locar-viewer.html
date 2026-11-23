@@ -31,17 +31,34 @@
         /* Above locar's canvas, which it sets to z-index 999 and which would otherwise take every tap. */
         z-index: 1000;
       }
-      #viewer-legal {
+      /* Legal notices, and in a native shell the Scan server button. Above locar's canvas; the bar lets taps through. */
+      #viewer-actions {
         position: fixed;
+        left: 12px;
         right: 12px;
         bottom: calc(40% + 12px);
         z-index: 1001;
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        pointer-events: none;
+      }
+      #viewer-actions button {
+        pointer-events: auto;
+        min-width: 0;
+        min-height: 44px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
         font: inherit;
         color: #fff;
         background: rgba(0, 0, 0, 0.6);
         border: 1px solid rgba(255, 255, 255, 0.5);
         border-radius: 6px;
         padding: 6px 10px;
+      }
+      #viewer-legal {
+        flex: none;
       }
       #viewer-places {
         position: fixed;
@@ -64,7 +81,9 @@
   </head>
   <body>
     <div id="viewer-status" role="status" aria-live="polite">Places around you: starting</div>
-    <button id="viewer-legal" type="button">Legal notices</button>
+    <div id="viewer-actions">
+      <button id="viewer-legal" type="button">Legal notices</button>
+    </div>
     <ul id="viewer-places" aria-label="Places around you, nearest first"></ul>
     <script type="module" src="/src/ar/locar-viewer.ts"></script>
   </body>
