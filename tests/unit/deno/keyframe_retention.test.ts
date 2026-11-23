@@ -332,7 +332,7 @@ Deno.test('the job\'s pass reads the period from the environment, purges, logs c
     await makeSession(sessions, OLD, { ageDays: 100 })
     await makeSession(sessions, NEW, { ageDays: 0 })
     const env = (name: string) => (name === KEYFRAME_RETENTION_ENV ? '30' : undefined)
-    const { result, lines } = await recordingConsole(() => runKeyframePurge({ sessionsDir: sessions, scansDir: scans, env, dryRun: false }))
+    const { result, lines } = await recordingConsole(() => runKeyframePurge({ sessionsDir: sessions, scansDir: scans, env, dryRun: false, now: NOW }))
     assertStringIncludes(result, 'deleted 1 of 2')
     assertEquals(lines.length, 1)
     assertStringIncludes(lines[0]!, '[keyframe-retention]')
@@ -341,7 +341,7 @@ Deno.test('the job\'s pass reads the period from the environment, purges, logs c
 
     // With the period unset the same call keeps everything and says so.
     await makeSession(sessions, BARE, { ageDays: 4000 })
-    const off = await recordingConsole(() => runKeyframePurge({ sessionsDir: sessions, scansDir: scans, env: () => undefined, dryRun: false }))
+    const off = await recordingConsole(() => runKeyframePurge({ sessionsDir: sessions, scansDir: scans, env: () => undefined, dryRun: false, now: NOW }))
     assertStringIncludes(off.result, 'Retention is off')
     assert(await exists(`${sessions}/${BARE}`))
   })
@@ -416,7 +416,7 @@ Deno.test('a dry run can judge by a period the request names, a real pass cannot
     await makeSession(sessions, NEW, { ageDays: 3 })
     const env = (setting: string | undefined) => (name: string) => (name === KEYFRAME_RETENTION_ENV ? setting : undefined)
     const run = (setting: string | undefined, dryRun: boolean, previewDays: number | null) =>
-      recordingConsole(() => runKeyframePurge({ sessionsDir: sessions, scansDir: scans, env: env(setting), dryRun, previewDays })).then((out) => out.result)
+      recordingConsole(() => runKeyframePurge({ sessionsDir: sessions, scansDir: scans, env: env(setting), dryRun, previewDays, now: NOW })).then((out) => out.result)
 
     // Setting off: a dry run can still show what a period would remove, and says nothing is purged until it is set.
     const preview = await run(undefined, true, 30)
