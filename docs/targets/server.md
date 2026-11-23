@@ -49,6 +49,16 @@ someone ran it and read the output:
 - **Panoptic segmentation** is VERIFIED end to end on a different GPU, an RTX 3070, on 2026-11-12.
 - **Known not to work:** Brush or Spirula on a CPU-only host, Spirula on macOS, and 4D person
   capture on this fleet (it needs about 44 GiB on one CUDA device, so it delegates off-box).
+- **PhysAg3D interactive asset (opt-in, not run here).** The `thing-interactive-asset` job hands
+  one keyframe to an operator-configured PhysAg3D controller. That controller uses its own agent
+  service and a GPU host with at least 28 GiB free, and makes an articulated, simulated asset of a
+  Thing.
+  - Unconfigured, the job is skipped with a hint. It never starts on its own.
+  - The image leaves the box.
+  - A run holds the job slot for hours.
+  - See [physag3d.md](../pipelines/physag3d.md) and
+    [ticket 0011](../factory/13-device-targets/0011-physag3d-interactive-asset-job.md). Unit tests
+    only; no real run.
 - **CI.** `deno task check` and `deno task test` run in `.github/workflows/deno-ci.yml` only when
   started by hand. The pre-push hook runs `npm run verify` locally.
 
