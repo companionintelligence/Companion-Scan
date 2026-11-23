@@ -1,7 +1,7 @@
 import ARKit
 import Capacitor
 import Foundation
-import SceneKit
+import RealityKit
 import UIKit
 import simd
 
@@ -10,8 +10,9 @@ import simd
 /// src/ar/native-bridge.ts.
 ///
 /// What it does:
-///   - Runs an ARKit world-tracking session and shows the camera in an ARSCNView placed beneath the
-///     web view, which is made transparent while the session runs.
+///   - Runs an ARKit world-tracking session and shows the camera in a RealityKit ARView placed beneath the
+///     web view, which is made transparent while the session runs. The view only draws the camera feed: it
+///     does not configure the session, which the plugin runs itself.
 ///   - Fits the whole camera image inside the web view ("contain"), so the overlay the scanner draws
 ///     covers exactly the camera's frame. The rect comes back from start() in CSS points.
 ///   - Streams pose and projection (pose events), feature points, and a grid of hit samples, and
@@ -55,7 +56,7 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
     private let farM: CGFloat = 100
 
     private let ciContext = CIContext()
-    private var arView: ARSCNView?
+    private var arView: ARView?
     /// The camera rect in the web view's coordinate space, in points.
     private var cameraRect: CGRect = .zero
     private var hitGridSize = 20
@@ -155,9 +156,14 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
             let webBounds = CGRect(origin: .zero, size: webView.bounds.size)
             let rect = self.containedRect(in: webBounds, aspect: aspect)
 
-            let view = ARSCNView(frame: rect.offsetBy(dx: webView.frame.minX, dy: webView.frame.minY))
+            // automaticallyConfigureSession is off, so the view runs no configuration of its own: the session runs the one
+            // built above.
+            let view = ARView(
+                frame: rect.offsetBy(dx: webView.frame.minX, dy: webView.frame.minY),
+                cameraMode: .ar,
+                automaticallyConfigureSession: false
+            )
             view.autoresizingMask = []
-            view.automaticallyUpdatesLighting = false
             view.session.delegate = self
             container.insertSubview(view, belowSubview: webView)
 
@@ -558,11 +564,11 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
     }
 
     /// A raycast from a normalised point of the camera rect. Estimated planes answer where no plane is
-    /// detected yet, which is what the overlay needs to place a point on a surface.
-    private func sample(atNormalized x: CGFloat, _ y: CGFloat, in view: ARSCNView, from camera: ARCamera) -> [String: Any] {
+    /// detected yet, which is what the overlay needs to place a point on a surface. The view casts the ray
+    /// from its camera through the point, and its session answers the query.
+    private func sample(atNormalized x: CGFloat, _ y: CGFloat, in view: ARView, from camera: ARCamera) -> [String: Any] {
         let point = CGPoint(x: view.bounds.width * x, y: view.bounds.height * y)
-        guard let query = view.raycastQuery(from: point, allowing: .estimatedPlane, alignment: .any),
-              let hit = view.session.raycast(query).first else {
+        guard let hit = view.raycast(from: point, allowing: .estimatedPlane, alignment: .any).first else {
             return ["hit": false]
         }
         let column = hit.worldTransform.columns.3
@@ -577,7 +583,7 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
         ]
     }
 
-    private func hitGrid(in view: ARSCNView, from camera: ARCamera, timestamp: TimeInterval) -> [String: Any] {
+    private func hitGrid(in view: ARView, from camera: ARCamera, timestamp: TimeInterval) -> [String: Any] {
         let cols = hitGridSize
         let rows = hitGridSize
         var samples: [[String: Any]] = []
