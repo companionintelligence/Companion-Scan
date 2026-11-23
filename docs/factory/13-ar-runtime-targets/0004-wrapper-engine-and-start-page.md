@@ -38,7 +38,7 @@ Decide whether a locar wrapper may ship the 8th Wall engine, and how the wrapper
 ## Open questions & answers
 
 - Does the repo settle the licence question? No. Two documents disagree.
-- May an APK that bundles the engine go on the owner's own phone for testing? **Open, for the owner.** No one has decided it. The spike APK exists locally and has not been installed anywhere.
+- May an APK that bundles the engine go on the owner's own phone for testing? Yes, on the owner's own phone only. Owner, 2026-11-23. It goes to no other device. This does not decide the engine policy or the start page, which stay open.
 
 ## Options
 

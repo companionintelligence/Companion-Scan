@@ -59,7 +59,7 @@ So locar cannot scan a room, and ADR 0012 makes it a viewer.
 | --- | --- | --- |
 | [0002](0002-locar-role.md) | The role of locar.js | A, a view-only geo runtime (ADR 0012). Owner, 2026-11-23 |
 | [0003](0003-ios-renderer.md) | The iOS renderer | SceneKit with ARKit-CoreLocation. Owner, 2026-11-23: "use SceneKit for iOS". It is built as a separate geo view rather than a swap of the scanner's view, for the reasons in [0006](0006-ios-geo-view.md) |
-| [0004](0004-wrapper-engine-and-start-page.md) | The wrapper's engine policy and start page | Open |
+| [0004](0004-wrapper-engine-and-start-page.md) | The wrapper's engine policy and start page | Open. Owner, 2026-11-23: a wrapper APK that bundles the engine may go on the owner's own phone for testing, and on no other device |
 
 ## Mobile facts
 
