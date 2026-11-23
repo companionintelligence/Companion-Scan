@@ -8,7 +8,8 @@
  * clearing all scans clears the sessions, and that the `keyframe-purge` job runs at boot and on request, obeys
  * `KEYFRAME_RETENTION_DAYS` and `payload.dryRun`, and logs counts and nothing else.
  *
- * It also holds what a deletion must not leave behind or race with: LingBot-Map's and SenseNova's output, a scan deleted
+ * It also holds what a deletion must not leave behind or race with: LingBot-Map's and SenseNova's output, an interactive
+ * asset's folder with the copy of a frame in its case folder (and that job's skip on a server without PhysAg3D), a scan deleted
  * while a job runs on it, a name that is not a name, a Place whose photos or world cannot be removed, the world export
  * built from a deleted scan, and the frames a walk streamed after its last export.
  *
@@ -766,6 +767,58 @@ Deno.test('a scan\'s LingBot-Map point cloud and its SenseNova output go with it
     assertEquals((await server.request('DELETE', '/scans?confirm=delete-all')).status, 200)
     assertFalse(await exists(`${server.dirs.scans}/${otherBase}.lingbot.glb`))
     assertFalse(await exists(`${server.dirs.scans}/.sensenova`))
+  } finally {
+    await server.stop()
+  }
+})
+
+Deno.test('thing-interactive-asset on a server without PhysAg3D: skipped with a hint, a bad request fails with its rule, and its folder serves two names and goes with the scan', async () => {
+  const server = await startServer()
+  try {
+    const scan = await uploadScan(server, 'cabinet')
+    const sessionId = await streamSession(server, scan.filename)
+    const world = (await server.request('GET', '/worlds/default')).json<{ scans: Array<{ filename: string; scanId: string; sessionId: string | null }> }>()
+    const row = world.scans.find((item) => item.filename === scan.filename)!
+    assertEquals(row.sessionId, sessionId)
+
+    // No PHYSAG3D_* reaches this server (startServer passes an allowlist), which is every stock install.
+    const queued = await server.request('POST', '/worlds/default/jobs', {
+      type: 'thing-interactive-asset',
+      scanId: row.scanId,
+      payload: { keyframe: 'kf-00000.jpg' },
+    })
+    assertEquals(queued.status, 202, queued.text)
+    const skipped = await untilWorldJobSettled(server, queued.json<{ jobId: string }>().jobId)
+    assertEquals(skipped.status, 'completed')
+    assertEquals(skipped.workerId, 'physag3d')
+    assertStringIncludes(skipped.result ?? '', 'Interactive asset skipped: PHYSAG3D_DIR is not set')
+    assertEquals(skipped.artifacts?.map((artifact) => artifact.type), ['interactive-asset-skip'])
+
+    const malformed = await server.request('POST', '/worlds/default/jobs', { type: 'thing-interactive-asset', scanId: row.scanId, payload: {} })
+    const failed = await untilWorldJobSettled(server, malformed.json<{ jobId: string }>().jobId)
+    assertEquals(failed.status, 'failed')
+    assertStringIncludes(failed.error ?? '', 'payload.keyframe')
+
+    // The asset folder, as a delivered job leaves it: two landed files and a case folder holding a copy of the frame.
+    const folder = `${scan.filename.replace(/\.glb$/, '')}.interactive`
+    const id = 'job-1700000000000-0a1b2c3d'
+    await Deno.mkdir(`${server.dirs.scans}/${folder}/${id}/input`, { recursive: true })
+    await Deno.writeFile(`${server.dirs.scans}/${folder}/${id}.glb`, glb())
+    await Deno.writeTextFile(`${server.dirs.scans}/${folder}/${id}.delivery.json`, '{"outcome":"complete"}')
+    await Deno.writeTextFile(`${server.dirs.scans}/${folder}/${id}/input/source.jpg`, 'a copy of a camera frame')
+    await Deno.writeTextFile(`${server.dirs.scans}/${folder}/notes.txt`, 'not a landed file')
+    const at = (name: string) => `/scans/${encodeURIComponent(folder)}/${name}`
+    assertEquals((await server.request('GET', at(`${id}.glb`))).status, 200)
+    assertEquals((await server.request('GET', at(`${id}.delivery.json`))).json(), { outcome: 'complete' })
+    for (const name of ['notes.txt', id, `${id}.json`, `.${id}.glb`]) {
+      assertEquals((await server.request('GET', at(name))).status, 400, `${name} is not one of the two names`)
+    }
+    assert((await server.request('GET', at(`${id}/input/source.jpg`))).status !== 200, 'a case folder is never served')
+    const listed = (await server.request('GET', '/scans')).json<Array<{ filename: string }>>()
+    assertFalse(listed.some((item) => item.filename.includes('.interactive')), 'the landed GLB is not listed as a scan')
+
+    assertEquals((await server.request('DELETE', `/scans/${encodeURIComponent(scan.filename)}`)).status, 200)
+    assertFalse(await exists(`${server.dirs.scans}/${folder}`), 'the assets and the case folder went with the scan')
   } finally {
     await server.stop()
   }

@@ -34,10 +34,11 @@ POST /worlds/<slug>/jobs
 | `payload.keyframe` | yes | The file name of one of that session's keyframes, `kf-NNNNN.jpg`, as `GET /sessions/:id/keyframes/:file` serves it |
 | `payload.thingId` | no | A Thing in this Place. Recorded on the artifacts and used in their labels; it does not change what is sent |
 
-**Why a keyframe.** It is the only image of a Thing the server holds. A detection's photo crop stays on the phone that
-took it (`captureIndex` is the phone's own capture counter), so the request names a frame of the scan's session
-instead. Both names are shape-checked the way the keyframe route checks them, so neither can name a path outside the
-session folder. A request that breaks a rule fails when the job queue reaches it, with a message that says which rule.
+**Why a keyframe.** It is the simplest image of a Thing the server holds as a file of its own, and the largest. A
+detection's photo crop reaches the server only inside the scan's GLB, as a data URL of at most 256 px in a node's extras
+(`src/export/gltf.ts`, `captureDetectionThumbnail`), and nothing on the server reads it out. Both names are shape-checked
+the way the keyframe route checks them, so neither can name a path outside the session folder. A request that breaks a
+rule fails when the job queue reaches it, with a message that says which rule.
 
 There is no button in the editor. Like `person-4d-reconstruct`, it is reached through the API only.
 
@@ -164,8 +165,9 @@ worker:
   Nothing in this repo enforces that, and what it reads can reach the agent service. Run the server as a user whose files
   you are content for that agent to read.
 - **Not sent by this server:** any other keyframe, the scan's GLB, the world file, or the server's environment. The child
-  process gets an allowlist (`CHILD_ENV_NAMES`: PATH, HOME, the locale, the SSH agent socket, `CODEX_HOME` and what
-  Windows needs to start Python), so tokens such as `CI_SERVER_TOKEN` and `FDANYONE_TOKEN` do not reach the worker.
+  process gets an allowlist (`CHILD_ENV_NAMES`: PATH, HOME, the locale, the SSH agent socket, `CODEX_HOME`, the proxy
+  and certificate settings, and what Windows needs to start Python), so tokens such as `CI_SERVER_TOKEN` and
+  `FDANYONE_TOKEN` do not reach the worker. A proxy address that carries a password does reach it.
 
 Copies held by the agent service and the generation host are outside this server's reach: deleting the scan does not
 delete them.
@@ -225,8 +227,12 @@ does not change.
 
 ## Verified, and not verified
 
-**Verified, by unit tests and type checks only** (`tests/unit/deno/physag3d.test.ts`, `scan_deletion.test.ts`,
-`capabilities.test.ts`, `deno task check`):
+**Verified, by tests and type checks only** (`tests/unit/deno/physag3d.test.ts`, `scan_deletion.test.ts`,
+`capabilities.test.ts`, one test in `keyframe_routes.test.ts`, `deno task check`):
+
+- on the real server, without PhysAg3D: a request ends `completed` with the skip hint, a request without
+  `payload.keyframe` ends `failed` with that rule, the asset folder serves its two names and nothing else, the landed GLB
+  is not listed as a scan, and the folder goes with the scan;
 
 - an unconfigured install is `skipped` with a hint and spawns nothing;
 - the `prepare`, `plan` and `run` argument vectors, the order of the steps, each step's deadline, and the plan in the log;
@@ -246,6 +252,9 @@ The `_spawn` seam stands in for `execute.py`. What it writes follows PhysAg3D's 
 - **No end-to-end PhysAg3D run has happened here.** PhysAg3D was not installed or run, and there was no agent login, no
   generation host and no GPU. No real `delivery.json`, GLB, video or timing has been seen.
 - Whether a real worker's `delivery.json` matches the contract the parser follows.
+- The runner's handling of a real delivery, with the server wired in: only the driver's has been tested.
+- Whether the environment allowlist is enough on a real box. A machine whose tools need another variable (a library
+  path, say) will fail in ways no test here shows; the names are in `CHILD_ENV_NAMES`.
 - Whether the agent CLI confines what the worker reads.
 - The 10-minute step deadlines and the 15-minute margin are untuned.
 - The 28 GiB figure is the free GPU memory PhysAg3D's example profile asks for, not a measurement.

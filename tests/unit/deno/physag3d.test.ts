@@ -587,6 +587,7 @@ Deno.test('the child gets only the allowlisted environment, so no token of the s
     HOME: '/var/lib/scan-server',
     LANG: 'C.UTF-8',
     SSH_AUTH_SOCK: '/run/agent.sock',
+    HTTPS_PROXY: 'http://proxy.example:3128',
     CI_SERVER_TOKEN: 'secret-1',
     FDANYONE_TOKEN: 'secret-2',
     ANDROID_MCP_TOKEN_BEAM_PRO: 'secret-3',
@@ -594,13 +595,21 @@ Deno.test('the child gets only the allowlisted environment, so no token of the s
     PORTAL_OIDC_CLIENT_SECRET: 'secret-5',
     PHYSAG3D_DIR: '/opt/PhysAg3D',
   }
-  assertEquals(childEnv((name) => server[name]), { PATH: '/usr/bin', HOME: '/var/lib/scan-server', LANG: 'C.UTF-8', SSH_AUTH_SOCK: '/run/agent.sock' })
+  // What the worker needs to reach its hosts passes; every token stays.
+  const WANTED = {
+    PATH: '/usr/bin',
+    HOME: '/var/lib/scan-server',
+    LANG: 'C.UTF-8',
+    SSH_AUTH_SOCK: '/run/agent.sock',
+    HTTPS_PROXY: 'http://proxy.example:3128',
+  }
+  assertEquals(childEnv((name) => server[name]), WANTED)
   await withSetup(async (s) => {
     const { spawn, calls } = fakePhysAg3D()
     const result = await runPhysAg3D(options(s, { env: (name) => server[name], _spawn: spawn }))
     assertEquals(result.status, 'ok', result.error)
     for (const call of calls) {
-      assertEquals(call.env, { PATH: '/usr/bin', HOME: '/var/lib/scan-server', LANG: 'C.UTF-8', SSH_AUTH_SOCK: '/run/agent.sock' }, call.args[1])
+      assertEquals(call.env, WANTED, call.args[1])
       assertFalse(JSON.stringify(call.env).includes('secret'), call.args[1])
     }
   })
@@ -708,14 +717,14 @@ Deno.test('a refusal before the worker starts reports PhysAg3D\'s own message, a
       run: {
         code: 2,
         stdout: '',
-        stderr: '{"error": "ValueError", "message": "Preflight failed. Do not remove flags or bypass permissions to continue."}\n',
+        stderr: '{"error": "ValueError", "message": "the environment check did not pass"}\n',
       },
     })
     const result = await runPhysAg3D(options(s, { _spawn: spawn }))
     assertEquals(result.status, 'error')
     assertEquals(
       result.error,
-      'PhysAg3D run failed: ValueError: Preflight failed. Do not remove flags or bypass permissions to continue.',
+      'PhysAg3D run failed: ValueError: the environment check did not pass',
     )
     assertFalse(result.runAttempted)
     assertFalse(await exists(`${s.assetDir}/${ASSET_ID}.delivery.json`), 'no report: nothing was sent')
@@ -735,8 +744,8 @@ Deno.test('a keyframe that is gone since the request is an error, not a skip, an
 
 Deno.test('cliProblem reads execute.py\'s {"error", "message"} line, and otherwise the tail of a traceback', () => {
   assertEquals(
-    cliProblem({ code: 2, stdout: '', stderr: '{"error": "ValueError", "message": "Use a new empty output directory; no resume or overwrite"}' }),
-    'failed: ValueError: Use a new empty output directory; no resume or overwrite',
+    cliProblem({ code: 2, stdout: '', stderr: '{"error": "ValueError", "message": "the case folder already holds files"}' }),
+    'failed: ValueError: the case folder already holds files',
   )
   const traceback = 'Traceback (most recent call last):\n  File "execute.py", line 17, in sha\nAttributeError: module \'hashlib\' has no attribute \'file_digest\'\n'
   assertStringIncludes(cliProblem({ code: 1, stdout: '', stderr: traceback }), "exited 1: ")

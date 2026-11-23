@@ -147,6 +147,10 @@ export const CHILD_ENV_NAMES = [
   'PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'TZ', 'TMPDIR',
   // The operator's SSH agent, for the generation host, and the Codex CLI's home, for its login.
   'SSH_AUTH_SOCK', 'CODEX_HOME',
+  // How this box reaches the network and whose certificates it trusts: the worker talks to the agent service over
+  // HTTPS. The real-server tests pass the same names to the server they start.
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy',
+  'SSL_CERT_FILE', 'SSL_CERT_DIR', 'REQUESTS_CA_BUNDLE', 'NODE_EXTRA_CA_CERTS',
   'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_RUNTIME_DIR',
   // What Python and the tools need to start on Windows, where PhysAg3D's own example controller runs.
   'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'COMSPEC', 'PATHEXT', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
