@@ -70,6 +70,7 @@ N/A. It reads an existing route's existing shape.
 ## Risks / potential issues
 
 - GPS accuracy and local magnetic fields limit what any GPS viewer can show. The list's distances are only as good as the fix.
+- In a native shell, `apiUrl` uses the Scan server address saved in that app's own storage. The locar wrapper is a separate app ([0004](0004-wrapper-engine-and-start-page.md)), and this page has no address setting yet, so on a fresh install it cannot load Places. It reports the failed request. The fix is a server-address entry on this page, built on `parseServerAddress` and `saveServerAddress` in `src/shared/api-base.ts`.
 
 ## Subtasks
 

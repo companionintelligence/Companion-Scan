@@ -47,7 +47,7 @@ N/A.
 
 ## Definition of Done
 
-- [ ] The Mobile Build iOS Simulator job compiles the branch. The run id is recorded here once it has run.
+- [x] The Mobile Build iOS Simulator job compiles the branch. Run 45256020164, at `8858c08` on 2026-11-23, succeeded. It fetched the package, built it as the module `ARKit_CoreLocation`, and compiled `GeoViewController.swift` and `ScanARPlugin.swift` with no error or warning in either. The same run's Android debug job passed too.
 - [ ] A device run: labels at the Places' directions, and the view closes and stops location.
 - Before any store build, not this ticket:
   - [ ] The location purpose string in `Info.plist` covers placing labels in the geo view.
@@ -60,7 +60,7 @@ N/A.
 
 ## Acceptance Criteria
 
-- [ ] The iOS app builds with the package resolved at the pinned revision.
+- [x] The iOS app builds with the package resolved at the pinned revision (run 45256020164).
 - [x] The scanner's view, session and world maps are untouched by this change.
 
 ## Risks / potential issues
@@ -72,5 +72,5 @@ N/A.
 
 - [x] Geo view controller and ScanAR methods
 - [x] Swift package pinned in the Xcode project
-- [ ] CI compile
+- [x] CI compile (run 45256020164)
 - [ ] Device run

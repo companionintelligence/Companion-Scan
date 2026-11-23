@@ -9,7 +9,7 @@ The four build targets the owner asked for on 2026-11-23, how each one is built,
 | Web, on locar.js | locar.js 0.2.12 (MIT) on the bundle's own three.js | `npm run build`. It emits `locar-viewer.html` (Places around you) and `locar.html` (the spike) | [0005](0005-locar-viewer.md), [0001](0001-locar-spike.md) |
 | Android, web wrapper on locar.js | The viewer page inside the Capacitor shell | The shell's web build (`scripts/native/build-web.mjs mobile`), then the viewer copied over `index.html`, `cap sync android` and `assembleRelease` | [0004](0004-wrapper-engine-and-start-page.md) |
 | Android, ARCore APK | The native ARCore plugin (`ScanARPlugin.java`) in the shell | The shell's default web build, `cap sync android` and `assembleRelease` | none: the shell already does this (ADR 0009) |
-| iOS, ARKit-CoreLocation on SceneKit | `GeoViewController.swift`, opened by `ScanAR.openGeoView` | The Mobile Build workflow's iOS Simulator job, on GitHub's macOS runner. The build host has no Xcode | [0006](0006-ios-geo-view.md) |
+| iOS, ARKit-CoreLocation on SceneKit | `GeoViewController.swift`, opened by `ScanAR.openGeoView` | The Mobile Build workflow's iOS Simulator job, on GitHub's macOS runner, because the build host has no Xcode. Run 45256020164 compiled it | [0006](0006-ios-geo-view.md) |
 
 The target list named RealityKit for iOS. On 2026-11-23 the owner chose SceneKit instead ([0003](0003-ios-renderer.md)). ARKit-CoreLocation renders with SceneKit, and the repo has no RealityKit code.
 
@@ -95,4 +95,4 @@ Until this wave's atlas pass, the atlas did not describe locar.js. The pass adde
 | [0003](0003-ios-renderer.md) | The iOS renderer | Decision | none | Decided: SceneKit |
 | [0004](0004-wrapper-engine-and-start-page.md) | Wrapper engine policy and start page | Decision and infra | 0002, 0005 | Open |
 | [0005](0005-locar-viewer.md) | Places around you: the locar.js viewer | Frontend | 0001, 0002 | Built |
-| [0006](0006-ios-geo-view.md) | iOS geo view: ARKit-CoreLocation on SceneKit | iOS | 0003 | Built for CI |
+| [0006](0006-ios-geo-view.md) | iOS geo view: ARKit-CoreLocation on SceneKit | iOS | 0003 | Compiled in CI (run 45256020164) |

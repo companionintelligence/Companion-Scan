@@ -25,6 +25,7 @@ Decide whether a locar wrapper may ship the 8th Wall engine, and how the wrapper
 
 - The local spike wrapper starts on the viewer ([0005](0005-locar-viewer.md)), copied over `index.html` before `cap sync`. That page has a Legal notices button, so the engine and ARCore notices can be reached from it.
 - It is built under its own application id, `com.companionintelligence.scan.locarspike`, with its own label, through a Gradle init script kept outside the repo. So it installs beside any other Scan build and never wipes the scanner's data. It is signed with a throwaway key.
+- It has its own app storage, so the Scan server address the main app saves does not reach it, and the viewer has no address setting yet. On a fresh install it shows the camera, the fix and the heading, but cannot load Places ([0005](0005-locar-viewer.md)).
 - It still bundles `assets/public/xr.js`, `xr-slam.js`, `xr-face.js`, the engine's resource files and the ARCore SDK. That was checked by entry name, not by bytes, and the APK was not extracted.
 - The licence sources conflict. `docs/audits/2026-11-11-publish-readiness.md:23` says `public/xr.js` carries a PolyForm Noncommercial restriction. `mobile/README.md:19` names the XR Engine License Agreement for the same file.
 
