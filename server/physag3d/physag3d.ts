@@ -33,6 +33,14 @@
  * does not resume or retry a case that has one. This driver never asks it to: a case with `execution.json` is read and
  * not run again, so a restart cannot send the image a second time.
  *
+ * ## The copy of the frame
+ *
+ * prepare copies the keyframe into the case folder, and the agent's work makes more copies there. Before prepare the
+ * driver writes a record of the frame beside the case folder (`<jobId>.source.json`, server/physag3d/asset_files.ts),
+ * and every deletion of the session's frames removes the whole case folder first, so no copy outlives its source. The
+ * copy is made inside the session's write queue, which those deletions wait in too, and the run holds the session
+ * until it ends: a deletion meanwhile is refused and says to try again.
+ *
  * ## What is not trusted
  *
  * delivery.json is written by the agent. Every path in it is resolved inside the case folder by real path before
@@ -45,8 +53,8 @@ import { whichPath } from '../exec_probe.ts'
 import { describeBudget, MAX_TIMER_MS, runWithDeadline } from '../run_with_deadline.ts'
 import { isServerSessionId, sessionDirPath } from '../session_id.ts'
 import { stderrTail } from '../splat/splat_train.ts'
-import { KEYFRAME_FILE_RE } from '../wp-a-keyframes.ts'
-import { isAssetId } from './asset_files.ts'
+import { KEYFRAME_FILE_RE, queueKeyframeWrite } from '../wp-a-keyframes.ts'
+import { CASE_SOURCE_SUFFIX, holdSessionFrames, isAssetId, writeCaseSource } from './asset_files.ts'
 
 // ── The request ─────────────────────────────────────────────────────────────
 
@@ -413,8 +421,12 @@ export type PhysAg3DSpawn = (
 ) => Promise<PhysAg3DSpawnResult>
 
 export interface PhysAg3DRunOptions {
-  /** The image: a keyframe the server holds, from `keyframeImagePath`. */
-  imagePath: string
+  /**
+   * The image: a keyframe the server holds, by the names it keeps it under. The session folder is spelled as the
+   * server spells it (`sessionsDir/sessionId`), because that string keys the session's write queue, which the copy
+   * shares with every removal of the session (server/wp-a-keyframes.ts, server/session_deletion.ts).
+   */
+  keyframe: { sessionsDir: string; sessionId: string; file: string }
   /** The scan's asset folder, where the two landed files go, and by default the case folder. */
   assetDir: string
   /** The job id. It names the landed files and the case folder. */
@@ -467,6 +479,9 @@ const SETUP_REMEDIATION =
  */
 export async function runPhysAg3D(opts: PhysAg3DRunOptions): Promise<PhysAg3DResult> {
   const progress = { runAttempted: false }
+  // For the whole run, a deletion of the session's frames is refused rather than run under the worker's feet: the case
+  // folder holds a copy of one of them (server/physag3d/asset_files.ts, `removeSessionCaseCopies`).
+  const release = holdSessionFrames(opts.keyframe.sessionId)
   try {
     return await runSteps(opts, progress)
   } catch (err) {
@@ -476,6 +491,8 @@ export async function runPhysAg3D(opts: PhysAg3DRunOptions): Promise<PhysAg3DRes
       runAttempted: progress.runAttempted,
       log: '',
     }
+  } finally {
+    release()
   }
 }
 
@@ -505,9 +522,16 @@ async function runSteps(opts: PhysAg3DRunOptions, progress: { runAttempted: bool
   if (!isAssetId(opts.assetId)) {
     return { status: 'error', error: 'an interactive asset is named by its job id, and this is not one', runAttempted: false, log: '' }
   }
+  const { sessionsDir, sessionId, file } = opts.keyframe
+  const sessionDir = sessionDirPath(sessionsDir, sessionId)
+  const keyframePath = keyframeImagePath(sessionsDir, sessionId, file)
+  if (!sessionDir || !keyframePath) {
+    return { status: 'error', error: 'the keyframe this job names is not one the server keeps', runAttempted: false, log: '' }
+  }
   const assetDir = resolve(opts.assetDir)
   const caseDir = caseDirFor(params, assetDir, opts.assetId)
-  const imagePath = resolve(opts.imagePath)
+  const caseParent = dirOf(caseDir)
+  const imagePath = resolve(keyframePath)
   const childEnvironment = childEnv(env)
   const run = (args: string[], deadlineMs: number) => spawn(python, args, childEnvironment, deadlineMs)
   const fail = (error: string, out?: PhysAg3DSpawnResult): PhysAg3DResult => ({
@@ -523,17 +547,28 @@ async function runSteps(opts: PhysAg3DRunOptions, progress: { runAttempted: bool
   if (state === 'unknown') {
     return fail('The case folder for this job holds something that is not a PhysAg3D case, so nothing was run. Queue a new job.')
   }
+  // A case from an earlier attempt has the record written before its prepare. One without gets it now, so that a later
+  // deletion of the session's frames finds the copy.
+  if (state !== 'new' && !(await isFile(`${caseParent}/${opts.assetId}${CASE_SOURCE_SUFFIX}`))) {
+    await writeCaseSource(caseParent, opts.assetId, { sessionId, keyframe: file })
+  }
   let runOutput: PhysAg3DSpawnResult | null = null
   if (state === 'attempted') {
     progress.runAttempted = true
   } else {
     if (state === 'new') {
-      // The keyframe can be gone since the request: the retention purge, or a deleted session.
-      const image = await Deno.lstat(imagePath).catch(() => null)
-      if (!image?.isFile || image.isSymlink) {
+      // In the session's write queue, which every removal of the session waits in too: a removal that got there first
+      // has taken the keyframe (so nothing is copied), and one that comes after finds this run holding the session.
+      const prepared = await queueKeyframeWrite(sessionDir, async () => {
+        // The keyframe can be gone since the request: the retention purge, or a deleted session.
+        const image = await Deno.lstat(imagePath).catch(() => null)
+        if (!image?.isFile || image.isSymlink) return null
+        await writeCaseSource(caseParent, opts.assetId, { sessionId, keyframe: file })
+        return await run(buildPrepareArgs(script, imagePath, configPath, caseDir), STEP_DEADLINE_MS)
+      })
+      if (!prepared) {
         return fail('The keyframe this job names is not on the server any more (purged, or deleted with its session).')
       }
-      const prepared = await run(buildPrepareArgs(script, imagePath, configPath, caseDir), STEP_DEADLINE_MS)
       if (prepared.code !== 0) return fail(`PhysAg3D prepare ${cliProblem(prepared)}`, prepared)
       opts.onProgress?.(0.4, 'prepared')
     }

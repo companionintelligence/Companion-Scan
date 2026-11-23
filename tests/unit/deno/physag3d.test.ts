@@ -39,10 +39,16 @@ import {
   STEP_DEADLINE_MS,
 } from '../../../server/physag3d/physag3d.ts'
 import {
+  caseFolderParents,
+  holdSessionFrames,
   INTERACTIVE_ASSET_DIR_SUFFIX,
   interactiveAssetFileMime,
   interactiveAssetFolderName,
   isAssetId,
+  removeSessionCaseCopies,
+  sessionFramesInUse,
+  SessionFramesInUseError,
+  writeCaseSource,
 } from '../../../server/physag3d/asset_files.ts'
 
 const ASSET_ID = 'job-1732000000000-0a1b2c3d'
@@ -108,7 +114,7 @@ async function withSetup(run: (s: Setup) => Promise<void>): Promise<void> {
 
 function options(s: Setup, extra: Partial<PhysAg3DRunOptions> = {}): PhysAg3DRunOptions {
   return {
-    imagePath: s.imagePath,
+    keyframe: { sessionsDir: s.sessions, sessionId: SESSION_ID, file: KEYFRAME },
     assetDir: s.assetDir,
     assetId: ASSET_ID,
     maxGlbBytes: 1_000_000,
@@ -343,7 +349,11 @@ Deno.test('a complete delivery lands the GLB and the report under the job id, an
     assertEquals(result.glbPath, `${s.assetDir}/${ASSET_ID}.glb`)
     assertEquals(result.glbBytes, GLB.length)
     assertEquals(await Deno.readFile(result.glbPath!), GLB)
-    assertEquals(await namesIn(s.assetDir), [ASSET_ID, `${ASSET_ID}.delivery.json`, `${ASSET_ID}.glb`], 'the case folder and the two landed files')
+    assertEquals(
+      await namesIn(s.assetDir),
+      [ASSET_ID, `${ASSET_ID}.delivery.json`, `${ASSET_ID}.glb`, `${ASSET_ID}.source.json`],
+      'the case folder, the two landed files and the record of the frame it copied',
+    )
     const written = await report(s)
     assertEquals(written.outcome, 'complete')
     assertEquals(written.glb, { landed: true, bytes: GLB.length })
@@ -537,7 +547,11 @@ Deno.test('a model that is not a binary glTF, not a .glb, or over the cap is not
       const result = await runPhysAg3D(options(s, { ...extra, _spawn: spawn }))
       assertEquals(result.status, 'error', label)
       assertStringIncludes(result.error ?? '', says, label)
-      assertEquals(await namesIn(s.assetDir), [ASSET_ID, `${ASSET_ID}.delivery.json`], `${label}: no GLB and no partial copy`)
+      assertEquals(
+        await namesIn(s.assetDir),
+        [ASSET_ID, `${ASSET_ID}.delivery.json`, `${ASSET_ID}.source.json`],
+        `${label}: no GLB and no partial copy`,
+      )
     })
   }
 })
@@ -651,6 +665,79 @@ Deno.test({
       assertMatch(seen, /^PATH=/m, 'PATH is on the allowlist')
     })
   },
+})
+
+// ── The copy of the frame ────────────────────────────────────────────────────
+
+Deno.test('the record of the frame is written before prepare copies it, and the session is held for the whole run', async () => {
+  await withSetup(async (s) => {
+    const seen: Array<{ step: string; held: boolean; record: unknown }> = []
+    const { spawn: inner } = fakePhysAg3D()
+    const spawn: PhysAg3DSpawn = async (bin, args, env, deadlineMs) => {
+      const record = await Deno.readTextFile(`${s.assetDir}/${ASSET_ID}.source.json`).then(JSON.parse, () => null)
+      seen.push({ step: args[1], held: sessionFramesInUse(SESSION_ID), record })
+      return await inner(bin, args, env, deadlineMs)
+    }
+    const result = await runPhysAg3D(options(s, { _spawn: spawn }))
+    assertEquals(result.status, 'ok', result.error)
+    assertEquals(seen.map((step) => [step.step, step.held]), [['prepare', true], ['plan', true], ['run', true]])
+    const record = seen[0].record as Record<string, unknown>
+    assertEquals([record.sessionId, record.keyframe], [SESSION_ID, KEYFRAME], 'there before prepare copies the image')
+    assertFalse(sessionFramesInUse(SESSION_ID), 'released when the run ends')
+  })
+})
+
+/** A case as a job leaves it in `parent`: the folder with its copy of the frame, the record, and the two landed files. */
+async function makeCase(parent: string, id: string, sessionId: string): Promise<void> {
+  await Deno.mkdir(`${parent}/${id}/input`, { recursive: true })
+  await Deno.writeTextFile(`${parent}/${id}/input/source.jpg`, 'a copy of a camera frame')
+  await Deno.mkdir(`${parent}/${id}/renders`, { recursive: true })
+  await Deno.writeTextFile(`${parent}/${id}/renders/comparison.png`, 'the frame again, beside the asset')
+  await Deno.writeFile(`${parent}/${id}.glb`, GLB)
+  await Deno.writeTextFile(`${parent}/${id}.delivery.json`, '{}')
+  await writeCaseSource(parent, id, { sessionId, keyframe: KEYFRAME })
+}
+
+Deno.test('the copies of a session\'s frames go wherever the case folders are, whole, and the landed files stay', async () => {
+  await withSetup(async (s) => {
+    const scans = `${s.root}/scans`
+    const runs = `${s.root}/runs`
+    const other = 'sess-physag3d-test-0002'
+    await makeCase(s.assetDir, 'job-1-0a1b2c3d', SESSION_ID)
+    await makeCase(runs, 'job-2-0a1b2c3d', SESSION_ID)
+    await makeCase(`${scans}/200_hall${INTERACTIVE_ASSET_DIR_SUFFIX}`, 'job-3-0a1b2c3d', other)
+    const parents = await caseFolderParents(scans, runs)
+    assertEquals(parents.sort(), [`${scans}/100_room.interactive`, `${scans}/200_hall.interactive`, runs].sort())
+    assertEquals(await removeSessionCaseCopies(parents, SESSION_ID), 2)
+    for (const [parent, id] of [[s.assetDir, 'job-1-0a1b2c3d'], [runs, 'job-2-0a1b2c3d']]) {
+      assertFalse(await exists(`${parent}/${id}`), 'the case folder, with every copy in it, went')
+      assertFalse(await exists(`${parent}/${id}.source.json`))
+      assert(await exists(`${parent}/${id}.glb`), 'what was made from the frame stays, as a splat does')
+      assert(await exists(`${parent}/${id}.delivery.json`))
+    }
+    assert(await exists(`${scans}/200_hall.interactive/job-3-0a1b2c3d/input/source.jpg`), 'another session\'s case stays')
+    assertEquals(await removeSessionCaseCopies(parents, SESSION_ID), 0, 'a second pass finds nothing')
+    assertEquals(await caseFolderParents(`${s.root}/no-scans`, null), [], 'no scans folder, no parents')
+  })
+})
+
+Deno.test('while a run holds the session, its copies are not removed, and the removal says why', async () => {
+  await withSetup(async (s) => {
+    await makeCase(s.assetDir, 'job-1-0a1b2c3d', SESSION_ID)
+    const release = holdSessionFrames(SESSION_ID)
+    let refused: unknown
+    try {
+      await removeSessionCaseCopies([s.assetDir], SESSION_ID)
+    } catch (error) {
+      refused = error
+    } finally {
+      release()
+    }
+    assert(refused instanceof SessionFramesInUseError)
+    assertEquals((refused as Error).name, 'SessionFramesInUseError')
+    assert(await exists(`${s.assetDir}/job-1-0a1b2c3d/input/source.jpg`), 'nothing was removed')
+    assertEquals(await removeSessionCaseCopies([s.assetDir], SESSION_ID), 1, 'and once the run is over it goes')
+  })
 })
 
 // ── Never twice ──────────────────────────────────────────────────────────────

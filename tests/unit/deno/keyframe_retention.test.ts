@@ -20,6 +20,12 @@ import {
   runKeyframePurge,
   scheduleKeyframeRetention,
 } from '../../../server/keyframe_retention.ts'
+import {
+  caseFolderParents,
+  holdSessionFrames,
+  removeSessionCaseCopies,
+  writeCaseSource,
+} from '../../../server/physag3d/asset_files.ts'
 import { cannotRemoveFromReadOnlyFolder } from './read_only_folders.ts'
 
 /** Root can remove from a read-only folder, so a test that makes its failure that way is ignored there, not passed. */
@@ -106,6 +112,19 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+/** A thing-interactive-asset case in `parent`, as the job leaves it: the folder with its copy of a frame, the record and the landed GLB. */
+async function makeCase(parent: string, id: string, sessionId: string): Promise<void> {
+  await Deno.mkdir(`${parent}/${id}/input`, { recursive: true })
+  await Deno.writeTextFile(`${parent}/${id}/input/source.jpg`, 'a copy of a camera frame')
+  await Deno.writeTextFile(`${parent}/${id}.glb`, 'glTF')
+  await writeCaseSource(parent, id, { sessionId, keyframe: 'kf-00000.jpg' })
+}
+
+/** What main.ts passes: the case folders beside every scan and in a runs folder. */
+function copiesRemover(scans: string, runs: string | null) {
+  return async (sessionId: string) => await removeSessionCaseCopies(await caseFolderParents(scans, runs), sessionId)
+}
+
 // ── The setting ─────────────────────────────────────────────────────────────────
 
 Deno.test('the setting keeps everything unless it is a number of days', () => {
@@ -153,6 +172,63 @@ Deno.test('a session is purged when its last activity is older than the period, 
     assertFalse(await exists(`${sessions}/${OLD}`), 'the old session is gone')
     assert(await exists(`${sessions}/${MID}`))
     assert(await exists(`${sessions}/${NEW}`))
+  })
+})
+
+Deno.test('a purge takes the case folders that copied an expired session\'s frames, and a dry run or a young session keeps them', async () => {
+  await withTree(async ({ root, scans, sessions }) => {
+    await makeSession(sessions, OLD, { ageDays: 100 })
+    await makeSession(sessions, NEW, { ageDays: 0 })
+    const runs = `${root}/runs`
+    await makeCase(`${scans}/r.interactive`, 'job-1-0a1b2c3d', OLD)
+    await makeCase(runs, 'job-2-0a1b2c3d', OLD)
+    await makeCase(`${scans}/r.interactive`, 'job-3-0a1b2c3d', NEW)
+    const removeCopies = copiesRemover(scans, runs)
+
+    const dry = await purgeExpiredKeyframeSessions({ sessionsDir: sessions, scansDir: scans, retentionDays: 30, dryRun: true, now: NOW, removeCopies })
+    assertEquals(dry.expired, 1)
+    assert(await exists(`${scans}/r.interactive/job-1-0a1b2c3d/input/source.jpg`), 'a dry run removes no copy')
+
+    const real = await purgeExpiredKeyframeSessions({ sessionsDir: sessions, scansDir: scans, retentionDays: 30, dryRun: false, now: NOW, removeCopies })
+    assertEquals([real.deleted, real.failed], [1, 0])
+    assertFalse(await exists(`${sessions}/${OLD}`))
+    assertFalse(await exists(`${scans}/r.interactive/job-1-0a1b2c3d`), 'the copy beside the scan went with the frames')
+    assertFalse(await exists(`${runs}/job-2-0a1b2c3d`), 'and the one in the runs folder')
+    assert(await exists(`${scans}/r.interactive/job-1-0a1b2c3d.glb`), 'the asset made from them stays, as a splat does')
+    assert(await exists(`${scans}/r.interactive/job-3-0a1b2c3d/input/source.jpg`), 'a young session\'s copy stays')
+  })
+})
+
+Deno.test('a purge keeps an expired session whose frames a run is using, with its copy, for the next pass', async () => {
+  await withTree(async ({ scans, sessions }) => {
+    await makeSession(sessions, OLD, { ageDays: 100 })
+    await makeCase(`${scans}/r.interactive`, 'job-1-0a1b2c3d', OLD)
+    const removeCopies = copiesRemover(scans, null)
+    const release = holdSessionFrames(OLD)
+    const held = await purgeExpiredKeyframeSessions({ sessionsDir: sessions, scansDir: scans, retentionDays: 30, dryRun: false, now: NOW, removeCopies })
+      .finally(release)
+    assertEquals([held.expired, held.deleted, held.failed], [1, 0, 1])
+    assert(await exists(`${sessions}/${OLD}/kf-00000.jpg`), 'the frames were kept')
+    assert(await exists(`${scans}/r.interactive/job-1-0a1b2c3d/input/source.jpg`), 'and so was the copy')
+    const next = await purgeExpiredKeyframeSessions({ sessionsDir: sessions, scansDir: scans, retentionDays: 30, dryRun: false, now: NOW, removeCopies })
+    assertEquals([next.deleted, next.failed], [1, 0], 'the next pass takes both')
+    assertFalse(await exists(`${scans}/r.interactive/job-1-0a1b2c3d`))
+  })
+})
+
+Deno.test('the job\'s pass hands its copy remover to the purge', async () => {
+  await withTree(async ({ scans, sessions }) => {
+    await makeSession(sessions, OLD, { ageDays: 100 })
+    await makeCase(`${scans}/r.interactive`, 'job-1-0a1b2c3d', OLD)
+    const env = (name: string) => (name === KEYFRAME_RETENTION_ENV ? '30' : undefined)
+    const saved = console.log
+    console.log = () => {}
+    try {
+      await runKeyframePurge({ sessionsDir: sessions, scansDir: scans, env, dryRun: false, now: NOW, removeCopies: copiesRemover(scans, null) })
+    } finally {
+      console.log = saved
+    }
+    assertFalse(await exists(`${scans}/r.interactive/job-1-0a1b2c3d`))
   })
 })
 

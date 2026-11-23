@@ -13,6 +13,24 @@ Driver: `server/physag3d/physag3d.ts`. File layout: `server/physag3d/asset_files
 `_runThingInteractiveAssetJob` in `server/main.ts`. It is a `WorldJob` like every other background task
 ([ADR 0003](../adr/0003-merged-job-system.md)); nothing here adds a queue.
 
+### Limits to know before turning it on
+
+None of these is enforced or worked around by the server. They are how it behaves.
+
+- **A run holds the server's only job slot for hours.** The job queue runs one job at a time across every Place. A
+  run lasts up to PhysAg3D's budget plus 15 minutes (three hours and a quarter by default), and every other job waits
+  for it, including the `optimize-scan` that every upload queues. There is no cancel.
+- **One job per scan at a time.** Deduplication is by scan: a second request for the same scan while one is queued or
+  running gets that job back, whichever keyframe it names.
+- **The server's deadline stops `execute.py`, not the worker.** PhysAg3D starts its agent worker in a session of its own,
+  so the server's kill does not reach it: a worker can outlive its run and keep writing into its case folder. The job's
+  error says so, and the case's `execution.json` names the worker's process to stop by hand.
+- **The worker runs a shell as the server's user.** It is an agent with command access on the machine that runs the
+  controller, which by default is the server, as the server's user: it can read what the server can read, including the
+  scans, the worlds and the server's `.env`. Its instructions tell it to stay in its case folder, and that is all that
+  does. Run the controller as a separate unprivileged user, or on another host. The server does not do this for you and
+  does not check that it was done: `PHYSAG3D_PYTHON` is where a wrapper that switches user would go.
+
 ---
 
 ## Request
@@ -83,8 +101,13 @@ artifact, so a kinematic animation or an untested physics scene is never read as
 scans/<scan>.interactive/        one folder per scan, beside it (like <scan>.4d/)
   <jobId>.glb                    the refined GLB, copied from the case        GET /scans/<scan>.interactive/<jobId>.glb
   <jobId>.delivery.json          the server's delivery report                  GET /scans/<scan>.interactive/<jobId>.delivery.json
-  <jobId>/                       the PhysAg3D case folder (not served), unless PHYSAG3D_RUNS_DIR is set
+  <jobId>.source.json            which session's keyframe the case copies (not served)
+  <jobId>/                       the PhysAg3D case folder (not served)
 ```
+
+With `PHYSAG3D_RUNS_DIR` set, `<jobId>.source.json` and `<jobId>/` are in that folder instead, side by side. The record
+is written before `prepare` copies the image (prepare wants an empty case folder, so it cannot go inside), and it is how
+a deletion of the session's frames finds the copy.
 
 A folder and not files beside the scan: a `.glb` at the top of the scans directory is listed as a scan, and a `.json`
 there is read as a scan's sidecar. The route serves exactly the two file names above from such a folder, so nothing in
@@ -121,7 +144,7 @@ All optional. Unset, the job completes as `skipped` with a hint, and nothing run
 | `PHYSAG3D_DIR` | unset | The PhysAg3D checkout, which holds `execute.py`. **Unset ⇒ skipped** |
 | `PHYSAG3D_CONFIG` | unset | PhysAg3D's runtime config: the agent CLI, Blender, the generation host and the case budget. **Unset ⇒ skipped** |
 | `PHYSAG3D_PYTHON` | `python3` on PATH | The interpreter that runs `execute.py`: Python 3.11 or later, standard library only |
-| `PHYSAG3D_RUNS_DIR` | the scan's `<scan>.interactive/` folder | Where case folders go, one per job, named by job id. A folder set here is **not** removed with the scan |
+| `PHYSAG3D_RUNS_DIR` | the scan's `<scan>.interactive/` folder | Where case folders go, one per job, named by job id. Wherever they are, a case folder goes when the frame it copied does (below) |
 
 There is no time limit variable: the budget is the runtime config's `max_case_active_seconds`, and a second knob for it
 would be a second name for the same thing. Keep `WORLD_JOB_DEADLINE_MS` (the job queue's backstop, 12 h by default) above
@@ -159,11 +182,11 @@ worker:
   operator's account and its terms. The prompt goes with it, and names the case folder's path on this machine.
 - **The keyframe goes to the generation host.** The worker submits it over SSH to the host in the config's `trellis`
   block, into a per-run folder under that host's `jobs_root`.
-- **The worker runs commands on this machine.** It is an agent with a shell, started with the flags PhysAg3D's launcher
-  requires (`--approve-for-me` among them), as the user the server runs as. PhysAg3D's protocol tells it to write only
-  inside its case folder and not to read credential files.
-  Nothing in this repo enforces that, and what it reads can reach the agent service. Run the server as a user whose files
-  you are content for that agent to read.
+- **The worker runs commands on the controller's machine.** It is an agent with a shell, started with the flags
+  PhysAg3D's launcher requires (`--approve-for-me` among them), as the user that runs the controller: the server's own,
+  unless the operator arranges otherwise. PhysAg3D's protocol tells it to write only inside its case folder and not to
+  read credential files. Nothing in this repo enforces that, and what it reads can reach the agent service (see
+  [Limits](#limits-to-know-before-turning-it-on)).
 - **Not sent by this server:** any other keyframe, the scan's GLB, the world file, or the server's environment. The child
   process gets an allowlist (`CHILD_ENV_NAMES`: PATH, HOME, the locale, the SSH agent socket, `CODEX_HOME`, the proxy
   and certificate settings, and what Windows needs to start Python), so tokens such as `CI_SERVER_TOKEN` and
@@ -175,35 +198,36 @@ delete them.
 ## What stays on the box, and what removes it
 
 - **The case folder**: a copy of the keyframe (`input/source.jpg`), PhysAg3D's method files, the worker's logs, and
-  everything it delivered.
-- **The two landed files.**
+  everything it delivered, which includes more images made from the frame (renders, comparisons, the generation host's
+  condition image).
+- **The two landed files**: the refined GLB and the server's report.
 
-Deleting the scan removes its `<scan>.interactive/` folder, so with the default layout it removes the case folders and
-their copies of the frame too. Three things do not:
+**A case folder does not outlive the frame it copied.** Whenever a session's frames are removed, every case folder that
+copied one of them is removed first, whole, wherever it is (beside a scan or under `PHYSAG3D_RUNS_DIR`):
+`DELETE /sessions/:id` ("Delete frames this phone sent"), the retention purge (`KEYFRAME_RETENTION_DAYS`), deleting the
+scan, and clearing all scans. The whole folder goes and not only `input/`, because the agent's own images of the frame
+are in it under names nobody chose in advance. The landed GLB and report stay, as a splat made from the same frames
+does, until the scan is deleted.
 
-- a case folder under `PHYSAG3D_RUNS_DIR`, which stays until the operator removes it;
-- the keyframe purge (`KEYFRAME_RETENTION_DAYS`), which removes a session's frames and not a copy in a case folder;
-- `DELETE /sessions/:id`, for the same reason.
+While a run is using a session's frames, those deletions keep the frames and the copy, and say so: `DELETE /sessions/:id`
+answers 500 with "try again when it has finished" (a phone keeps the session on its list and asks again; a 409 would make
+it drop the request), and the purge counts the session as not deleted and takes it on its next pass. The copy is made
+inside the session's write queue, which every removal of the session waits in too, so a deletion either finishes before
+the copy (and the job then finds the keyframe gone) or finds the run holding the session.
+
+Not covered: what the agent service and the generation host received, and a worker that outlived the server's deadline
+and writes into its case folder after the folder was removed. That folder has no record left to be found by.
 
 ---
 
 ## Operational properties
 
-**A run holds the job slot.** The job queue runs one job at a time across every world (ADR 0003). For as long as a run
-lasts, up to the budget plus 15 minutes, no other job runs: not a splat, and not the `optimize-scan` every upload queues.
-There is no cancel.
-
-**One per scan at a time.** A second request for the same scan while one is queued or running returns that job, whatever
-keyframe it names (ADR 0003's dedupe, keyed by scan). Queue the next one when it has finished.
+The [limits](#limits-to-know-before-turning-it-on) above come first. Beyond them:
 
 **A restart does not send the image twice.** Boot recovery requeues the job with the same id, so it finds the case folder
 its first attempt made. A case PhysAg3D has started (it has `execution.json`) is never run again: the job reads its
 `delivery.json` if there is one, and otherwise fails saying PhysAg3D does not resume a case. A case that was only prepared
 continues from `plan`.
-
-**The server's stop does not reach the worker.** If the server's deadline fires, it kills `execute.py`. PhysAg3D starts
-its worker in a session of its own, so the worker can outlive that kill: the job's error says so, and the case's
-`execution.json` names the worker's process.
 
 **Progress** moves at step boundaries only: 0.4 prepared, 0.45 planned, 0.5 running, 1 done. Nothing reports progress
 during the run itself.
@@ -242,7 +266,10 @@ does not change.
   job id's, and the keyframe and served names cannot leave their folders;
 - the child's environment holds no server token, through the real spawn as well as through the seam;
 - a case already started is never run again;
-- the asset folder goes with its scan and with "delete all", and nothing in `server/` queues the job by itself.
+- the asset folder goes with its scan and with "delete all", and nothing in `server/` queues the job by itself;
+- a case folder goes, whole, before the session whose frame it copied, through `DELETE /sessions/:id`, the purge, scan
+  deletion and "delete all", beside a scan and in a runs folder, and stays with its session while a run holds it (unit
+  tests, and on the real server for the route and the purge).
 
 The `_spawn` seam stands in for `execute.py`. What it writes follows PhysAg3D's `execute.py` and its worker protocol
 (`method/WORKER_PROMPT.md`), as read at upstream commit `3b0dab9`.

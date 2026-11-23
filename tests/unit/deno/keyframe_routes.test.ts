@@ -23,6 +23,7 @@ import { fromFileUrl } from 'jsr:@std/path@^1.0.0'
 import { REPO_ROOT } from '../../../server/repo-root.ts'
 import type { WorldJob } from '../../../src/world/types.ts'
 import { safeSlug } from '../../../server/scan_id.ts'
+import { writeCaseSource } from '../../../server/physag3d/asset_files.ts'
 import { cannotRemoveFromReadOnlyFolder } from './read_only_folders.ts'
 
 /** Root can write anywhere, so a test that makes its failure with permissions is ignored there, not passed. */
@@ -516,6 +517,40 @@ Deno.test('with KEYFRAME_RETENTION_DAYS set, a purge runs at boot: old streamed 
     assertStringIncludes(log, '[keyframe-retention]')
     for (const secret of [OLD, RECENT, UPLOAD, server.dirs.root]) assertFalse(log.includes(secret), `the log names ${secret}`)
     assertFalse(/\/keyframe|kf-00000/.test(log.split('\n').filter((line) => line.includes('[keyframe-retention]')).join('\n')), 'the retention lines name no file')
+  } finally {
+    await server.stop()
+  }
+})
+
+Deno.test('a copy of a frame in a PhysAg3D case folder goes when its session is purged or deleted, and the asset made from it stays', async () => {
+  const oldCase = 'room.interactive/job-1700000000001-0a1b2c3d'
+  const recentCase = 'room.interactive/job-1700000000002-0a1b2c3d'
+  const server = await startServer({
+    env: { KEYFRAME_RETENTION_DAYS: '30' },
+    seed: async (dirs) => {
+      await seedSession(dirs, OLD, 90)
+      await seedSession(dirs, RECENT, 3)
+      for (const [path, sessionId] of [[oldCase, OLD], [recentCase, RECENT]]) {
+        const [folder, id] = path.split('/') as [string, string]
+        await Deno.mkdir(`${dirs.scans}/${path}/input`, { recursive: true })
+        await Deno.writeTextFile(`${dirs.scans}/${path}/input/source.jpg`, 'a copy of a camera frame')
+        await Deno.writeFile(`${dirs.scans}/${path}.glb`, glb())
+        await writeCaseSource(`${dirs.scans}/${folder}`, id, { sessionId, keyframe: 'kf-00000.jpg' })
+      }
+    },
+  })
+  try {
+    const job = await purgeJob(server)
+    assertStringIncludes(job.result ?? '', 'deleted 1 of 2', `${job.error}\n${server.log()}`)
+    assertFalse(await exists(`${server.dirs.scans}/${oldCase}`), 'the purge took the copy with the frames')
+    assert(await exists(`${server.dirs.scans}/${oldCase}.glb`), 'and left the asset made from them')
+    assert(await exists(`${server.dirs.scans}/${recentCase}/input/source.jpg`), 'a session inside the period keeps its copy')
+
+    const removed = await server.request('DELETE', `/sessions/${RECENT}`)
+    assertEquals(removed.status, 200, removed.text)
+    assertFalse(await exists(`${server.dirs.sessions}/${RECENT}`))
+    assertFalse(await exists(`${server.dirs.scans}/${recentCase}`), 'deleting the frames took the copy too')
+    assert(await exists(`${server.dirs.scans}/${recentCase}.glb`))
   } finally {
     await server.stop()
   }

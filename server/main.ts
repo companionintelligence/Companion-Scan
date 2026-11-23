@@ -121,11 +121,19 @@ import {
   saveRegistry,
 } from './wp-a-projects.ts'
 import { type Person4DClip, runPerson4D } from './person4d/person_4d.ts'
-import { deliveryResultText, interactiveAssetRequestProblem, keyframeImagePath, runPhysAg3D } from './physag3d/physag3d.ts'
 import {
+  deliveryResultText,
+  interactiveAssetRequestProblem,
+  keyframeImagePath,
+  resolveParams as resolvePhysAg3DParams,
+  runPhysAg3D,
+} from './physag3d/physag3d.ts'
+import {
+  caseFolderParents,
   INTERACTIVE_ASSET_DIR_SUFFIX,
   interactiveAssetFileMime,
   interactiveAssetFolderName,
+  removeSessionCaseCopies,
 } from './physag3d/asset_files.ts'
 import {
   joinRoom,
@@ -1015,6 +1023,7 @@ app.delete('/scans/:filename', async (c) => {
     claimJobs: (name) => scanWorlds.claimJobs(name),
     dropWorldExports: (name, scanFound) => scanWorlds.dropExportsHolding(name, { scanFound }),
     removeFromWorlds: removeScanFromWorlds,
+    removeSessionCopies: removeSessionCaseCopiesHere,
   })
   if (reply.status === 200) broadcast({ type: EVENT.SCAN_DELETED, filename })
   return c.json(reply.body, reply.status)
@@ -1032,6 +1041,7 @@ app.delete('/scans', async (c) => {
     runningJobs: () => scanWorlds.runningJobs(),
     dropAllWorldExports: () => scanWorlds.dropAllExports(),
     removeAllFromWorlds: removeAllScansFromWorlds,
+    removeSessionCopies: removeSessionCaseCopiesHere,
   })
   if (reply.status === 200) broadcast({ type: EVENT.SCANS_CLEARED, deleted: reply.body['deleted'] as number })
   return c.json(reply.body, reply.status)
@@ -1145,7 +1155,7 @@ app.post('/sessions/:id/keyframes', async (c) => {
 // DELETE /sessions/:id — removes one session's camera frames. A phone that withdraws its consent to send frames
 // deletes the ones it sent through this. Behind the same session guard as DELETE /scans/:filename.
 app.delete('/sessions/:id', async (c) => {
-  const reply = await deleteStreamedSession(SESSIONS_DIR, c.req.param('id'))
+  const reply = await deleteStreamedSession(SESSIONS_DIR, c.req.param('id'), { removeCopies: removeSessionCaseCopiesHere })
   return c.json(reply.body, reply.status)
 })
 
@@ -4702,15 +4712,16 @@ async function _runThingInteractiveAssetJob(slug: string, jobId: string): Promis
     const claimed = await claimJobScan(slug, jobId)
     if (!claimed) return
     const { scan, payload } = claimed
-    const imagePath = keyframeImagePath(SESSIONS_DIR, scan.sessionId, payload?.['keyframe'])
-    if (!imagePath) {
+    const sessionId = scan.sessionId
+    const keyframe = asString(payload?.['keyframe'])
+    if (!sessionId || !keyframe || !keyframeImagePath(SESSIONS_DIR, sessionId, keyframe)) {
       // Unreachable while jobFailureReason holds: it fails such a request before the claim hands it back.
       await failWorldJob(slug, jobId, "thing-interactive-asset needs payload.keyframe naming one of the scan's keyframes.")
       return
     }
     const folder = interactiveAssetFolderName(scan.filename)
     const result = await runPhysAg3D({
-      imagePath,
+      keyframe: { sessionsDir: SESSIONS_DIR, sessionId, file: keyframe },
       assetDir: `${SCANS_DIR}/${folder}`,
       assetId: jobId,
       maxGlbBytes: UPLOAD_MAX_SCAN_BYTES,
@@ -4782,6 +4793,15 @@ async function _runThingInteractiveAssetJob(slug: string, jobId: string): Promis
     console.error('[physag3d] job failed:', error)
     await failWorldJob(slug, jobId, errorMessage(error))
   }
+}
+
+/**
+ * Removes the PhysAg3D case folders that copied a frame of `sessionId` (server/physag3d/asset_files.ts), before the
+ * session's frames go: every route and job that removes a session's frames passes it, so the copy never outlives the
+ * frame. Throws, and the session is kept, while a thing-interactive-asset run is using the frames.
+ */
+async function removeSessionCaseCopiesHere(sessionId: string): Promise<number> {
+  return await removeSessionCaseCopies(await caseFolderParents(SCANS_DIR, resolvePhysAg3DParams({}).runsDir), sessionId)
 }
 
 async function _runSplatTrainJob(slug: string, jobId: string): Promise<void> {
@@ -7267,7 +7287,13 @@ async function _runKeyframePurgeJob(slug: string, jobId: string): Promise<void> 
   try {
     // Only an explicit dryRun:false removes anything; a request that says anything else only reports (keyframe_retention.ts).
     const request = purgeRequestFromPayload((await loadWorld(slug)).jobs.find(j => j.jobId === jobId)?.payload)
-    const summary = await runKeyframePurge({ sessionsDir: SESSIONS_DIR, scansDir: SCANS_DIR, env: (name) => Deno.env.get(name), ...request })
+    const summary = await runKeyframePurge({
+      sessionsDir: SESSIONS_DIR,
+      scansDir: SCANS_DIR,
+      env: (name) => Deno.env.get(name),
+      removeCopies: removeSessionCaseCopiesHere,
+      ...request,
+    })
     await commitWorldJob(slug, jobId, (job) => {
       job.status = 'completed'
       job.result = summary

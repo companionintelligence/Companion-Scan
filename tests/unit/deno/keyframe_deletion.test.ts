@@ -24,6 +24,12 @@ import {
   UNPUBLISHED_UPLOAD_MAX_AGE_MS,
 } from '../../../server/session_deletion.ts'
 import { queueKeyframeWrite } from '../../../server/wp-a-keyframes.ts'
+import {
+  caseFolderParents,
+  holdSessionFrames,
+  removeSessionCaseCopies,
+  writeCaseSource,
+} from '../../../server/physag3d/asset_files.ts'
 import { cannotRemoveFromReadOnlyFolder } from './read_only_folders.ts'
 
 /** Root can remove from a read-only folder, so a test that makes its failure that way is ignored there, not passed. */
@@ -400,6 +406,85 @@ Deno.test('deleting one session refuses a bad id, and the session an upload is m
       assertEquals(reply.status, 409, `${id} is a scan's own data`)
       assert(await exists(`${sessions}/${id}`), 'nothing was removed')
     }
+  })
+})
+
+// ── The copies of a session's frames in PhysAg3D case folders ──────────────────
+
+/** A thing-interactive-asset case in `parent`, as the job leaves it: the folder with its copy of a frame, the record and the landed files. */
+async function makeCase(parent: string, id: string, sessionId: string): Promise<void> {
+  await Deno.mkdir(`${parent}/${id}/input`, { recursive: true })
+  await Deno.writeTextFile(`${parent}/${id}/input/source.jpg`, 'a copy of a camera frame')
+  await Deno.writeTextFile(`${parent}/${id}.glb`, 'glTF')
+  await writeCaseSource(parent, id, { sessionId, keyframe: 'kf-00000.jpg' })
+}
+
+/** What main.ts passes: the case folders beside every scan and in a runs folder. */
+function copiesRemover(scans: string, runs: string | null) {
+  return async (sessionId: string) => await removeSessionCaseCopies(await caseFolderParents(scans, runs), sessionId)
+}
+
+Deno.test('deleting one streamed session takes the case folders that copied its frames, wherever they are, and nothing else', async () => {
+  await withTree(async ({ root, scans, sessions }) => {
+    await makeSession(sessions, S1, { glbFilename: 'a.glb' })
+    await makeSession(sessions, S2, { glbFilename: 'b.glb' })
+    const runs = `${root}/runs`
+    await makeCase(`${scans}/a.interactive`, 'job-1-0a1b2c3d', S1)
+    await makeCase(runs, 'job-2-0a1b2c3d', S1)
+    await makeCase(`${scans}/b.interactive`, 'job-3-0a1b2c3d', S2)
+    const reply = await deleteStreamedSession(sessions, S1, { removeCopies: copiesRemover(scans, runs) })
+    assertEquals(reply.status, 200, JSON.stringify(reply.body))
+    assertFalse(await exists(`${sessions}/${S1}`))
+    assertFalse(await exists(`${scans}/a.interactive/job-1-0a1b2c3d`), 'the copy beside the scan went with the frame')
+    assertFalse(await exists(`${runs}/job-2-0a1b2c3d`), 'and the one in the runs folder')
+    assertFalse(await exists(`${scans}/a.interactive/job-1-0a1b2c3d.source.json`))
+    assert(await exists(`${scans}/a.interactive/job-1-0a1b2c3d.glb`), 'the asset made from it stays, as a splat does')
+    assert(await exists(`${sessions}/${S2}`))
+    assert(await exists(`${scans}/b.interactive/job-3-0a1b2c3d/input/source.jpg`), 'another session\'s copy stays')
+  })
+})
+
+Deno.test('a session whose frames a run is using is kept with its copies, and the answer is one a phone retries', async () => {
+  await withTree(async ({ scans, sessions }) => {
+    await makeSession(sessions, S1, { glbFilename: 'a.glb' })
+    await makeCase(`${scans}/a.interactive`, 'job-1-0a1b2c3d', S1)
+    const release = holdSessionFrames(S1)
+    const reply = await deleteStreamedSession(sessions, S1, { removeCopies: copiesRemover(scans, null) }).finally(release)
+    // Not a 409: the phone drops a session it gets a 409 for, and keeps one it gets a 500 for (keyframe-consent.ts).
+    assertEquals(reply.status, 500)
+    assertEquals(reply.body['reason'], 'SessionFramesInUseError')
+    assert(String(reply.body['error']).includes('Try again'), String(reply.body['error']))
+    assert(await exists(`${sessions}/${S1}/kf-00000.jpg`), 'the frames were kept')
+    assert(await exists(`${scans}/a.interactive/job-1-0a1b2c3d/input/source.jpg`), 'and so was the copy')
+    assertEquals((await deleteStreamedSession(sessions, S1, { removeCopies: copiesRemover(scans, null) })).status, 200, 'after the run, it goes')
+    assertFalse(await exists(`${scans}/a.interactive/job-1-0a1b2c3d`))
+  })
+})
+
+Deno.test('a session already gone still has its copies removed, and answers 404 as before', async () => {
+  await withTree(async ({ scans, sessions }) => {
+    await makeCase(`${scans}/a.interactive`, 'job-1-0a1b2c3d', S1)
+    const reply = await deleteStreamedSession(sessions, S1, { removeCopies: copiesRemover(scans, null) })
+    assertEquals(reply.status, 404)
+    assertFalse(await exists(`${scans}/a.interactive/job-1-0a1b2c3d`), 'a copy a first deletion left is taken by the next')
+  })
+})
+
+Deno.test('deleting a scan and clearing everything take the copies in the runs folder too', async () => {
+  await withTree(async ({ root, scans, sessions }) => {
+    await makeScan(scans, 'a.glb')
+    await makeSession(sessions, S1, { glbFilename: 'a.glb' })
+    await makeSession(sessions, S2, { glbFilename: 'b.glb' })
+    const runs = `${root}/runs`
+    await makeCase(runs, 'job-1-0a1b2c3d', S1)
+    await makeCase(runs, 'job-2-0a1b2c3d', S2)
+    const scan = await deleteScanSessions({ scansDir: scans, sessionsDir: sessions, filename: 'a.glb', removeCopies: copiesRemover(scans, runs) })
+    assertEquals(scan.report.deleted, [S1])
+    assertFalse(await exists(`${runs}/job-1-0a1b2c3d`))
+    assert(await exists(`${runs}/job-2-0a1b2c3d`), 'a session the scan does not own keeps its copy')
+    const all = await deleteAllSessions(sessions, { removeCopies: copiesRemover(scans, runs) })
+    assertEquals(all.deleted, [S2])
+    assertFalse(await exists(`${runs}/job-2-0a1b2c3d`))
   })
 })
 
