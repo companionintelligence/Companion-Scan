@@ -13,7 +13,7 @@
 import { createEighthWallProvider } from './ar/eighthwall'
 import { createNativeARProvider, NativeARProvider } from './ar/native'
 import { probeNativeAR } from './ar/native-bridge'
-import { chooseNativeRuntime, settleNativeProbe } from './ar/runtime-select'
+import { buildForcedRuntime, chooseNativeRuntime, settleNativeProbe } from './ar/runtime-select'
 import { createWebXRProvider, WebXRProvider, isImmersiveARSupported } from './ar/webxr'
 import { ScanFrameEpochLog } from './ar/frame-epoch'
 import { ReanchorFlow, autosplitRequested } from './ar/reanchor-flow'
@@ -895,8 +895,9 @@ async function main() {
 
   // Forced runtime: /webxr.html redirects here with ?ar=webxr — used in
   // WebXR-capable iOS browsers (e.g. HelloXR) where the native WebXR session
-  // beats the 8th Wall SLAM fallback.  ?ar=8thwall forces the inverse.
-  const forcedMode = searchParams.get('ar')
+  // beats the 8th Wall SLAM fallback.  ?ar=8thwall forces the inverse. A build made with
+  // VITE_AR_RUNTIME=8thwall forces it too, when the URL names no runtime (the Android 8th Wall APK).
+  const forcedMode = searchParams.get('ar') ?? buildForcedRuntime(import.meta.env.VITE_AR_RUNTIME)
 
   // Test hook: ?mock=webxr installs the iwer emulation runtime (Meta's
   // immersive-web-emulator engine) so WebXR flows run in headless browsers.
