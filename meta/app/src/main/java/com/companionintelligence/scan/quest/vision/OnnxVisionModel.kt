@@ -14,8 +14,10 @@ import java.util.Locale
 
 /**
  * [VisionModel] on ONNX Runtime (com.microsoft.onnxruntime:onnxruntime-android). The app ships no weights and
- * downloads none: it loads the first `*.onnx` file in [modelDir] (the app's files directory, `models/`) if a
- * person has put one there, for example with `adb push`, and otherwise reports that no model is installed.
+ * downloads none: it loads the first `*.onnx` file in [modelDir] (`models/` in the app's internal files
+ * directory) if a person has put one there, and otherwise reports that no model is installed. adb cannot write
+ * to internal storage directly; on a debug build, push the file to /data/local/tmp and copy it in with
+ * `adb shell run-as <package> cp /data/local/tmp/<name>.onnx files/models/`.
  *
  * The hook handles the common image-model shape, one float input of [1, 3, H, W] (RGB, 0…1); a dynamic H or W
  * is read as [DEFAULT_SIDE]. Anything else is reported as unsupported rather than guessed at. The CPU execution

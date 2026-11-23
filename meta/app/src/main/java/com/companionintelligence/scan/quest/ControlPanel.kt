@@ -81,7 +81,7 @@ class ControlPanel(private val actions: Actions) {
         column.addView(section(context, "Server"))
         val address = EditText(context).apply {
             setText(settings.serverAddress)
-            hint = "https://your-server.example.ts.net"
+            hint = "https:// address of your Companion Scan server"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             imeOptions = EditorInfo.IME_ACTION_DONE
             setSingleLine(true)

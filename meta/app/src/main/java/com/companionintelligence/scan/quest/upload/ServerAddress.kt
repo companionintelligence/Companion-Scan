@@ -19,7 +19,7 @@ object ServerAddress {
 
     fun parse(input: String): Parsed {
         val text = input.trim()
-        if (text.isEmpty()) return Parsed.Refused("Enter the server address, for example https://scan.example.ts.net")
+        if (text.isEmpty()) return Parsed.Refused("Enter your Companion Scan server's https:// address")
         val schemeEnd = text.indexOf("://")
         val withScheme = if (schemeEnd < 0) {
             "https://$text"

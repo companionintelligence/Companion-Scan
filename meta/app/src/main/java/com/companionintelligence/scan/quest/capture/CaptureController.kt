@@ -84,7 +84,6 @@ class CaptureController(
     private val processing = singleThread("keyframe-processing", 2)
     private val visionThread = singleThread("vision", 1)
     private val datasetThread = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "dataset-writer") }
-    private var poseDrain: ScheduledFuture<*>? = null
     private var poseSequence = 0L
 
     init {
@@ -141,25 +140,40 @@ class CaptureController(
         keyframesTaken.set(0)
         framesWithoutPose.set(0)
         framesDropped.set(0)
+        val generation = ++captureGeneration
         if (datasetDir != null) {
             val baseRealtime = SystemClock.elapsedRealtimeNanos()
             val mapper = UnixMsMapper(baseRealtime, System.currentTimeMillis())
-            val writer = try {
-                Mq3dreconDatasetWriter(datasetDir, cal, mapper, camClock.fromRealtimeNs(baseRealtime))
-            } catch (e: IllegalStateException) {
-                return "Could not create the local dataset: ${e.message}"
-            } catch (e: IOException) {
-                return "Could not create the local dataset: ${e.message}"
-            }
+            val baseCamera = camClock.fromRealtimeNs(baseRealtime)
             // Start a little before now so the first frame has a pose row before it (mq3drecon wants one
             // within 30 ms on each side).
             poseSequence = maxOf(0L, (poses.latest()?.sequence ?: 0L) - POSE_ROWS_BEFORE_START)
-            dataset = writer
-            poseDrain = datasetThread.scheduleWithFixedDelay({ drainPoses(writer) }, 250, 250, TimeUnit.MILLISECONDS)
+            datasetError = null
+            // The folder and the first files are written on the dataset thread, like every later write.
+            datasetThread.execute { openDataset(generation, datasetDir, cal, mapper, baseCamera) }
         }
         uploading = upload
         capturing = true
         return null
+    }
+
+    /** On the dataset thread. */
+    private fun openDataset(generation: Int, dir: File, cal: CameraCalibration, mapper: UnixMsMapper, baseCamera: Long) {
+        val writer = try {
+            Mq3dreconDatasetWriter(dir, cal, mapper, baseCamera)
+        } catch (e: IllegalStateException) {
+            datasetError = "Could not create the local dataset: ${e.message}"
+            return
+        } catch (e: IOException) {
+            datasetError = "Could not create the local dataset: ${e.message}"
+            return
+        }
+        if (!capturing || generation != captureGeneration) {
+            writer.close() // stopped (or restarted) before the folder was ready
+            return
+        }
+        dataset = writer
+        poseDrain = datasetThread.scheduleWithFixedDelay({ drainPoses(writer) }, 250, 250, TimeUnit.MILLISECONDS)
     }
 
     /** Why a capture could not start now, or null when it can. Checked before a server session is opened. */
@@ -177,12 +191,17 @@ class CaptureController(
         if (!capturing) return
         capturing = false
         uploading = false
+        datasetThread.execute(::closeDataset)
+    }
+
+    /** On the dataset thread, where the writer was opened. */
+    private fun closeDataset() {
         val writer = dataset ?: return
         dataset = null
+        lastDataset = writer
         poseDrain?.cancel(false)
         poseDrain = null
-        // The last pose rows after the last frame arrive with the next few rendered frames.
-        datasetThread.schedule({
+        val finish = Runnable {
             drainPoses(writer)
             try {
                 writer.close()
@@ -190,11 +209,22 @@ class CaptureController(
                 Log.w(TAG, "dataset close failed", e)
             }
             Log.i(TAG, "dataset closed: ${writer.directory} (${writer.framesWritten} frames, ${writer.poseRowsWritten} pose rows)")
-        }, 200, TimeUnit.MILLISECONDS)
-        lastDataset = writer
+        }
+        // The last pose rows after the last frame arrive with the next few rendered frames. When the app is
+        // shutting down there is no waiting: the file is closed now.
+        try {
+            datasetThread.schedule(finish, 200, TimeUnit.MILLISECONDS)
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            finish.run()
+        }
     }
 
     @Volatile private var lastDataset: Mq3dreconDatasetWriter? = null
+    @Volatile private var datasetError: String? = null
+    @Volatile private var captureGeneration = 0
+
+    // Touched on the dataset thread only.
+    private var poseDrain: ScheduledFuture<*>? = null
 
     fun status(): Status {
         val cal = calibration
@@ -222,7 +252,7 @@ class CaptureController(
             framesWithoutPose = framesWithoutPose.get(),
             framesDropped = framesDropped.get(),
             epoch = epochs.current(),
-            dataset = writer?.let {
+            dataset = datasetError ?: writer?.let {
                 "${it.directory.name}: ${it.framesWritten} frames, ${it.bytesWritten / 1_000_000} MB, ${it.poseRowsWritten} pose rows" +
                     if (it === dataset) "" else " (closed)"
             },

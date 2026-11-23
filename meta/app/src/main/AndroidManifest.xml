@@ -29,9 +29,6 @@
         android:label="Scan for Quest"
         android:usesCleartextTraffic="false">
 
-        <!-- The Passthrough Camera API exists on these two headsets only. -->
-        <meta-data android:name="com.oculus.supportedDevices" android:value="quest3|quest3s" />
-
         <!-- onnxruntime-android 1.32.0 registers this ContentProvider, which at every app start loads
              libonnxruntime and creates its telemetry HTTP client (ai.onnxruntime.telemetry.HttpClient, which
              reads android_id among other device details). A room scanner keeps that off: the provider is

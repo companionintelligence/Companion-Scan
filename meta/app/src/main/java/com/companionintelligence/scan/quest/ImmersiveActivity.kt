@@ -51,8 +51,9 @@ import java.util.Locale
  * The immersive activity: passthrough on, one panel, and the capture pipeline.
  *
  * The render loop's only capture work is [samplePose]: read `Scene.getViewerPose()` once per frame, stamp it
- * (pose/Clocks.kt) and put it in the ring buffer. Camera, JPEG, files, the model and HTTP all run on their own
- * threads (CaptureController, KeyframeUploader, SplatViewer).
+ * (pose/Clocks.kt) and put it in the ring buffer. Camera frames, JPEG encoding, the local dataset's files, the
+ * model and HTTP run on their own threads (CaptureController, KeyframeUploader, SplatViewer); the main thread
+ * keeps only small work such as preferences and the panel's text.
  *
  * Locomotion is switched off and the reference space is STAGE, so the scene stays fixed to the room and the
  * viewer pose is a physical head pose; thumbstick movement would otherwise shift every later pose.
