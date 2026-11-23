@@ -170,6 +170,14 @@ export interface ScanARPlugin {
    * earlier session is not returned: v1 does not restore an origin across sessions. Optional, as setOriginAnchor is.
    */
   getOriginAnchor?(): Promise<{ anchor: NativeOriginAnchor | null }>
+  /**
+   * Opens the full-screen geo view: ARKit-CoreLocation on SceneKit, one label per Place at its pin (ADR 0012,
+   * docs/factory/13-ar-runtime-targets/0006-ios-geo-view.md). iOS only, and refused while a scan session runs,
+   * because ARKit runs one session at a time. Optional: the Android plugin has no such method.
+   */
+  openGeoView?(options: { places: Array<{ name: string; lat: number; lng: number }> }): Promise<{ shown: number }>
+  /** Closes the geo view if it is open. iOS only, like openGeoView. */
+  closeGeoView?(): Promise<void>
   addListener(event: 'pose', listener: (e: NativePoseEvent) => void): Promise<NativeListenerHandle>
   addListener(event: 'points', listener: (e: NativePointsEvent) => void): Promise<NativeListenerHandle>
   addListener(event: 'hits', listener: (e: NativeHitsEvent) => void): Promise<NativeListenerHandle>

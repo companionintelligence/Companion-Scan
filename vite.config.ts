@@ -219,6 +219,8 @@ export default defineConfig({
         scanner: path.resolve(process.cwd(), 'scanner.html'),
         viewer: path.resolve(process.cwd(), 'viewer.html'),
         webxr: path.resolve(process.cwd(), 'webxr.html'),
+        locar: path.resolve(process.cwd(), 'locar.html'),
+        locarViewer: path.resolve(process.cwd(), 'locar-viewer.html'),
         xrWorld: path.resolve(process.cwd(), 'xr-world.html'),
         arHittestSphere: path.resolve(process.cwd(), 'ar-hittest-sphere.html'),
         arGroundAnchor: path.resolve(process.cwd(), 'ar-ground-anchor.html'),

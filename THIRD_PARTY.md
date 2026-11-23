@@ -5,11 +5,11 @@ Every direct dependency declared in this repository's manifests — both
 each group. Transitive dependencies are not listed; resolve them with your
 package manager's own `licenses` command.
 
-**27 direct dependencies** across 5 licence groups.
+**28 direct dependencies** across 5 licence groups.
 
 | Licence | Count |
 | --- | ---: |
-| MIT | 19 |
+| MIT | 20 |
 | Apache-2.0 | 5 |
 | BSD-2-Clause | 1 |
 | not declared in package metadata | 1 |
@@ -20,22 +20,23 @@ package manager's own `licenses` command.
 1. [`@modelcontextprotocol/sdk`](https://modelcontextprotocol.io) `1.30.0` — runtime
 2. [`@sparkjsdev/spark`](https://sparkjs.dev/) `2.2.0` — runtime
 3. [`@stoprocent/noble`](https://github.com/stoprocent/noble#readme) `2.8.0` — runtime
-4. [`onnxruntime-web`](https://github.com/Microsoft/onnxruntime#readme) `1.30.0` — runtime
-5. [`three`](https://threejs.org/) `0.186.0` — runtime
-6. [`ws`](https://github.com/websockets/ws) `8.21.3` — runtime
-7. [`zod`](https://zod.dev) `3.25.76` — runtime
-8. [`@gltf-transform/core`](https://gltf-transform.dev/) `4.5.0` — dev
-9. [`@gltf-transform/extensions`](https://gltf-transform.dev/extensions.html) `4.5.0` — dev
-10. [`@gltf-transform/functions`](https://gltf-transform.dev/functions.html) `4.5.0` — dev
-11. [`@playcanvas/splat-transform`](https://playcanvas.com) `3.5.1` — dev
-12. [`@types/leaflet`](https://github.com/DefinitelyTyped/DefinitelyTyped) `1.9.22` — dev
-13. [`@types/three`](https://github.com/DefinitelyTyped/DefinitelyTyped) `0.186.0` — dev
-14. [`@types/webxr`](https://github.com/DefinitelyTyped/DefinitelyTyped) `0.5.24` — dev
-15. [`@vitejs/plugin-basic-ssl`](https://github.com/vitejs/vite-plugin-basic-ssl/#readme) `2.3.0` — dev
-16. [`concurrently`](https://github.com/open-cli-tools/concurrently#readme) `10.0.5` — dev
-17. [`iwer`](https://github.com/meta-quest/immersive-web-emulation-runtime#readme) `2.4.0` — dev
-18. [`jimp`](https://github.com/jimp-dev/jimp#readme) `1.6.1` — dev
-19. [`vite`](https://vite.dev) `8.3.0` — dev
+4. [`locar`](https://github.com/AR-js-org/locar.js) `0.2.12` — runtime (MIT by its LICENSE file; its package.json declares no licence)
+5. [`onnxruntime-web`](https://github.com/Microsoft/onnxruntime#readme) `1.30.0` — runtime
+6. [`three`](https://threejs.org/) `0.186.0` — runtime
+7. [`ws`](https://github.com/websockets/ws) `8.21.3` — runtime
+8. [`zod`](https://zod.dev) `3.25.76` — runtime
+9. [`@gltf-transform/core`](https://gltf-transform.dev/) `4.5.0` — dev
+10. [`@gltf-transform/extensions`](https://gltf-transform.dev/extensions.html) `4.5.0` — dev
+11. [`@gltf-transform/functions`](https://gltf-transform.dev/functions.html) `4.5.0` — dev
+12. [`@playcanvas/splat-transform`](https://playcanvas.com) `3.5.1` — dev
+13. [`@types/leaflet`](https://github.com/DefinitelyTyped/DefinitelyTyped) `1.9.22` — dev
+14. [`@types/three`](https://github.com/DefinitelyTyped/DefinitelyTyped) `0.186.0` — dev
+15. [`@types/webxr`](https://github.com/DefinitelyTyped/DefinitelyTyped) `0.5.24` — dev
+16. [`@vitejs/plugin-basic-ssl`](https://github.com/vitejs/vite-plugin-basic-ssl/#readme) `2.3.0` — dev
+17. [`concurrently`](https://github.com/open-cli-tools/concurrently#readme) `10.0.5` — dev
+18. [`iwer`](https://github.com/meta-quest/immersive-web-emulation-runtime#readme) `2.4.0` — dev
+19. [`jimp`](https://github.com/jimp-dev/jimp#readme) `1.6.1` — dev
+20. [`vite`](https://vite.dev) `8.3.0` — dev
 
 ## Apache-2.0
 

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Companion Scan: Places around you</title>
+    <style>
+      /* Black on html only. A body background would paint over locar's camera video, which sits at z-index -100. */
+      html {
+        background: #000;
+      }
+      html, body {
+        margin: 0;
+        height: 100%;
+        color: #fff;
+        font: 15px/1.4 system-ui, -apple-system, sans-serif;
+        overflow: hidden;
+      }
+      body {
+        background: transparent;
+      }
+      #viewer-status {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        padding: 8px 12px;
+        padding-top: max(8px, env(safe-area-inset-top));
+        background: rgba(0, 0, 0, 0.6);
+        /* Above locar's canvas, which it sets to z-index 999 and which would otherwise take every tap. */
+        z-index: 1000;
+      }
+      #viewer-legal {
+        position: fixed;
+        right: 12px;
+        bottom: calc(40% + 12px);
+        z-index: 1001;
+        font: inherit;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.5);
+        border-radius: 6px;
+        padding: 6px 10px;
+      }
+      #viewer-places {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        max-height: 40%;
+        overflow: auto;
+        margin: 0;
+        padding: 8px 12px;
+        padding-bottom: max(8px, env(safe-area-inset-bottom));
+        list-style: none;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 1000;
+      }
+      #viewer-places li {
+        padding: 4px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="viewer-status" role="status" aria-live="polite">Places around you: starting</div>
+    <button id="viewer-legal" type="button">Legal notices</button>
+    <ul id="viewer-places" aria-label="Places around you, nearest first"></ul>
+    <script type="module" src="/src/ar/locar-viewer.ts"></script>
+  </body>
+</html>
