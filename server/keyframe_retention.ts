@@ -304,6 +304,8 @@ export async function runKeyframePurge(opts: {
   env: (name: string) => string | undefined
   dryRun: boolean
   previewDays?: number | null
+  /** The clock the cutoff is measured from. The job passes none, so the cutoff is the wall clock. */
+  now?: number
 }): Promise<string> {
   const settingDays = parseKeyframeRetentionDays(opts.env(KEYFRAME_RETENTION_ENV)).days
   const report = await purgeExpiredKeyframeSessions({
@@ -312,6 +314,7 @@ export async function runKeyframePurge(opts: {
     retentionDays: opts.dryRun && opts.previewDays ? opts.previewDays : settingDays,
     settingDays,
     dryRun: opts.dryRun,
+    now: opts.now,
   })
   const summary = purgeSummary(report)
   console.log(`[keyframe-retention] ${summary}`)
