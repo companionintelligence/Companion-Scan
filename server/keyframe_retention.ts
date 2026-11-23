@@ -15,6 +15,9 @@
  * `startedAt` and `finalizedAt`, and the modification times of `session.json` and `keyframes.jsonl`, which is
  * appended to for every frame: a session that is being streamed to, or was streamed or finalized this week, is not old.
  * Work a job did on the session later does not count: a purge removes what a job wrote in the folder with the frames.
+ * It also removes, first, every PhysAg3D case folder that copied one of the session's frames (`removeCopies`,
+ * server/physag3d/asset_files.ts), so the copy does not outlive the frame. A session whose copies are in use by a run is
+ * kept for the next pass.
  *
  * ## What it never removes
  *
@@ -42,7 +45,7 @@
  * Counts, and nothing that names a session, a scan, a path or a place (`purgeSummary`).
  */
 import { isAbsolute, relative, SEPARATOR } from '@std/path'
-import { deleteSessionDirectories, directoryBytes } from './session_deletion.ts'
+import { deleteSessionDirectories, directoryBytes, type RemoveSessionCopies } from './session_deletion.ts'
 import { SESSION_ID_RE } from './session_id.ts'
 
 /** The environment variable that sets the retention period, in whole days. */
@@ -120,6 +123,11 @@ export interface PurgeOptions {
   dryRun: boolean
   /** The clock, in ms since the epoch. */
   now?: number
+  /**
+   * Removes the copies of an expired session's frames that live outside its folder (a PhysAg3D case folder), before the
+   * session goes. A session whose copies cannot go now is counted as failed and kept for the next pass.
+   */
+  removeCopies?: RemoveSessionCopies
 }
 
 function emptyReport(opts: PurgeOptions): PurgeReport {
@@ -235,7 +243,7 @@ export async function purgeExpiredKeyframeSessions(opts: PurgeOptions): Promise<
   }
   // Removed through the path the server names the folder by, not its real path, so that each removal waits in the same
   // per-session queue as a frame being written to that session (server/wp-a-keyframes.ts keys the queue by that path).
-  const removed = await deleteSessionDirectories(opts.sessionsDir, expired)
+  const removed = await deleteSessionDirectories(opts.sessionsDir, expired, { removeCopies: opts.removeCopies })
   // A session that vanished between the listing and the removal is gone, which is what the pass wanted.
   return { ...report, deleted: removed.deleted.length, failed: removed.failed.length, bytes: removed.bytes }
 }
@@ -306,6 +314,8 @@ export async function runKeyframePurge(opts: {
   previewDays?: number | null
   /** The clock the cutoff is measured from. The job passes none, so the cutoff is the wall clock. */
   now?: number
+  /** See `PurgeOptions.removeCopies`. */
+  removeCopies?: RemoveSessionCopies
 }): Promise<string> {
   const settingDays = parseKeyframeRetentionDays(opts.env(KEYFRAME_RETENTION_ENV)).days
   const report = await purgeExpiredKeyframeSessions({
@@ -315,6 +325,7 @@ export async function runKeyframePurge(opts: {
     settingDays,
     dryRun: opts.dryRun,
     now: opts.now,
+    removeCopies: opts.removeCopies,
   })
   const summary = purgeSummary(report)
   console.log(`[keyframe-retention] ${summary}`)

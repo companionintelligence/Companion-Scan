@@ -25,7 +25,7 @@
 export const KILL_GRACE_MS = 5_000
 
 /** The longest delay a timer accepts; anything longer fires at once. */
-const MAX_TIMER_MS = 2_147_483_647
+export const MAX_TIMER_MS = 2_147_483_647
 
 const EXPIRED = Symbol('deadline-expired')
 

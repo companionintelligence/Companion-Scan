@@ -421,6 +421,48 @@ export function toolSpecs(home: string): ToolSpec[] {
       fallbacks: [],
       remediation: 'Download the checkpoint and set LINGBOT_MAP_MODEL_PATH (see README — `LingBot-Map server processing`).',
     },
+    {
+      id: 'physag3d-python',
+      label: 'PhysAg3D launcher interpreter',
+      // 'binary', not 'python': execute.py needs only the standard library, so the torch probe would report a
+      // missing torch that nothing here wants.
+      kind: 'binary',
+      usedBy: "thing-interactive-asset — runs PhysAg3D's execute.py (Python 3.11 or later)",
+      envVar: 'PHYSAG3D_PYTHON',
+      // server/physag3d/physag3d.ts defaults to the bare name, as lingbot_map.ts does.
+      pathName: 'python3',
+      fallbacks: [],
+      remediation:
+        "Point PHYSAG3D_PYTHON at the PhysAg3D checkout's venv interpreter, Python 3.11 or later " +
+        '(see docs/pipelines/physag3d.md — Setup).',
+      version: {
+        args: ['--version'],
+        parse: (stdout, stderr) => firstMatch(`${stdout}\n${stderr}`, /Python\s+(\S+)/),
+      },
+    },
+    {
+      id: 'physag3d-dir',
+      label: 'PhysAg3D checkout',
+      kind: 'dir',
+      usedBy: 'thing-interactive-asset — holds execute.py',
+      envVar: 'PHYSAG3D_DIR',
+      // No default: the job runs only where an operator has named a checkout, because a run sends the image off the box.
+      fallbacks: [],
+      remediation:
+        'Clone PhysAg3D (https://github.com/Supra-3D/PhysAg3D) and set PHYSAG3D_DIR to the checkout ' +
+        '(see docs/pipelines/physag3d.md — Setup).',
+    },
+    {
+      id: 'physag3d-config',
+      label: 'PhysAg3D runtime config',
+      kind: 'file',
+      usedBy: 'thing-interactive-asset — names the agent CLI and the generation host the image goes to',
+      envVar: 'PHYSAG3D_CONFIG',
+      fallbacks: [],
+      remediation:
+        "Write a runtime config from the checkout's examples/ and set PHYSAG3D_CONFIG to it " +
+        '(see docs/pipelines/physag3d.md — Setup).',
+    },
   ]
 }
 
@@ -673,6 +715,20 @@ export function assessPipelines(
       warn: () =>
         torchless('splat-detect-python')
           ? ['SPLAT_DETECT_PYTHON has no torch — the analyzer will fail on import.']
+          : [],
+    },
+    {
+      id: 'thing-interactive-asset',
+      label: 'Interactive asset of a Thing — PhysAg3D (delegated)',
+      requires: ['physag3d-python', 'physag3d-dir', 'physag3d-config'],
+      // The GPU work is on another host, so "ready" here is about this box only. Said once the rest is ready.
+      warn: () =>
+        found('physag3d-python') && found('physag3d-dir') && found('physag3d-config')
+          ? [
+            'Not probed here: the agent CLI and its login, and the generation host the runtime config names ' +
+            '(TRELLIS.2, at least 28 GiB of free GPU memory). `execute.py doctor --config <config> --native` ' +
+            'checks them, and a run checks them again before it starts.',
+          ]
           : [],
     },
   ]

@@ -11,6 +11,9 @@
  *   - what LingBot-Map wrote: `.lingbot.glb`, a point cloud coloured from the session's photographs, which for a scan made
  *     from an upload is the only real geometry it has;
  *   - what the splat and person jobs wrote (the suffixes main.ts serves as splat artifacts) and a person scan's `.4d/` folder;
+ *   - its interactive assets' `.interactive/` folder: the GLBs and delivery reports, and the PhysAg3D case folders that hold
+ *     a copy of the keyframe each was made from (server/physag3d/asset_files.ts); a case folder under PHYSAG3D_RUNS_DIR goes
+ *     with the session whose frame it copied (`removeSessionCopies`);
  *   - what SenseNova wrote for it: `.sensenova/<jobId>/`, found through the scan's finished jobs;
  *   - the camera-frame sessions only this scan names (server/session_deletion.ts);
  *   - the world exports that hold a copy of its geometry, and the scan's row, its jobs and its patches in every world.
@@ -27,6 +30,7 @@
  *
  * Replies name no path. A reason, if there is one, is an error's name.
  */
+import { INTERACTIVE_ASSET_DIR_SUFFIX } from './physag3d/asset_files.ts'
 import { safeSlug, scanIdFor } from './scan_id.ts'
 import {
   type RunningScanJob,
@@ -36,6 +40,7 @@ import {
 import {
   deleteAllSessions,
   deleteScanSessions,
+  type RemoveSessionCopies,
   scanSessionDeletionBody,
   UNPUBLISHED_UPLOAD_MAX_AGE_MS,
 } from './session_deletion.ts'
@@ -90,6 +95,11 @@ export interface ScanDeletionDeps {
    * every world, and resolves how many worlds held anything of it. Throws when a world cannot be changed.
    */
   removeFromWorlds(filename: string): Promise<number>
+  /**
+   * Removes the copies of a session's frames that live outside its folder, before each of the scan's sessions goes:
+   * the PhysAg3D case folders under PHYSAG3D_RUNS_DIR, which the scan's own `.interactive/` folder does not hold.
+   */
+  removeSessionCopies?: RemoveSessionCopies
 }
 
 export interface ScanFilesRemoved {
@@ -155,6 +165,7 @@ export async function removeScanFiles(opts: {
   for (const path of derivedFiles) count(await removeEntry(path, false), () => (result.derived += 1))
   const derivedFolders = [
     `${scansDir}/${base}.4d`,
+    `${scansDir}/${base}${INTERACTIVE_ASSET_DIR_SUFFIX}`,
     ...(opts.senseNovaJobIds ?? []).map((jobId) => `${scansDir}/${SENSENOVA_DIR}/${safeSlug(jobId)}`),
   ]
   for (const path of derivedFolders) count(await removeEntry(path, true), () => (result.derived += 1))
@@ -199,7 +210,12 @@ export async function deleteScan(filename: string, deps: ScanDeletionDeps): Prom
         },
       }
     }
-    const keyframes = await deleteScanSessions({ scansDir: deps.scansDir, sessionsDir: deps.sessionsDir, filename })
+    const keyframes = await deleteScanSessions({
+      scansDir: deps.scansDir,
+      sessionsDir: deps.sessionsDir,
+      filename,
+      removeCopies: deps.removeSessionCopies,
+    })
     if (keyframes.report.failed.length > 0) {
       return {
         status: 500,
@@ -264,6 +280,8 @@ export interface DeleteAllDeps {
   dropAllWorldExports(): Promise<number>
   /** Empties every world of scans, scan jobs and scan patches. */
   removeAllFromWorlds(): Promise<unknown>
+  /** As `ScanDeletionDeps.removeSessionCopies`, for every session. */
+  removeSessionCopies?: RemoveSessionCopies
 }
 
 /** Names directly under `scansDir`, read once, so that removing them does not disturb the listing. */
@@ -292,7 +310,7 @@ export async function deleteAllScans(deps: DeleteAllDeps, now: number = Date.now
       }
     }
     // The camera frames go first, for the reason a single delete takes them first: a failure must leave the scans that name them.
-    const sessions = await deleteAllSessions(deps.sessionsDir)
+    const sessions = await deleteAllSessions(deps.sessionsDir, { removeCopies: deps.removeSessionCopies })
     if (sessions.failed.length > 0) {
       return {
         status: 500,
@@ -306,7 +324,10 @@ export async function deleteAllScans(deps: DeleteAllDeps, now: number = Date.now
     let failed = 0
     for (const entry of await topLevelEntries(deps.scansDir)) {
       let outcome: Outcome | null = null
-      if (entry.isDirectory && (entry.name.endsWith('.4d') || entry.name === SENSENOVA_DIR)) {
+      if (
+        entry.isDirectory &&
+        (entry.name.endsWith('.4d') || entry.name.endsWith(INTERACTIVE_ASSET_DIR_SUFFIX) || entry.name === SENSENOVA_DIR)
+      ) {
         outcome = await removeEntry(`${deps.scansDir}/${entry.name}`, true)
       } else if (entry.isFile && entry.name.endsWith(`.glb${PART_SUFFIX}`)) {
         // An upload that is still arriving keeps its file. One that was cut short will never be published, and is camera data.

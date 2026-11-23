@@ -17,6 +17,12 @@ import { withWorldLock } from './world/world_lock.ts'
 /** A session may hold this many bytes of keyframes when KEYFRAME_SESSION_MAX_BYTES is unset: 2 GiB. */
 export const KEYFRAME_SESSION_DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 
+/**
+ * The name of a keyframe file the server writes into a session: `kf-NNNNN.jpg` (POST /sessions/:id/keyframes). The
+ * keyframe routes and the thing-interactive-asset job (server/physag3d/physag3d.ts) accept no other name.
+ */
+export const KEYFRAME_FILE_RE = /^kf-\d{5}\.jpg$/
+
 /** Size in bytes of each keyframe file in `dir` whose name matches `fileName`, keyed by name. A missing directory is empty. */
 export async function keyframeSizesIn(dir: string, fileName: RegExp): Promise<Map<string, number>> {
   const names: string[] = []

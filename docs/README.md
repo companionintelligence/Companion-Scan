@@ -16,6 +16,7 @@ description it fits rather than at this level.
 | Folder | Owns |
 |---|---|
 | *(this level)* | The two cross-cutting authorities — system design and status — plus the Factory workflow. |
+| [`targets/`](targets/README.md) | One page per device target, and the common server: what each is, what has run on a device, entry points, build, run and test. |
 | [`product/`](product/) | What the product is and how it behaves: vocabulary, user journeys, UI reference. |
 | [`operations/`](operations/) | Running it: deploy, CI, and hardware subsystems. |
 | [`testing/`](testing/) | How it is verified: test architecture, on-device QA, fixture banks. |
@@ -27,10 +28,26 @@ description it fits rather than at this level.
 
 | Doc | What it covers |
 |---|---|
-| [../README.md](../README.md) | Front door: what CI-Spatial is, quick start, the engine-agnostic inference explainer, and pointers into every other doc. |
+| [../README.md](../README.md) | Front door: what CI-Spatial is, the device-target matrix, the common server, quick setup, server settings and sign-in, the engine-agnostic inference explainer, and pointers into every other doc. |
 | [architecture.md](architecture.md) | **Canonical system-design authority** — architecture diagrams, the 4D world data model, the complete API + world-job tables, deployment topology, Design Decisions, and Implementation Notes. |
 | [roadmap.md](roadmap.md) | The **only** owner of timelines and status — what has shipped vs. what is planned. |
 | [FACTORY.md](FACTORY.md) | The Factory ticket workflow, the atlas, and how a wave justifies itself. |
+
+## targets/ — device targets
+
+| Doc | What it covers |
+|---|---|
+| [targets/README.md](targets/README.md) | The target matrix, where the device checklists are, and how the desktop and Android apps are built and released. |
+| [targets/web-8thwall.md](targets/web-8thwall.md) | The web scanner on the 8th Wall engine: iPhone and iPad Safari. |
+| [targets/web-webxr.md](targets/web-webxr.md) | The web scanner on WebXR: Android Chrome with ARCore, and the Meta Quest Browser, with the headset world editor. |
+| [targets/android-arcore.md](targets/android-arcore.md) | The Android app on its own ARCore session (`ScanAR`), with 8th Wall and WebXR as the fallback. |
+| [targets/android-8thwall.md](targets/android-8thwall.md) | The Android app built with `VITE_AR_RUNTIME=8thwall`, which starts on the 8th Wall engine. |
+| [targets/meta-quest.md](targets/meta-quest.md) | The native Meta Quest app: planned, no code yet. |
+| [targets/ios.md](targets/ios.md) | The iOS app on ARKit (`ScanAR`, a SceneKit view today), with its world maps. |
+| [targets/server.md](targets/server.md) | The common Scan server: the Deno API, the `WorldJob` system, the reconstruction and splat pipeline, and inference. |
+
+The desktop app, the one target that does not capture, is documented in
+[../desktop/README.md](../desktop/README.md).
 
 ## product/ — what it is and how it behaves
 
@@ -48,6 +65,7 @@ description it fits rather than at this level.
 |---|---|
 | [operations/DEPLOY.md](operations/DEPLOY.md) | Self-hosting and deployment — Deno server, Vite proxy, Ollama, and Tailscale/HTTPS setup. |
 | [operations/PLATFORM_SUPPORT.md](operations/PLATFORM_SUPPORT.md) | What runs on which OS and accelerator, what is untested, and `server/capabilities.ts` — the probe that answers "what can this machine actually do?" for your own box. |
+| [operations/AR_DEVICE_SUPPORT.md](operations/AR_DEVICE_SUPPORT.md) | Which phones have run the live scanner and how we know, and where runtime anchors exist. |
 | [operations/CI.md](operations/CI.md) | What CI runs, and what it deliberately does not. |
 | [operations/COMPANION_HUB.md](operations/COMPANION_HUB.md) | How Scan finds Companion Memory, the vision model and Companion Account sign-in when the Companion Hub installs it. |
 | [operations/GIMBAL_INTEGRATION.md](operations/GIMBAL_INTEGRATION.md) | DJI Osmo Mobile 6 gimbal control over BLE, the `osmo-gimbal` MCP server, and automated grid capture into the ingest pipeline. |
@@ -59,6 +77,7 @@ description it fits rather than at this level.
 |---|---|
 | [testing/TEST_INFRA.md](testing/TEST_INFRA.md) | Test architecture — tiers, mocks, the mock CV engine, and the npm test commands. |
 | [testing/DEVICE_TESTING.md](testing/DEVICE_TESTING.md) | On-device QA over the tailnet, the Android MCP device fleet, and the room-loop drift benchmark. |
+| [testing/DEVICE_TEST_KIT.md](testing/DEVICE_TEST_KIT.md) | Start here before a device test: the preflight, each surface with what the dev box checked, and the steps for each device. |
 | [testing/HOUSE_VALIDATION.md](testing/HOUSE_VALIDATION.md) | Field-acceptance / whole-house validation procedure. |
 | [testing/user-test-suite.md](testing/user-test-suite.md) | Scripted user-facing test scenarios. |
 | [testing/REAL_CAMERA_FIXTURE_BANK.md](testing/REAL_CAMERA_FIXTURE_BANK.md) | Privacy-safe local bank of validated Android camera evidence. |

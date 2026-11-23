@@ -22,6 +22,15 @@ export function preferNativeRuntime(choice: NativeRuntimeChoice): boolean {
   return choice.nativeSupported
 }
 
+/**
+ * The runtime a build forces when the page's URL names none. `VITE_AR_RUNTIME=8thwall` at build time makes
+ * the 8th Wall engine the runtime, so the native runtime is never chosen (the Android 8th Wall APK). Any other
+ * value, or no value, forces nothing.
+ */
+export function buildForcedRuntime(buildValue: string | null | undefined): string | null {
+  return buildValue === '8thwall' ? '8thwall' : null
+}
+
 /** How many times the page asks the native layer again while its answer still says 'checking'. */
 export const NATIVE_RECHECKS = 5
 /** The wait before each ask again, in ms. */
