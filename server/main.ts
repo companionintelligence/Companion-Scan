@@ -92,7 +92,7 @@ import {
   remoteAddressOf,
 } from './wp-a-client-logs.ts'
 import { degenerateCloudRefusal, lingBotManifestForViewer } from './wp-a-cloud-verdict.ts'
-import { countKeyframeLines, KEYFRAME_SESSION_DEFAULT_MAX_BYTES, writeKeyframe } from './wp-a-keyframes.ts'
+import { countKeyframeLines, KEYFRAME_FILE_RE, KEYFRAME_SESSION_DEFAULT_MAX_BYTES, writeKeyframe } from './wp-a-keyframes.ts'
 import { deleteStreamedSession } from './session_deletion.ts'
 import { deleteAllScans, deleteScan } from './scan_deletion.ts'
 import { jobIsForScanBeingDeleted, SCAN_BEING_DELETED_NOTE } from './scan_job_guard.ts'
@@ -121,6 +121,12 @@ import {
   saveRegistry,
 } from './wp-a-projects.ts'
 import { type Person4DClip, runPerson4D } from './person4d/person_4d.ts'
+import { deliveryResultText, interactiveAssetRequestProblem, keyframeImagePath, runPhysAg3D } from './physag3d/physag3d.ts'
+import {
+  INTERACTIVE_ASSET_DIR_SUFFIX,
+  interactiveAssetFileMime,
+  interactiveAssetFolderName,
+} from './physag3d/asset_files.ts'
 import {
   joinRoom,
   leaveRoom,
@@ -1039,8 +1045,7 @@ app.delete('/scans', async (c) => {
 //   scans/sessions/<id>/keyframes.jsonl     one meta record per frame
 // On finalize the session is linked to the exported .glb.  This is the raw
 // input a dense-reconstruction stage (photogrammetry / splats) consumes.
-
-const KEYFRAME_FILE_RE = /^kf-\d{5}\.jpg$/
+// A frame's file name is KEYFRAME_FILE_RE (server/wp-a-keyframes.ts).
 
 /**
  * Shape-only resolution, bound to this server's SESSIONS_DIR. Says nothing
@@ -1187,32 +1192,41 @@ const CLIP_FILE_MIME: Record<string, string> = {
 }
 
 // GET /scans/:base.4d/:frame — one timestep of a 4D person sequence.
+// GET /scans/:base.interactive/:file — one interactive asset's GLB or delivery
+// report (`<jobId>.glb`, `<jobId>.delivery.json`; server/physag3d/physag3d.ts).
 //
 // The only artifact route with a path segment beyond the flat SCANS_DIR. A
 // sequence is hundreds of files, and the flat suffix-allowlist route this repo
 // otherwise uses would need a per-frame regex; a directory also keeps
-// `GET /scans`'s sweep from walking them. Same traversal guard as every other
-// artifact route, applied to both segments.
+// `GET /scans`'s sweep from walking them, and keeps an asset's GLB from being
+// listed as a scan. Same traversal guard as every other artifact route, applied
+// to both segments. One route for both folders because a second one registered
+// after this would never run: this one answers 404 for any other base.
 app.get('/scans/:base/:frame', async (c) => {
   const base = c.req.param('base')
   const frame = c.req.param('frame')
-  if (!base.endsWith('.4d')) return c.json({ error: 'Not found' }, 404)
+  const sequence = base.endsWith('.4d')
+  if (!sequence && !base.endsWith(INTERACTIVE_ASSET_DIR_SUFFIX)) return c.json({ error: 'Not found' }, 404)
   for (const part of [base, frame]) {
     if (part.includes('/') || part.includes('\\') || part.startsWith('.') || part.includes('..')) {
       return c.json({ error: 'Invalid path' }, 400)
     }
   }
   // Allowlist the frame shape rather than sanitising it — the writer is the
-  // subsystem and the names are fully determined.
-  if (!/^frame-\d{5}\.(sog|ply)$/.test(frame)) return c.json({ error: 'Invalid frame path' }, 400)
+  // subsystem and the names are fully determined. An asset folder serves the
+  // two files a job lands and nothing else, so its case folder is never served.
+  const contentType = sequence ? 'application/octet-stream' : interactiveAssetFileMime(frame)
+  if (sequence && !/^frame-\d{5}\.(sog|ply)$/.test(frame)) return c.json({ error: 'Invalid frame path' }, 400)
+  if (!contentType) return c.json({ error: 'Invalid asset path' }, 400)
 
   try {
     const bytes = await Deno.readFile(`${SCANS_DIR}/${base}/${frame}`)
     return new Response(bytes, {
       headers: {
-        'Content-Type': 'application/octet-stream',
+        'Content-Type': contentType,
         // A sequence frame is immutable once written — a rebuild lands under a
-        // new job rather than editing in place.
+        // new job rather than editing in place. An asset's files are named by
+        // their job, and a job lands them once.
         'Cache-Control': 'private, max-age=3600',
       },
     })
@@ -2361,13 +2375,14 @@ const WORLD_JOB_TYPES = new Set<WorldJobType>([
   'panoptic-scan',
   'panoptic-lift',
   'person-4d-reconstruct',
+  'thing-interactive-asset',
   'memory-push',
   'export-world',
   'place-register',
   'keyframe-purge',
 ])
 
-const DEFAULT_WORKER_CAPABILITIES = ['cpu', 'onnx', 'ollama', 'open3d', 'splat', 'vggt', 'lingbot-map', 'sensenova-vision', 'panoptic', '4d-capture']
+const DEFAULT_WORKER_CAPABILITIES = ['cpu', 'onnx', 'ollama', 'open3d', 'splat', 'vggt', 'lingbot-map', 'sensenova-vision', 'panoptic', '4d-capture', 'physag3d']
 
 interface StoredScanInfo {
   filename: string
@@ -3608,6 +3623,8 @@ async function _dispatchWorldJob(slug: string, jobId: string): Promise<void> {
               ? 'splat-transform'
               : job.type === 'person-4d-reconstruct'
                 ? '4d-capture'
+                : job.type === 'thing-interactive-asset'
+                ? 'physag3d'
                 : job.type === 'sensenova-vision'
                 ? 'sensenova-vision'
               : job.type === 'memory-push'
@@ -3675,6 +3692,11 @@ async function _dispatchWorldJob(slug: string, jobId: string): Promise<void> {
 
     if (job.type === 'person-4d-reconstruct') {
       await _runPerson4DJob(slug, jobId)
+      return
+    }
+
+    if (job.type === 'thing-interactive-asset') {
+      await _runThingInteractiveAssetJob(slug, jobId)
       return
     }
 
@@ -4663,6 +4685,105 @@ async function _runPerson4DJob(slug: string, jobId: string): Promise<void> {
   }
 }
 
+/**
+ * thing-interactive-asset — one keyframe of a scan in, an interactive 3D asset of a Thing out, made by PhysAg3D
+ * (server/physag3d/physag3d.ts, docs/pipelines/physag3d.md).
+ *
+ * Only a request queues it (POST /worlds/:slug/jobs). Nothing here enqueues one on its own: a run can take hours,
+ * holds the job slot all that time, and sends the image to the agent service the operator's PhysAg3D config names.
+ * Like person-4d-reconstruct it delegates, so an unconfigured install is a green job with a hint.
+ *
+ * jobFailureReason has already checked the request's shape under the lock (interactiveAssetRequestProblem). Whether
+ * the keyframe is still on disk is the driver's question. Nothing is recorded on the scan: an asset of one Thing says
+ * nothing about the scan's geometry, so applyCompletedJobToWorld has no branch for it.
+ */
+async function _runThingInteractiveAssetJob(slug: string, jobId: string): Promise<void> {
+  try {
+    const claimed = await claimJobScan(slug, jobId)
+    if (!claimed) return
+    const { scan, payload } = claimed
+    const imagePath = keyframeImagePath(SESSIONS_DIR, scan.sessionId, payload?.['keyframe'])
+    if (!imagePath) {
+      // Unreachable while jobFailureReason holds: it fails such a request before the claim hands it back.
+      await failWorldJob(slug, jobId, "thing-interactive-asset needs payload.keyframe naming one of the scan's keyframes.")
+      return
+    }
+    const folder = interactiveAssetFolderName(scan.filename)
+    const result = await runPhysAg3D({
+      imagePath,
+      assetDir: `${SCANS_DIR}/${folder}`,
+      assetId: jobId,
+      maxGlbBytes: UPLOAD_MAX_SCAN_BYTES,
+      // Three steps, so three commits; each one rewrites the world file under its lock (ADR 0004).
+      onProgress: (fraction) => {
+        commitWorldJob(slug, jobId, (currentJob) => {
+          if (currentJob.status !== 'processing') return
+          currentJob.progress = fraction
+          currentJob.updatedAt = new Date().toISOString()
+        }).catch((err) => console.warn('[physag3d] progress not saved:', err))
+      },
+    })
+
+    const assetUrl = (name: string) => `/scans/${encodeURIComponent(folder)}/${encodeURIComponent(name)}`
+    await commitWorldJob(slug, jobId, (currentJob, current) => {
+      currentJob.progress = 1
+      const thingId = asString(payload?.['thingId'])
+      const subject = (thingId ? current.things?.find(t => t.thingId === thingId)?.canonicalLabel : undefined) ?? scan.name
+      const delivery = result.delivery
+      const verdicts = delivery
+        ? {
+          title: delivery.title,
+          deliveryStatus: delivery.status,
+          motionKind: delivery.motionKind,
+          interactionStatus: delivery.interactionStatus,
+          physicsStatus: delivery.physicsStatus,
+        }
+        : {}
+      // The keyframe is recorded only once PhysAg3D's run may have started its worker, which is when it left the box.
+      const input = result.runAttempted ? jobArtifactsFor(currentJob, current) ?? [] : []
+      const report = result.reportPath
+        ? [{
+          type: 'interactive-asset-report',
+          label: `${subject} PhysAg3D delivery report`,
+          url: assetUrl(`${jobId}.delivery.json`),
+          metadata: { outcome: result.outcome ?? 'failed', limitations: delivery?.limitations ?? [] },
+        }]
+        : []
+      if (result.status === 'ok' && delivery && result.outcome) {
+        currentJob.status = 'completed'
+        currentJob.result = deliveryResultText(delivery, result.outcome)
+        currentJob.artifacts = [
+          ...input,
+          {
+            type: 'interactive-asset-glb',
+            label: `${subject} interactive asset`,
+            url: assetUrl(`${jobId}.glb`),
+            metadata: { outcome: result.outcome, bytes: result.glbBytes ?? null, thingId: thingId ?? null, ...verdicts },
+          },
+          ...report,
+        ]
+      } else if (result.status === 'skipped') {
+        // Green, with a hint: no PhysAg3D on this server is a configuration state, not a failure of the request.
+        currentJob.status = 'completed'
+        currentJob.result = `Interactive asset skipped: ${result.skippedReason ?? 'PhysAg3D is not set up'}` +
+          `${result.remediation ? ` — ${result.remediation}` : ''}`
+        currentJob.artifacts = [{
+          type: 'interactive-asset-skip',
+          label: 'PhysAg3D setup required',
+          metadata: { reason: result.skippedReason ?? null, remediation: result.remediation ?? null },
+        }]
+      } else {
+        markJobFailed(currentJob, result.error ?? 'PhysAg3D run failed')
+        if (input.length + report.length > 0) currentJob.artifacts = [...input, ...report]
+      }
+      currentJob.updatedAt = new Date().toISOString()
+    })
+  } catch (error) {
+    console.error('[physag3d] job failed:', error)
+    await failWorldJob(slug, jobId, errorMessage(error))
+  }
+}
+
 async function _runSplatTrainJob(slug: string, jobId: string): Promise<void> {
   try {
     const start = await claimSessionJob(slug, jobId)
@@ -5316,8 +5437,14 @@ async function keyframePreflight(slug: string, jobId: string): Promise<JobPrefli
 
 function jobFailureReason(job: WorldJob, world: WorldProject, preflight: JobPreflight = {}): string | null {
   const scan = scanForJob(job, world)
-  if (['align-scan', 'extract-layers', 'semantic-pass', 'depth-reconstruct', 'lingbot-map-reconstruct', 'colmap-poses', 'splat-train', 'splat-align', 'splat-detect', 'splat-finish', 'memory-push', 'person-4d-reconstruct', 'place-register'].includes(job.type) && !scan) {
+  if (['align-scan', 'extract-layers', 'semantic-pass', 'depth-reconstruct', 'lingbot-map-reconstruct', 'colmap-poses', 'splat-train', 'splat-align', 'splat-detect', 'splat-finish', 'memory-push', 'person-4d-reconstruct', 'thing-interactive-asset', 'place-register'].includes(job.type) && !scan) {
     return `${job.type} requires a selected scan.`
+  }
+  // The request's shape only: which keyframe and which Thing. Not in KEYFRAME_JOB_TYPES, whose station-capture block
+  // is about reconstructing a sweep and says nothing about one photograph of one Thing.
+  if (job.type === 'thing-interactive-asset' && scan) {
+    const problem = interactiveAssetRequestProblem(job.payload, scan.sessionId, new Set((world.things ?? []).map(t => t.thingId)))
+    if (problem) return problem
   }
   if (job.type === 'memory-push' && !memoryPushCfg.enabled) {
     return 'Companion Memory is not connected. Connect it from the Hub, or set CI_SERVER_URL and CI_SERVER_TOKEN.'
@@ -5440,6 +5567,10 @@ function jobResultFor(job: WorldJob): string {
       return 'Panoptic object segments were placed in the room by casting each one against the scan point cloud. A segment whose depth could not be recovered is recorded as unplaced rather than guessed.'
     case 'person-4d-reconstruct':
       return 'Person reconstructed in 4D. The .4d/ sequence is available as a splat4d layer on the scan.'
+    case 'thing-interactive-asset':
+      // Dead branch at runtime: _runThingInteractiveAssetJob writes the result itself, from the delivery's own
+      // verdicts, and never calls jobResultFor. Present only so this switch stays exhaustive under `deno check`.
+      return 'PhysAg3D made an interactive asset of a Thing from one keyframe. The GLB and the delivery report are on the job.'
     case 'memory-push':
       return 'Scan pushed to Companion Memory as a capture.scan event with the GLB attached.'
     case 'export-world':
@@ -5554,6 +5685,20 @@ function jobArtifactsFor(job: WorldJob, world: WorldProject): WorldJob['artifact
         label: `${scan.name} SenseNova inputs`,
         metadata: { sessionId: scan.sessionId, task: job.payload?.['task'] ?? 'recon3d' },
       }] : []
+    case 'thing-interactive-asset': {
+      // The GLB and the delivery report are appended by _runThingInteractiveAssetJob, which adds this entry only once
+      // PhysAg3D's run may have started: it records which image left the box, and which Thing it shows.
+      const keyframe = asString(job.payload?.['keyframe'])
+      if (!scan) return []
+      return [{
+        type: 'interactive-asset-input',
+        label: `${scan.name} keyframe sent to PhysAg3D`,
+        ...(scan.sessionId && keyframe
+          ? { url: `/sessions/${encodeURIComponent(scan.sessionId)}/keyframes/${encodeURIComponent(keyframe)}` }
+          : {}),
+        metadata: { sessionId: scan.sessionId, keyframe, thingId: asString(job.payload?.['thingId']) },
+      }]
+    }
     case 'place-register':
       // Dead branch at runtime, like optimize-scan's: the runner writes its own artifact.
       return []

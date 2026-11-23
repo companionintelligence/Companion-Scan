@@ -51,6 +51,14 @@ export type WorldJobType =
    * upload's optimize-scan for the better part of an hour.
    */
   | 'person-4d-reconstruct'
+  /**
+   * Make an interactive 3D asset of a Thing from one keyframe of its scan, with PhysAg3D (articulated parts and
+   * compliant regions, a refined GLB and a delivery report). Delegates like `person-4d-reconstruct`: PhysAg3D's
+   * agent worker runs on the operator's own agent service and sends generation to a GPU host over SSH, so the image
+   * leaves the box. Queued only by a request, never automatically: a run can take hours and holds the job slot.
+   * See server/physag3d/physag3d.ts and docs/pipelines/physag3d.md.
+   */
+  | 'thing-interactive-asset'
   | 'sensenova-vision'
   /**
    * Per-keyframe panoptic segmentation: every pixel labelled, yielding both

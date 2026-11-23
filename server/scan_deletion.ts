@@ -11,6 +11,8 @@
  *   - what LingBot-Map wrote: `.lingbot.glb`, a point cloud coloured from the session's photographs, which for a scan made
  *     from an upload is the only real geometry it has;
  *   - what the splat and person jobs wrote (the suffixes main.ts serves as splat artifacts) and a person scan's `.4d/` folder;
+ *   - its interactive assets' `.interactive/` folder: the GLBs and delivery reports, and the PhysAg3D case folders that hold
+ *     a copy of the keyframe each was made from, unless PHYSAG3D_RUNS_DIR put those elsewhere (server/physag3d/physag3d.ts);
  *   - what SenseNova wrote for it: `.sensenova/<jobId>/`, found through the scan's finished jobs;
  *   - the camera-frame sessions only this scan names (server/session_deletion.ts);
  *   - the world exports that hold a copy of its geometry, and the scan's row, its jobs and its patches in every world.
@@ -27,6 +29,7 @@
  *
  * Replies name no path. A reason, if there is one, is an error's name.
  */
+import { INTERACTIVE_ASSET_DIR_SUFFIX } from './physag3d/asset_files.ts'
 import { safeSlug, scanIdFor } from './scan_id.ts'
 import {
   type RunningScanJob,
@@ -155,6 +158,7 @@ export async function removeScanFiles(opts: {
   for (const path of derivedFiles) count(await removeEntry(path, false), () => (result.derived += 1))
   const derivedFolders = [
     `${scansDir}/${base}.4d`,
+    `${scansDir}/${base}${INTERACTIVE_ASSET_DIR_SUFFIX}`,
     ...(opts.senseNovaJobIds ?? []).map((jobId) => `${scansDir}/${SENSENOVA_DIR}/${safeSlug(jobId)}`),
   ]
   for (const path of derivedFolders) count(await removeEntry(path, true), () => (result.derived += 1))
@@ -306,7 +310,10 @@ export async function deleteAllScans(deps: DeleteAllDeps, now: number = Date.now
     let failed = 0
     for (const entry of await topLevelEntries(deps.scansDir)) {
       let outcome: Outcome | null = null
-      if (entry.isDirectory && (entry.name.endsWith('.4d') || entry.name === SENSENOVA_DIR)) {
+      if (
+        entry.isDirectory &&
+        (entry.name.endsWith('.4d') || entry.name.endsWith(INTERACTIVE_ASSET_DIR_SUFFIX) || entry.name === SENSENOVA_DIR)
+      ) {
         outcome = await removeEntry(`${deps.scansDir}/${entry.name}`, true)
       } else if (entry.isFile && entry.name.endsWith(`.glb${PART_SUFFIX}`)) {
         // An upload that is still arriving keeps its file. One that was cut short will never be published, and is camera data.

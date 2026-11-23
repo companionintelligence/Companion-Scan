@@ -242,6 +242,10 @@ Deno.test('resolution: no tool spec invents an env var the runners do not read',
     'SPLAT_DETECT_DIR',
     'LINGBOT_MAP_PYTHON',
     'LINGBOT_MAP_MODEL_PATH',
+    // Read by server/physag3d/physag3d.ts's resolveParams, and documented in .env.example.
+    'PHYSAG3D_PYTHON',
+    'PHYSAG3D_DIR',
+    'PHYSAG3D_CONFIG',
   ])
   for (const spec of toolSpecs('/home/t')) {
     if (spec.envVar) assert(known.has(spec.envVar), `${spec.id} introduces unknown env var ${spec.envVar}`)
