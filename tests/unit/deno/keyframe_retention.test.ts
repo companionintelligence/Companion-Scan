@@ -416,7 +416,7 @@ Deno.test('a dry run can judge by a period the request names, a real pass cannot
     await makeSession(sessions, NEW, { ageDays: 3 })
     const env = (setting: string | undefined) => (name: string) => (name === KEYFRAME_RETENTION_ENV ? setting : undefined)
     const run = (setting: string | undefined, dryRun: boolean, previewDays: number | null) =>
-      recordingConsole(() => runKeyframePurge({ sessionsDir: sessions, scansDir: scans, env: env(setting), dryRun, previewDays })).then((out) => out.result)
+      recordingConsole(() => runKeyframePurge({ sessionsDir: sessions, scansDir: scans, env: env(setting), dryRun, previewDays, now: NOW })).then((out) => out.result)
 
     // Setting off: a dry run can still show what a period would remove, and says nothing is purged until it is set.
     const preview = await run(undefined, true, 30)
