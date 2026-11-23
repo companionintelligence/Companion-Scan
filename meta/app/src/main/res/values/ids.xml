@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Registration id of the control panel (ImmersiveActivity.registerPanels). -->
+    <item name="control_panel" type="id" />
+</resources>

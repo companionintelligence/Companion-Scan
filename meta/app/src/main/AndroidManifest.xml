@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Keyframe upload and splat download, HTTPS only (usesCleartextTraffic below, and the OkHttp client). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- onnxruntime-android 1.32.0's manifest adds this for its telemetry client (see the provider removed
+         below). Nothing else in the app needs it. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
+
+    <!-- Passthrough camera access through Camera2 (Horizon OS v74+, Quest 3 and 3S). Meta's pages disagree on
+         whether android.permission.CAMERA is also needed, so both are declared and requested. -->
+    <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera2.any" android:required="true" />
+    <!-- Declared so the CAMERA permission does not imply a required android.hardware.camera (aapt2 badging
+         reports that implied feature otherwise); the passthrough cameras are covered by camera2.any above. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <uses-feature android:name="android.hardware.vr.headtracking" android:required="true" android:version="1" />
+
+    <!-- Passthrough rendering (Scene.enablePassthrough). None of the Spatial SDK 0.15.0 AAR manifests declares
+         this, so it is not merged in; it is declared from Meta's passthrough documentation, unconfirmed here. -->
+    <uses-feature android:name="com.oculus.feature.PASSTHROUGH" android:required="true" />
+
+    <application
+        android:allowBackup="false"
+        android:label="Scan for Quest"
+        android:usesCleartextTraffic="false">
+
+        <!-- The Passthrough Camera API exists on these two headsets only. -->
+        <meta-data android:name="com.oculus.supportedDevices" android:value="quest3|quest3s" />
+
+        <!-- onnxruntime-android 1.32.0 registers this ContentProvider, which at every app start loads
+             libonnxruntime and creates its telemetry HTTP client (ai.onnxruntime.telemetry.HttpClient, which
+             reads android_id among other device details). A room scanner keeps that off: the provider is
+             removed here, and OnnxVisionModel also calls OrtEnvironment.setTelemetry(false). -->
+        <provider
+            android:name="ai.onnxruntime.TelemetryInitializer"
+            android:authorities="${applicationId}.onnxruntime_telemetry_initializer"
+            tools:node="remove" />
+
+        <activity
+            android:name=".ImmersiveActivity"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="com.oculus.intent.category.VR" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
