@@ -104,7 +104,7 @@ must be in Applications, or opened once, before the system knows its scheme.
   them as artifacts for 14 days. No AppImage.
 - **Native Release** (`.github/workflows/native-release.yml`, run by hand with a tag)
   builds the same installers with the Android APK and publishes them as a GitHub
-  pre-release; see the README's *Desktop and Android apps*.
+  pre-release; see [Releases](../docs/targets/README.md#releases) in the device-target docs.
 - The installers are unsigned. The macOS app is ad-hoc signed (`signingIdentity "-"`),
   so on Apple silicon macOS offers **Open** from the right-click menu, or **Open Anyway**
   in Privacy & Security, instead of calling the download damaged. Windows SmartScreen

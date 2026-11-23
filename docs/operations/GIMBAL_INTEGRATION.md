@@ -4,7 +4,7 @@
 Bluetooth LE via reverse-engineered DUML commands, and exposes that control as an MCP server so
 Claude Code (or any MCP client) can drive automated capture sweeps. It's vendored into this repo
 (moved in from a standalone project on 2026-08-21) so a fresh clone gets the whole system in one
-place — see the [root README's quick-setup section](../README.md#quick-setup) to get running.
+place — see the [root README's quick-setup section](../../README.md#quick-setup) to get running.
 
 **Status (2026-08-21):** protocol codec and pairing are verified against a real captured frame.
 Gimbal speed-control's axis order/signs were live-verified against a real OM6 via the web UI
