@@ -8,7 +8,18 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { NativeARCapabilities } from '../../../src/ar/native-bridge.ts'
-import { NATIVE_RECHECKS, NATIVE_RECHECK_MS, chooseNativeRuntime, settleNativeProbe } from '../../../src/ar/runtime-select.ts'
+import { NATIVE_RECHECKS, NATIVE_RECHECK_MS, buildForcedRuntime, chooseNativeRuntime, settleNativeProbe } from '../../../src/ar/runtime-select.ts'
+
+test('a build made with VITE_AR_RUNTIME=8thwall forces the 8th Wall runtime, and only when the URL names none', () => {
+  assert.equal(buildForcedRuntime('8thwall'), '8thwall')
+  assert.equal(buildForcedRuntime('webxr'), null)
+  assert.equal(buildForcedRuntime('native'), null)
+  assert.equal(buildForcedRuntime(''), null)
+  assert.equal(buildForcedRuntime(undefined), null)
+  assert.equal(buildForcedRuntime(null), null)
+  const supported: NativeARCapabilities = { platform: 'android', engine: 'arcore', supported: true, depth: true, checking: false }
+  assert.deepEqual(chooseNativeRuntime(buildForcedRuntime('8thwall'), supported), { native: false, note: null })
+})
 
 const SUPPORTED: NativeARCapabilities = { platform: 'android', engine: 'arcore', supported: true, depth: true, checking: false }
 const CHECKING: NativeARCapabilities = {
