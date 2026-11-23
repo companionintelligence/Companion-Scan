@@ -93,13 +93,14 @@ Only one Gradle build runs at a time. Ticket 0002 moves the tree into the repo a
 | 0008 | [Splat viewing on every target](0008-splat-viewing-on-every-target.md) | all | 0006 |
 | 0009 | [On-device vision models](0009-on-device-vision-models.md) | Quest, Android, iOS | 0005 |
 | 0010 | [Sign-in for native apps](0010-native-app-sign-in.md) | server, Quest app | 0005 |
+| 0011 | [PhysAg3D: an interactive asset of a Thing](0011-physag3d-interactive-asset-job.md) | server | none |
 
 ## Atlas
 
 This wave's atlas pass, on 2026-11-23, added:
 
 - a wave card;
-- planned before/after diffs for tickets 0002 to 0010, in "AR Capture", "Inference & Jobs", "World & Viewer", "Server & Auth" and "Delivery & Distribution";
+- planned before/after diffs for tickets 0002 to 0011, in "AR Capture", "Inference & Jobs", "World & Viewer", "Server & Auth" and "Delivery & Distribution";
 - a `VITE_AR_RUNTIME` row in "Config variables".
 
 Until that pass, the atlas:
