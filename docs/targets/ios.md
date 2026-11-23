@@ -9,7 +9,7 @@ is [mobile/README.md](../../mobile/README.md).
 - The shell bundles the web app and talks to the person's own Scan server, whose https address is
   set in the app ([README.md](../../README.md#the-scan-server-in-the-android-ios-and-desktop-apps)).
 - `ScanBridgeViewController` registers one plugin, `ScanAR` (`ScanARPlugin.swift`). It runs an ARKit
-  world-tracking session and shows the camera in an `ARSCNView` (SceneKit) beneath the web view,
+  world-tracking session and shows the camera in RealityKit's `ARView` beneath the web view,
   which is transparent while the session runs. The camera image is fitted whole inside the web view
   ("contain"), and the scanner draws its Three.js scene over it from the native pose and
   projection. The web side is `NativeARProvider` (`src/ar/native.ts`, ADR 0009).
@@ -30,8 +30,11 @@ is [mobile/README.md](../../mobile/README.md).
 - The app is for iPhone only (`TARGETED_DEVICE_FAMILY = 1`), iOS 16.4 or later, portrait only.
   Sign-in runs in the system browser sheet and comes back on
   `com.companionintelligence.scan://auth`.
-- **RealityKit: planned, not built.** The native view is SceneKit today. There is no RealityKit
-  code in this tree. See
+- **RealityKit: compiled, not run on a device.** Since 2026-11-23 the native view is RealityKit's
+  `ARView` in camera mode `.ar`, and the plugin still configures and runs the session itself. Hit
+  samples are ARKit raycasts through the view. The JavaScript contract did not change. Until then
+  the view was SceneKit's `ARSCNView`. The iOS Simulator job compiled it on commit `20b2e46` (run
+  45247696203). See
   [ADR 0012](../adr/0012-the-ios-shell-draws-its-native-ar-view-with-realitykit.md) and
   [wave 13](../factory/13-device-targets/README.md).
 

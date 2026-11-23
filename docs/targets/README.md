@@ -19,7 +19,7 @@ and [PLATFORM_SUPPORT.md](../operations/PLATFORM_SUPPORT.md).
 | Android app, ARCore | Android phones and tablets | ARCore through `ScanAR`, then 8th Wall, then WebXR | the app (`mobile/`) | In code. The debug build compiled before the branches were merged. Not run on a device. | [android-arcore.md](android-arcore.md) |
 | Android app, 8th Wall | Android phones and tablets | 8th Wall only | the app, built with `VITE_AR_RUNTIME=8thwall` | A build switch with a unit test. No build of it and no device run is recorded. | [android-8thwall.md](android-8thwall.md) |
 | Meta Quest app | Meta Quest | native (planned) | none | Planned. No code in this tree. | [meta-quest.md](meta-quest.md) |
-| iOS app | iPhone | ARKit through `ScanAR`, drawn in a SceneKit view, then 8th Wall | the app (`mobile/`) | In code. The Swift compiled in the workflow's iOS Simulator job before the branches were merged. Not run on a device. A RealityKit version is planned and not built. | [ios.md](ios.md) |
+| iOS app | iPhone | ARKit through `ScanAR`, drawn in RealityKit's `ARView`, then 8th Wall | the app (`mobile/`) | In code. The Swift compiled in the workflow's iOS Simulator job on 2026-11-23 (run 45247696203). Not run on a device. | [ios.md](ios.md) |
 | Desktop app | Windows, macOS, Linux | none: no capture | the app (`desktop/`) | In code. Built by workflows run by hand. Sign-in has not run against a real Portal. | [desktop/README.md](../../desktop/README.md) |
 | Scan server | Linux; macOS and Windows unverified | none | `server/main.ts` | Runs on Linux: verified on one host. | [server.md](server.md) |
 

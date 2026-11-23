@@ -36,7 +36,7 @@ counts as verified only when someone ran it on the hardware and read the output 
 | **Android app, ARCore**: the Capacitor shell with `ScanAR`, native first, then 8th Wall, then WebXR | In code. Compiled before the branches were merged; not run on a device. | [android-arcore.md](docs/targets/android-arcore.md) |
 | **Android app, 8th Wall**: the same shell built with `VITE_AR_RUNTIME=8thwall` | A build switch with a unit test. No build or device run is recorded. It shares the app id, so it replaces the ARCore build on a device. | [android-8thwall.md](docs/targets/android-8thwall.md) |
 | **Meta Quest app**: a native headset app | Planned. No code in this tree. | [meta-quest.md](docs/targets/meta-quest.md) |
-| **iOS app**: the Capacitor shell with ARKit through `ScanAR` | In code, drawn in a SceneKit view. Compiled in the iOS Simulator job before the branches were merged; not run on a device. A RealityKit version is planned and not built. | [ios.md](docs/targets/ios.md) |
+| **iOS app**: the Capacitor shell with ARKit through `ScanAR` | In code, drawn in RealityKit's `ARView` (ADR 0012). Compiled in the iOS Simulator job on 2026-11-23; not run on a device. | [ios.md](docs/targets/ios.md) |
 | **Desktop app**: the editor and viewer, for Windows, macOS and Linux | In code. It cannot capture. Sign-in has not run against a real Portal. | [desktop/README.md](desktop/README.md) |
 
 The desktop and Android apps are published only as GitHub pre-releases, and no app is in an app
