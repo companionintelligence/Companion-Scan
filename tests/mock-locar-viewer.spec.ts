@@ -7,7 +7,8 @@
  *
  * It checks that only usable pins are drawn, that each sits where the declination turn puts it (a Place due true
  * east lands at (100 cos D, -100 sin D) in the compass frame), that the list is nearest first with true distances
- * and bearings, that Legal notices opens, and that the page reads the pins route and never the full Places list.
+ * and bearings, that a list row and a tap on a marker each open the Place's card, that Legal notices opens, and
+ * that the page reads the pins route and never the full Places list.
  *
  * Two more tests stand in for the native shells with a stand-in Capacitor bridge: the page is not on the server's
  * origin there, so it asks for the Scan server first. It must not read pins from its own origin, must refuse an
@@ -32,6 +33,7 @@ interface ViewerState {
   turnDeg: number | null
   declinationApplied: boolean
   flags: { camera: string; gps: string; places: string; orientation: string }
+  screenTargets?: () => Array<{ id: string; x: number; y: number; radiusPx: number; inFront: boolean }>
 }
 
 type ViewerWindow = { __locarViewer?: ViewerState }
@@ -115,6 +117,55 @@ test.describe('locar.js viewer', () => {
     await expect(items).toHaveCount(2)
     await expect(items.nth(0)).toHaveText('South test place · 50 m · 180 deg')
     await expect(items.nth(1)).toHaveText('East test place · 100 m · 90 deg')
+
+    // A row opens its Place's card: how far and which way from here, then what the map's pin popup shows.
+    const card = page.locator('dialog[open]')
+    await items.nth(0).getByRole('button').click()
+    await expect(card.getByRole('heading', { name: 'South test place' })).toBeVisible()
+    await expect(card).toContainText('Distance: 50 m')
+    await expect(card).toContainText('Direction: 180 deg true (S)')
+    await expect(card).toContainText('Scans: 0')
+    await card.getByRole('button', { name: 'Close' }).click()
+    await expect(card).toHaveCount(0)
+
+    // Lying flat (beta 0), the camera looks straight down and every marker is level with the camera plane, where its
+    // projection blows up. A tap then opens nothing.
+    const viewport = page.viewportSize() ?? { width: 1280, height: 720 }
+    await page.evaluate(() => {
+      window.dispatchEvent(new DeviceOrientationEvent('deviceorientationabsolute', { alpha: 0, beta: 0, gamma: 0, absolute: true }))
+    })
+    await page.waitForFunction(
+      () => (window as unknown as ViewerWindow).__locarViewer?.screenTargets?.().every((target) => !target.inFront) === true,
+      undefined,
+      { timeout: 10_000 },
+    )
+    await page.mouse.click(viewport.width / 2, viewport.height / 2)
+    await expect(card).toHaveCount(0)
+
+    // A tap on the camera view opens the marker it means. One absolute orientation event, upright (beta 90), turns
+    // locar's camera to the east marker's magnetic bearing, 90 - D.
+    const eastMagneticDeg = 90 - turn
+    await page.evaluate((alpha) => {
+      window.dispatchEvent(new DeviceOrientationEvent('deviceorientationabsolute', { alpha, beta: 90, gamma: 0, absolute: true }))
+    }, (360 - eastMagneticDeg) % 360)
+    // locar eases the camera into a new orientation over a few frames, so wait until the marker has settled where
+    // the camera now faces: the middle of the screen.
+    const onScreen = await page.waitForFunction(() => {
+      const east = (window as unknown as ViewerWindow).__locarViewer?.screenTargets?.().find((target) => target.id === 'east')
+      const settled = east && east.inFront && Math.abs(east.x - window.innerWidth / 2) < 2 && east.y > 0 && east.y < window.innerHeight
+      return settled ? { x: east.x, y: east.y } : null
+    }, undefined, { timeout: 10_000 })
+    const point = await onScreen.jsonValue() as { x: number; y: number }
+    expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.tagName, point)).toBe('CANVAS')
+    // A fingertip's width off the marker's centre still counts.
+    await page.mouse.click(point.x + 20, point.y + 10)
+    await expect(card.getByRole('heading', { name: 'East test place' })).toBeVisible()
+    await expect(card).toContainText('Direction: 90 deg true (E)')
+    await card.getByRole('button', { name: 'Close' }).click()
+    await expect(card).toHaveCount(0)
+    // A tap on empty sky opens nothing.
+    await page.mouse.click(point.x, Math.max(5, point.y - 200))
+    await expect(card).toHaveCount(0)
 
     await page.getByRole('button', { name: 'Legal notices' }).click()
     await expect(page.locator('dialog[open]')).toHaveCount(1)

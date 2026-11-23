@@ -8,15 +8,22 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { Geodetic } from '../../../src/world/enu.ts'
+import type { ProjectLocationEntry } from '../../../src/viewer/geomap.ts'
 import {
+  compassPoint,
   describePlace,
   latLngAt,
+  nearestOnScreen,
   pinnedPlaces,
   scenePlacement,
   toMagneticFrame,
   trueScenePoint,
   viewerCorrection,
 } from '../../../src/ar/locar-placement.ts'
+
+/** A `GET /project-locations` entry with no address, scans or capture: only an id, a name and a pin. */
+const entry = (projectId: string, name: string, lat: number | null, lng: number | null): ProjectLocationEntry =>
+  ({ projectId, name, lat, lng, address: null, scanCount: 0, capturedAt: null })
 
 const LONDON: Geodetic = { lat: 51.5, lng: -0.12, altitudeM: 0 }
 const DATE = new Date(Date.UTC(2026, 10, 23))
@@ -104,20 +111,56 @@ test('with declination on, the camera and a Place keep their true separation, so
 
 test('pinnedPlaces keeps only usable pins', () => {
   const pinned = pinnedPlaces([
-    { projectId: 'a', name: 'A', lat: 51.5, lng: -0.12 },
-    { projectId: 'b', name: 'No pin', lat: null, lng: null },
-    { projectId: 'c', name: 'Off the globe', lat: 95, lng: 0 },
-    { projectId: 'd', name: 'Bad longitude', lat: 10, lng: 200 },
-    { projectId: 'e', name: 'Not a number', lat: Number.NaN, lng: 0 },
+    entry('a', 'A', 51.5, -0.12),
+    entry('b', 'No pin', null, null),
+    entry('c', 'Off the globe', 95, 0),
+    entry('d', 'Bad longitude', 10, 200),
+    entry('e', 'Not a number', Number.NaN, 0),
   ])
   assert.deepEqual(pinned.map((place) => place.projectId), ['a'])
+})
+
+test('pinnedPlaces keeps what the route says about a Place, for its card', () => {
+  const [place] = pinnedPlaces([
+    { projectId: 'p', name: 'Studio', lat: 51.5, lng: -0.12, address: '1 Test Street', scanCount: 3, capturedAt: '2026-11-20T10:00:00Z' },
+  ])
+  assert.deepEqual(place, {
+    projectId: 'p', name: 'Studio', lat: 51.5, lng: -0.12, address: '1 Test Street', scanCount: 3, capturedAt: '2026-11-20T10:00:00Z',
+  })
+})
+
+test('compassPoint names the nearest of eight points', () => {
+  const cases: Array<[number, string]> = [
+    [0, 'N'], [22, 'N'], [23, 'NE'], [90, 'E'], [135, 'SE'], [180, 'S'], [225, 'SW'], [270, 'W'], [315, 'NW'], [359, 'N'],
+    [-45, 'NW'], [405, 'NE'],
+  ]
+  for (const [bearing, point] of cases) assert.equal(compassPoint(bearing), point, `${bearing} deg`)
+})
+
+test('nearestOnScreen picks the nearest marker a tap reaches, in front of the camera only', () => {
+  const targets = [
+    { id: 'far-left', x: 100, y: 100, radiusPx: 48, inFront: true },
+    { id: 'far-right', x: 130, y: 100, radiusPx: 48, inFront: true },
+    { id: 'behind', x: 120, y: 100, radiusPx: 48, inFront: false },
+    { id: 'near', x: 500, y: 500, radiusPx: 150, inFront: true },
+  ]
+  // Both far markers reach a tap at 120; the right one is nearer. The one behind the camera projects there too.
+  assert.equal(nearestOnScreen(targets, 120, 100), 'far-right')
+  assert.equal(nearestOnScreen(targets, 104, 100), 'far-left')
+  // A near marker counts out to its own size, well past a fingertip.
+  assert.equal(nearestOnScreen(targets, 620, 500), 'near')
+  assert.equal(nearestOnScreen(targets, 300, 300), null)
+  assert.equal(nearestOnScreen([], 0, 0), null)
+  // A marker level with the camera plane projects to no finite point and is never picked.
+  assert.equal(nearestOnScreen([{ id: 'edge', x: Number.NaN, y: 100, radiusPx: 48, inFront: true }], 100, 100), null)
+  assert.equal(nearestOnScreen([{ id: 'edge', x: Number.POSITIVE_INFINITY, y: 100, radiusPx: Number.POSITIVE_INFINITY, inFront: true }], 100, 100), null)
 })
 
 test('describePlace gives the true distance and bearing', () => {
   const east = latLngAt(LONDON, 100, 0)
   const south = latLngAt(LONDON, 0, -50)
-  const eastInfo = describePlace(LONDON, { projectId: 'e', name: 'E', ...east })
-  const southInfo = describePlace(LONDON, { projectId: 's', name: 'S', ...south })
+  const eastInfo = describePlace(LONDON, east)
+  const southInfo = describePlace(LONDON, south)
   close(eastInfo.distanceM, 100, 0.01, 'east distance')
   close(eastInfo.trueBearingDeg, 90, 0.01, 'east bearing')
   close(southInfo.distanceM, 50, 0.01, 'south distance')

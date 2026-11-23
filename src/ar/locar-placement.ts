@@ -14,30 +14,23 @@
  * left to locar. Because the camera's position is turned by the same rule as the Places, nothing drifts as the user
  * walks, and locar's orientation smoothing is untouched.
  *
+ * It also says which marker a tap on the screen means, and names a bearing's compass point, for the Place card.
+ *
  * Pure: no DOM, no three.js and no locar runtime, so Node tests it (tests/unit/node/locar_placement.test.ts).
  */
 import type { Geodetic } from '../world/enu.ts'
+import type { ProjectLocationEntry } from '../viewer/geomap.ts'
 import { latLngToScene, sceneToLatLng } from '../viewer/map-plane-math.ts'
 import { declinationDeg, type Declination } from '../world/declination.ts'
 import { normaliseBearingDeg } from '../world/geo.ts'
 
 const DEG = Math.PI / 180
 
-/** One entry of `GET /project-locations` (server/main.ts): a Place and its pin, null where it has none. */
-export interface PlaceLocation {
-  projectId: string
-  name: string
-  lat: number | null
-  lng: number | null
-}
-
-/** A Place with a usable pin. */
-export interface PinnedPlace {
-  projectId: string
-  name: string
-  lat: number
-  lng: number
-}
+/**
+ * A Place with a usable pin: an entry of `GET /project-locations` (server/main.ts), read with the map's own type
+ * (`ProjectLocationEntry`, src/viewer/geomap.ts), whose lat and lng are on the globe.
+ */
+export type PinnedPlace = ProjectLocationEntry & { lat: number; lng: number }
 
 /** A position in locar's scene: metres east (x) and south (z) of the page's origin. */
 export interface ScenePoint {
@@ -52,12 +45,15 @@ export function isUsableLatLng(lat: unknown, lng: unknown): boolean {
     && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
 }
 
-/** The Places whose pin is usable, in the order given. A missing, non-finite or out-of-range pin is left out. */
-export function pinnedPlaces(locations: readonly PlaceLocation[]): PinnedPlace[] {
+/**
+ * The Places whose pin is usable, in the order given, each with everything the route gave for it. A missing,
+ * non-finite or out-of-range pin is left out.
+ */
+export function pinnedPlaces(locations: readonly ProjectLocationEntry[]): PinnedPlace[] {
   const pinned: PinnedPlace[] = []
   for (const location of locations) {
     if (!isUsableLatLng(location.lat, location.lng)) continue
-    pinned.push({ projectId: location.projectId, name: location.name, lat: location.lat as number, lng: location.lng as number })
+    pinned.push({ ...location, lat: location.lat as number, lng: location.lng as number })
   }
   return pinned
 }
@@ -88,10 +84,47 @@ export function trueBearingOf(point: ScenePoint): number {
   return normaliseBearingDeg(Math.atan2(point.x, -point.z) / DEG)
 }
 
-/** How far, and in which true direction, a Place is from the origin. */
-export function describePlace(origin: Geodetic, place: PinnedPlace): { distanceM: number; trueBearingDeg: number } {
+/** How far, and in which true direction, a Place's pin is from the origin. */
+export function describePlace(origin: Geodetic, place: { lat: number; lng: number }): { distanceM: number; trueBearingDeg: number } {
   const point = trueScenePoint(origin, place.lat, place.lng)
   return { distanceM: Math.hypot(point.x, point.z), trueBearingDeg: trueBearingOf(point) }
+}
+
+const COMPASS_POINTS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as const
+
+/** The eight-point compass name of a bearing in degrees, the nearest of N, NE, E, SE, S, SW, W and NW. */
+export function compassPoint(bearingDeg: number): string {
+  return COMPASS_POINTS[Math.round(normaliseBearingDeg(bearingDeg) / 45) % 8]!
+}
+
+/**
+ * A marker as the screen shows it: its centre in CSS pixels, how far from the centre a tap still counts, and
+ * whether it is in front of the camera at all.
+ */
+export interface ScreenTarget {
+  id: string
+  x: number
+  y: number
+  radiusPx: number
+  inFront: boolean
+}
+
+/**
+ * The marker a tap at (x, y) means: the nearest one in front of the camera whose tap radius reaches the tap, or
+ * null. A far marker is a few pixels across, so its radius is a fingertip's; a near one counts out to its own size.
+ */
+export function nearestOnScreen(targets: readonly ScreenTarget[], x: number, y: number): string | null {
+  let nearest: string | null = null
+  let nearestPx = Number.POSITIVE_INFINITY
+  for (const target of targets) {
+    if (!target.inFront || !Number.isFinite(target.x) || !Number.isFinite(target.y)) continue
+    const px = Math.hypot(target.x - x, target.y - y)
+    if (px <= target.radiusPx && px < nearestPx) {
+      nearest = target.id
+      nearestPx = px
+    }
+  }
+  return nearest
 }
 
 /** The declination a page turns its positions by, and whether it could. */

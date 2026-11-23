@@ -12,6 +12,10 @@
  * A native shell's page is not on the server's origin, so there the page needs the Scan server's address first. It
  * uses the editor's server dialog (changeServer, src/viewer/shell-menu.ts), which tests an address with GET /health,
  * saves it on the device and reloads the page. A browser never shows it: its server is the page's own origin.
+ *
+ * Tapping a marker, or a row of the list, opens the Place's card: how far and which way it is from here, and what the
+ * map's pin popup shows (address, pin, scans, last capture). A tap means the nearest marker on screen within a
+ * fingertip, so a far marker a few pixels across can still be tapped.
  */
 import * as THREE from 'three'
 import * as LocAR from 'locar'
@@ -20,12 +24,30 @@ import { apiBase, apiUrl, isAndroidShell, isCapacitorShell, isNativeShell } from
 import { compassReadingFromEvent } from '../geo/compass-heading.ts'
 import { trueBearingDeg } from '../world/declination.ts'
 import { openLegalNotices } from '../ui/legal-notices.ts'
+import { openShellDialog } from '../ui/shell-dialog.ts'
+import type { ProjectLocationEntry } from '../viewer/geomap.ts'
 import { changeServer } from '../viewer/shell-menu.ts'
 import { scanARPlugin } from './native-bridge.ts'
-import { describePlace, pinnedPlaces, scenePlacement, type PinnedPlace, type PlaceLocation } from './locar-placement.ts'
+import {
+  compassPoint,
+  describePlace,
+  nearestOnScreen,
+  pinnedPlaces,
+  scenePlacement,
+  type PinnedPlace,
+  type ScreenTarget,
+} from './locar-placement.ts'
 
 /** How many Places the list shows, nearest first. */
 const LIST_LIMIT = 20
+
+/** The marker cone, in metres. */
+const MARKER_HEIGHT_M = 4
+const MARKER_RADIUS_M = 1.5
+
+/** How far from a marker's centre a tap still counts, in CSS pixels: about a fingertip, and at most a thumb's sweep. */
+const TAP_RADIUS_PX = 48
+const MAX_TAP_RADIUS_PX = 160
 
 /** The places flag while a shell has no Scan server to read pins from. */
 const NO_SERVER = 'no Scan server set'
@@ -66,6 +88,8 @@ export interface LocarViewerHook {
   turnDeg: number | null
   declinationApplied: boolean
   heading: { magneticDeg: number; trueDeg: number | null } | null
+  /** Where each marker is on the screen now, for the tap test. Set once locar runs. */
+  screenTargets?: () => ScreenTarget[]
 }
 
 declare global {
@@ -108,7 +132,43 @@ function formatDistance(metres: number): string {
   return metres < 1000 ? `${Math.round(metres)} m` : `${(metres / 1000).toFixed(1)} km`
 }
 
-/** The list, nearest first, from where the phone is now. */
+/** A capture time as the map's pin popup shows it (src/viewer/geomap.ts), or the text as given when it does not parse. */
+function formatCaptured(capturedAt: string): string {
+  const date = new Date(capturedAt)
+  if (Number.isNaN(date.getTime())) return capturedAt
+  return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+/** Where the phone is now: the latest accepted fix, or null before the first. */
+let lastFix: { lat: number; lng: number } | null = null
+
+/**
+ * A Place's card: how far and which way it is from here, then what the map's pin popup shows. Every value goes in
+ * as text, so nothing the server sends is read as HTML.
+ */
+function openPlaceCard(place: PinnedPlace): void {
+  const rows: HTMLElement[] = []
+  const row = (label: string, value: string): void => {
+    const line = document.createElement('p')
+    line.className = 'viewer-card-row'
+    const term = document.createElement('strong')
+    term.textContent = `${label}: `
+    line.append(term, value)
+    rows.push(line)
+  }
+  if (lastFix) {
+    const { distanceM, trueBearingDeg: bearing } = describePlace({ ...lastFix, altitudeM: 0 }, place)
+    row('Distance', formatDistance(distanceM))
+    row('Direction', `${bearing.toFixed(0)} deg true (${compassPoint(bearing)})`)
+  }
+  if (place.address) row('Address', place.address)
+  row('Pin', `${place.lat.toFixed(5)}°, ${place.lng.toFixed(5)}°`)
+  row('Scans', typeof place.scanCount === 'number' ? String(place.scanCount) : 'unknown')
+  if (place.capturedAt) row('Last capture', formatCaptured(place.capturedAt))
+  openShellDialog(place.name, rows)
+}
+
+/** The list, nearest first, from where the phone is now. Each row opens its Place's card. */
 function renderList(lat: number, lng: number): void {
   if (!listEl) return
   const here = { lat, lng, altitudeM: 0 }
@@ -118,7 +178,12 @@ function renderList(lat: number, lng: number): void {
     .slice(0, LIST_LIMIT)
   listEl.replaceChildren(...rows.map(({ place, distanceM, trueBearingDeg: bearing }) => {
     const item = document.createElement('li')
-    item.textContent = `${place.name} · ${formatDistance(distanceM)} · ${bearing.toFixed(0)} deg`
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'viewer-place'
+    button.textContent = `${place.name} · ${formatDistance(distanceM)} · ${bearing.toFixed(0)} deg`
+    button.addEventListener('click', () => openPlaceCard(place))
+    item.append(button)
     return item
   }))
 }
@@ -127,7 +192,7 @@ async function loadPins(): Promise<PinnedPlace[]> {
   const response = await fetch(apiUrl('/project-locations'))
   if (response.status === 401 || response.status === 403) throw new Error(`HTTP ${response.status}: this server asks for sign-in`)
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
-  return pinnedPlaces(await response.json() as PlaceLocation[])
+  return pinnedPlaces(await response.json() as ProjectLocationEntry[])
 }
 
 /**
@@ -184,6 +249,41 @@ function startLocar(): void {
     render()
   })
 
+  /** Each Place's marker, for taps. */
+  const markerMeshes: Array<{ mesh: THREE.Mesh; place: PinnedPlace }> = []
+
+  /**
+   * Where each marker is on the screen now: its centre, how far a tap may land from it, and whether the camera sees
+   * it. A marker level with the camera plane, as every marker is while the phone lies flat, projects to enormous
+   * coordinates, so only one past the near plane counts, and no radius grows past a thumb's sweep.
+   */
+  function screenTargets(): ScreenTarget[] {
+    const rect = app.renderer.domElement.getBoundingClientRect()
+    const camera = app.camera
+    camera.updateMatrixWorld()
+    const toScreen = (point: THREE.Vector3): { x: number; y: number } => {
+      const ndc = point.clone().project(camera)
+      return { x: rect.left + ((ndc.x + 1) / 2) * rect.width, y: rect.top + ((1 - ndc.y) / 2) * rect.height }
+    }
+    return markerMeshes.map(({ mesh, place }) => {
+      const centre = mesh.getWorldPosition(new THREE.Vector3())
+      const depth = -centre.clone().applyMatrix4(camera.matrixWorldInverse).z
+      const middle = toScreen(centre)
+      const top = toScreen(centre.clone().add(new THREE.Vector3(0, MARKER_HEIGHT_M / 2, 0)))
+      const inFront = depth > camera.near && Number.isFinite(middle.x) && Number.isFinite(middle.y)
+      const radiusPx = Math.min(MAX_TAP_RADIUS_PX, Math.max(TAP_RADIUS_PX, Math.abs(middle.y - top.y) * 1.25))
+      return { id: place.projectId, x: middle.x, y: middle.y, radiusPx: Number.isFinite(radiusPx) ? radiusPx : TAP_RADIUS_PX, inFront }
+    })
+  }
+  hook.screenTargets = screenTargets
+
+  // A tap on the camera view opens the card of the marker it means. The page's own controls sit above the canvas.
+  app.renderer.domElement.addEventListener('click', (event: MouseEvent) => {
+    const id = nearestOnScreen(screenTargets(), event.clientX, event.clientY)
+    const tapped = markerMeshes.find(({ place }) => place.projectId === id)
+    if (tapped) openPlaceCard(tapped.place)
+  })
+
   function onOrientation(event: Event): void {
     const reading = compassReadingFromEvent(event as DeviceOrientationEvent)
     if (!reading) return
@@ -201,9 +301,13 @@ function startLocar(): void {
       const places = await loadPins()
       hook.places = places
       for (const place of places) {
-        const marker = new THREE.Mesh(new THREE.ConeGeometry(1.5, 4, 16), new THREE.MeshBasicMaterial({ color: 0xffb020 }))
+        const marker = new THREE.Mesh(
+          new THREE.ConeGeometry(MARKER_RADIUS_M, MARKER_HEIGHT_M, 16),
+          new THREE.MeshBasicMaterial({ color: 0xffb020 }),
+        )
         marker.name = `place-${place.projectId}`
         locar.add(marker, place.lng, place.lat, 0, { name: place.name })
+        markerMeshes.push({ mesh: marker, place })
         hook.markers.push({ projectId: place.projectId, name: place.name, x: marker.position.x, z: marker.position.z })
       }
       flags.places = `${places.length} with a pin`
@@ -225,6 +329,7 @@ function startLocar(): void {
       })
       locar.on('gpsupdate', (event: GpsReceivedEvent) => {
         const { latitude, longitude, accuracy } = event.position.coords
+        lastFix = { lat: latitude, lng: longitude }
         flags.gps = `±${accuracy.toFixed(0)} m`
         hook.origin = placement.origin ? { lat: placement.origin.lat, lng: placement.origin.lng } : null
         hook.turnDeg = placement.correction?.turnDeg ?? null
