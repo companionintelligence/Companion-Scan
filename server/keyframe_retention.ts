@@ -128,6 +128,11 @@ export interface PurgeOptions {
    * session goes. A session whose copies cannot go now is counted as failed and kept for the next pass.
    */
   removeCopies?: RemoveSessionCopies
+  /**
+   * The job pump's deadline (server/world/world_job_pump.ts). Once it aborts, no further session is removed; the ones
+   * already removed stay removed, and the rest wait for the next pass (F-27).
+   */
+  signal?: AbortSignal
 }
 
 function emptyReport(opts: PurgeOptions): PurgeReport {
@@ -243,7 +248,7 @@ export async function purgeExpiredKeyframeSessions(opts: PurgeOptions): Promise<
   }
   // Removed through the path the server names the folder by, not its real path, so that each removal waits in the same
   // per-session queue as a frame being written to that session (server/wp-a-keyframes.ts keys the queue by that path).
-  const removed = await deleteSessionDirectories(opts.sessionsDir, expired, { removeCopies: opts.removeCopies })
+  const removed = await deleteSessionDirectories(opts.sessionsDir, expired, { removeCopies: opts.removeCopies, signal: opts.signal })
   // A session that vanished between the listing and the removal is gone, which is what the pass wanted.
   return { ...report, deleted: removed.deleted.length, failed: removed.failed.length, bytes: removed.bytes }
 }
@@ -316,6 +321,8 @@ export async function runKeyframePurge(opts: {
   now?: number
   /** See `PurgeOptions.removeCopies`. */
   removeCopies?: RemoveSessionCopies
+  /** See `PurgeOptions.signal`. */
+  signal?: AbortSignal
 }): Promise<string> {
   const settingDays = parseKeyframeRetentionDays(opts.env(KEYFRAME_RETENTION_ENV)).days
   const report = await purgeExpiredKeyframeSessions({
@@ -326,6 +333,7 @@ export async function runKeyframePurge(opts: {
     dryRun: opts.dryRun,
     now: opts.now,
     removeCopies: opts.removeCopies,
+    signal: opts.signal,
   })
   const summary = purgeSummary(report)
   console.log(`[keyframe-retention] ${summary}`)

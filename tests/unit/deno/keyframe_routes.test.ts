@@ -222,6 +222,17 @@ async function jobs(server: RunningServer): Promise<WorldJob[]> {
   return (await server.request('GET', '/worlds/default/jobs')).json<WorldJob[]>()
 }
 
+/**
+ * The default world's editor token, as `?token=…`. On an install without strict world auth a request with no token may
+ * queue most jobs, but not one that deletes or sends data off the box: a real keyframe-purge or a thing-interactive-asset
+ * needs an editor token or a Companion session (wave 14, F-04).
+ */
+async function asEditor(server: RunningServer): Promise<string> {
+  assertEquals((await server.request('GET', '/worlds/default')).status, 200)
+  const world = JSON.parse(await Deno.readTextFile(`${server.dirs.root}/worlds/default.json`)) as { members: Array<{ role: string; token: string }> }
+  return `?token=${encodeURIComponent(world.members.find((member) => member.role === 'editor')!.token)}`
+}
+
 /** Waits for a keyframe-purge job that is not one of `known` to reach a terminal state. */
 async function purgeJob(server: RunningServer, known: readonly string[] = []): Promise<WorldJob> {
   const deadline = Date.now() + JOB_TIMEOUT_MS
@@ -587,8 +598,11 @@ Deno.test('a request is a dry run unless it says dryRun:false, and only the serv
       assert(await exists(`${server.dirs.sessions}/${RECENT}`))
     }
 
-    // Only the boolean false is a real pass, and it takes the server's thirty days whatever else it carries.
-    const real = await server.request('POST', '/worlds/default/jobs', { type: 'keyframe-purge', payload: { dryRun: false, retentionDays: 1, days: 1 } })
+    // Only the boolean false is a real pass, and it takes the server's thirty days whatever else it carries. It deletes, so it
+    // needs an editor token: without one it is refused before anything is queued.
+    const unsigned = await server.request('POST', '/worlds/default/jobs', { type: 'keyframe-purge', payload: { dryRun: false } })
+    assertEquals(unsigned.status, 401, unsigned.text)
+    const real = await server.request('POST', `/worlds/default/jobs${await asEditor(server)}`, { type: 'keyframe-purge', payload: { dryRun: false, retentionDays: 1, days: 1 } })
     assertEquals(real.status, 202, real.text)
     const realJob = await purgeJob(server, known)
     assertStringIncludes(realJob.result ?? '', 'deleted 1 of 2')
@@ -616,7 +630,7 @@ Deno.test('a dry run can name a period to preview before the setting is turned o
     assert(await exists(`${server.dirs.sessions}/${OLD}`), 'a preview removed nothing')
 
     // The same request as a real pass has no period to use: the setting is off, so it removes nothing either.
-    const real = await server.request('POST', '/worlds/default/jobs', { type: 'keyframe-purge', payload: { dryRun: false, days: 30 } })
+    const real = await server.request('POST', `/worlds/default/jobs${await asEditor(server)}`, { type: 'keyframe-purge', payload: { dryRun: false, days: 30 } })
     assertEquals(real.status, 202, real.text)
     const realJob = await purgeJob(server, [job.jobId])
     assertStringIncludes(realJob.result ?? '', 'Retention is off')
@@ -636,6 +650,8 @@ Deno.test('the purge is queued in the default world only', async () => {
   try {
     const known = [(await purgeJob(server)).jobId]
     const place = (await server.request('POST', '/projects', { name: 'Elsewhere' })).json<{ projectId: string }>().projectId
+    // A world that is not a Place's has to exist first: a request for a world that has no file is a 404 (F-03).
+    assertEquals((await server.request('POST', '/worlds', { shareSlug: 'some-other-world' })).status, 201)
     for (const slug of [`project-${place}`, 'some-other-world']) {
       const refused = await server.request('POST', `/worlds/${slug}/jobs`, { type: 'keyframe-purge', payload: { dryRun: false } })
       assertEquals(refused.status, 400, `${slug}: ${refused.text}`)
@@ -816,8 +832,11 @@ Deno.test('thing-interactive-asset on a server without PhysAg3D: skipped with a 
     const row = world.scans.find((item) => item.filename === scan.filename)!
     assertEquals(row.sessionId, sessionId)
 
-    // No PHYSAG3D_* reaches this server (startServer passes an allowlist), which is every stock install.
-    const queued = await server.request('POST', '/worlds/default/jobs', {
+    // No PHYSAG3D_* reaches this server (startServer passes an allowlist), which is every stock install. The job sends a
+    // keyframe off the box when PhysAg3D is set up, so it needs an editor token even here (F-04).
+    const editor = await asEditor(server)
+    assertEquals((await server.request('POST', '/worlds/default/jobs', { type: 'thing-interactive-asset', scanId: row.scanId, payload: { keyframe: 'kf-00000.jpg' } })).status, 401)
+    const queued = await server.request('POST', `/worlds/default/jobs${editor}`, {
       type: 'thing-interactive-asset',
       scanId: row.scanId,
       payload: { keyframe: 'kf-00000.jpg' },
@@ -829,7 +848,7 @@ Deno.test('thing-interactive-asset on a server without PhysAg3D: skipped with a 
     assertStringIncludes(skipped.result ?? '', 'Interactive asset skipped: PHYSAG3D_DIR is not set')
     assertEquals(skipped.artifacts?.map((artifact) => artifact.type), ['interactive-asset-skip'])
 
-    const malformed = await server.request('POST', '/worlds/default/jobs', { type: 'thing-interactive-asset', scanId: row.scanId, payload: {} })
+    const malformed = await server.request('POST', `/worlds/default/jobs${editor}`, { type: 'thing-interactive-asset', scanId: row.scanId, payload: {} })
     const failed = await untilWorldJobSettled(server, malformed.json<{ jobId: string }>().jobId)
     assertEquals(failed.status, 'failed')
     assertStringIncludes(failed.error ?? '', 'payload.keyframe')

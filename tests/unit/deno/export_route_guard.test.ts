@@ -172,14 +172,26 @@ async function startServer(env: Record<string, string>): Promise<RunningServer> 
 }
 
 /**
- * The member tokens of a world. Reading the world is open on every install, and it makes the
- * server write the world file, with its tokens, so the test reads them from there.
+ * The member tokens of a world. Reading the default world is open on every install, and it makes the server write
+ * its file, with its tokens, so the test reads them from there. Any other world is not made by a read (F-03): it is
+ * written here the way POST /worlds leaves one, a copy of the default world with fresh tokens, because two of the
+ * modes below (SCAN_REQUIRE_AUTH=1 and sign-in on) put POST /worlds behind a session the test does not hold.
  */
 async function worldTokens(server: RunningServer, slug: string): Promise<Record<string, string>> {
-  const read = await server.get(`/worlds/${slug}`)
-  assertEquals(read.status, 200, `GET /worlds/${slug} should create the world: ${read.text}`)
-  const world = JSON.parse(await Deno.readTextFile(`${server.worldsDir}/${slug}.json`)) as {
-    members: Array<{ role: string; token: string }>
+  const read = await server.get('/worlds/default')
+  assertEquals(read.status, 200, `GET /worlds/default should create the default world: ${read.text}`)
+  type Members = { members: Array<{ role: string; token: string; memberId: string }> }
+  const world = JSON.parse(await Deno.readTextFile(`${server.worldsDir}/default.json`)) as Members & Record<string, unknown>
+  if (slug !== 'default') {
+    assertEquals((await server.get(`/worlds/${slug}`)).status, 404, `a read does not make ${slug}`)
+    world.worldId = `world-${slug}`
+    world.shareSlug = slug
+    world.members = world.members.map((member) => ({
+      ...member,
+      memberId: `${member.role}-${crypto.randomUUID()}`,
+      token: `${member.role}-${crypto.randomUUID()}`,
+    }))
+    await Deno.writeTextFile(`${server.worldsDir}/${slug}.json`, JSON.stringify(world, null, 2))
   }
   return Object.fromEntries(world.members.map((member) => [member.role, member.token]))
 }

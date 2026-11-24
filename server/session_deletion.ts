@@ -75,7 +75,7 @@ export interface ScanSessionPlan {
   retained: Array<{ sessionId: string; usedBy: string[] }>
 }
 
-const DERIVED_GLB = /\.(opt|lod\d+)\.glb$/
+const DERIVED_GLB = /\.(opt|lod\d+|lingbot)\.glb$/
 
 /**
  * Files read at once when a directory is measured or its scans' sidecars are read. Adopted, not measured (ADR 0005
@@ -309,10 +309,15 @@ export function removeSessionDirectory(
 export async function deleteSessionDirectories(
   sessionsDir: string,
   ids: readonly string[],
-  opts: { removeCopies?: RemoveSessionCopies } = {},
+  /**
+   * `signal`, when it aborts, stops the call before the next session (the retention purge passes the job pump's
+   * deadline, F-27): the sessions already removed stay removed, and the rest are not in the report.
+   */
+  opts: { removeCopies?: RemoveSessionCopies; signal?: AbortSignal } = {},
 ): Promise<SessionDeletionReport> {
   const report: SessionDeletionReport = { deleted: [], missing: [], failed: [], bytes: 0 }
   for (const sessionId of new Set(ids)) {
+    if (opts.signal?.aborted) break
     const dir = sessionDirPath(sessionsDir, sessionId)
     if (!dir) {
       report.failed.push({ sessionId, reason: 'InvalidSessionId' })

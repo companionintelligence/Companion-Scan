@@ -987,21 +987,15 @@ Deno.test('ADR 0011 says what a merge answers and what its removed world leaves:
     assertEquals((await list()).filter((world) => world.projectId === 'proj-a' || world.shareSlug === 'project-proj-a'), [])
     assertFalse(consequence.includes('emptied world (`scanCount` 0)'), 'the paragraph does not say that an emptied world is listed')
 
-    // A share link or a tab still open on House A's world: a world with no Place is built for the address, and it is not House A's.
+    // A share link or a tab still open on House A's world. A read used to build a world of no Place for the address, which
+    // listed House B's scans under House A's address (F-03). A read now builds no world: the address is a 404, and nothing
+    // is written for it. ADR 0011's paragraph on this ("a world of no Place ... up to eight") is listed for correction.
     const stale = await server.send('GET', '/worlds/project-proj-a')
-    assertEquals(stale.status, 200, stale.text)
-    const world = stale.json as WorldProject
-    assertEquals(world.projectId, null, 'it is the world of no Place')
-    assertEquals(world.name, 'project proj a', 'named from the address')
-    assertEquals(world.things, [], 'it holds none of the Place\'s Things')
-    assertEquals(await filesHolding(server.dirs.root, SECRETS), [], 'and nothing of what the Place\'s world held (its address, location, Things, share tokens, notes) is on disk for it to hold')
-    // Every stored scan is filed under a Place (House B, now), so none is unfiled, and it lists the stored scans of that Place instead.
-    assertEquals(world.scans.map((scan) => scan.filename).sort(), [HALL, KITCHEN].sort())
+    assertEquals(stale.status, 404, stale.text)
+    assertEquals(await filesHolding(server.dirs.root, SECRETS), [], 'nothing of what the Place\'s world held (its address, location, Things, share tokens, notes) is on disk')
     assertEquals((await server.send('GET', `/scans/${KITCHEN}`)).status, 200, 'the premise: those scans are stored, and filed under House B')
-    // It is saved, so the list has it, as it has every world file, and it is a world of no Place that lists the scans it lists.
-    assertEquals((await list()).filter((entry) => entry.shareSlug === 'project-proj-a').map((entry) => [entry.projectId, entry.scanCount]), [[null, 2]])
-    for (const phrase of ['`projectId` null', 'no Place holds', 'up to eight', 'named from the address']) assertStringIncludes(consequence, phrase)
-    assertFalse(consequence.includes('scanCount` 0'), 'and not an emptied world')
+    assertEquals((await list()).filter((entry) => entry.shareSlug === 'project-proj-a'), [], 'and the list holds no world for the address')
+    assertFalse(consequence.includes('scanCount` 0'), 'and the ADR does not say an emptied world is listed')
   } finally {
     await server.stop()
   }

@@ -858,11 +858,15 @@ Deno.test('interactiveAssetRequestProblem names what the request is missing, and
 
 const MAIN = await Deno.readTextFile(new URL('../../../server/main.ts', import.meta.url))
 
-Deno.test('main.ts accepts thing-interactive-asset on the job route and dispatches it to its runner', () => {
-  assertMatch(MAIN, /const WORLD_JOB_TYPES = new Set<WorldJobType>\(\[[\s\S]*?'thing-interactive-asset',[\s\S]*?\]\)/)
+Deno.test('main.ts accepts thing-interactive-asset on the job route and dispatches it to its runner', async () => {
+  // Which types the job route takes and which need a scan is one table since wave 14 (server/world/job_request.ts):
+  // the job route takes every type whose starters include 'jobs-api', and jobFailureReason asks jobNeedsScan.
+  const rules = await Deno.readTextFile(new URL('../../../server/world/job_request.ts', import.meta.url))
+  assertMatch(rules, /'thing-interactive-asset': \{ needsScan: true, startedBy: \['jobs-api'\]/)
+  assertMatch(MAIN, /parseJobRequest\(await jsonBody\(c\)\)/)
   assertMatch(MAIN, /if \(job\.type === 'thing-interactive-asset'\) \{\s*await _runThingInteractiveAssetJob\(slug, jobId\)/)
   assertMatch(MAIN, /job\.type === 'thing-interactive-asset'\s*\?\s*'physag3d'/)
-  assertMatch(MAIN, /'person-4d-reconstruct', 'thing-interactive-asset', 'place-register'\]\.includes\(job\.type\) && !scan/)
+  assertMatch(MAIN, /if \(jobNeedsScan\(job\.type\) && !scan\)/)
 })
 
 Deno.test('nothing in the server queues thing-interactive-asset on its own: only a request does', async () => {

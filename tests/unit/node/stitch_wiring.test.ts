@@ -154,7 +154,7 @@ const revertRoute = (() => {
 
 test('a patch body is capped, read as an object and checked before the world is touched, and the check cannot be skipped by scope', () => {
   assert.notEqual(patchesRoute.length, 0)
-  inOrder(patchesRoute, 'denyUnlessWorldRole(c, authWorld', 'readTextCapped(c.req.raw, PLACE_JSON_MAX_BYTES)', 'the role is checked before the body is read')
+  inOrder(patchesRoute, "worldAccess(c, authWorld, 'editor')", 'readTextCapped(c.req.raw, PLACE_JSON_MAX_BYTES)', 'the role is checked before the body is read')
   assert.match(patchesRoute, /if \(text === null\) return c\.json\(\{.*\}, 413\)/)
   assert.match(patchesRoute, /parseJsonObject\(text\)/)
   const check = /const problem = patchProblem\(\{ scope, targetId, transform: body\.transform \}, authWorld\.scans\)/
@@ -167,7 +167,8 @@ test('a patch stores only the transform parts it knows, refuses a move of a node
   assert.match(patchesRoute, /transform: cleanTransform\(body\.transform\)/)
   assert.doesNotMatch(patchesRoute, /transform: body\.transform,/, 'the request\'s own transform is never stored whole')
   assert.match(patchesRoute, /patchProblem\(\{ scope, targetId, transform: body\.transform \}, authWorld\.scans\)/, 'the scans the names are checked against are the Place\'s own')
-  assert.match(patchesRoute, /world: redactWorldForClient\(world, requestToken\(c\)\)/)
+  // The caller's view (server/world/world_access.ts): the other members' tokens are blanked unless the caller is the owner.
+  assert.match(patchesRoute, /world: redactWorldForCaller\(world, caller\)/)
   assert.doesNotMatch(patchesRoute, /return c\.json\(\{ ok: true, patch, world \}\)/, 'the raw world, with every member\'s token, is not the answer')
 })
 
@@ -207,15 +208,15 @@ test('the first placement is stamped when a world is built and on every read, ah
 })
 
 test('the undo route is an editor action inside the world lock, reads its request strictly, and records itself like any patch', () => {
-  assert.match(revertRoute, /denyUnlessWorldRole\(c, authWorld, 'editor'\)/)
-  inOrder(revertRoute, 'denyUnlessWorldRole(', 'readTextCapped(c.req.raw, PLACE_JSON_MAX_BYTES)', 'the role is checked before the body is read')
+  assert.match(revertRoute, /worldAccess\(c, authWorld, 'editor'\)/)
+  inOrder(revertRoute, 'worldAccess(', 'readTextCapped(c.req.raw, PLACE_JSON_MAX_BYTES)', 'the role is checked before the body is read')
   assert.match(revertRoute, /const request = parseRevertRequest\(text\)/)
   assert.match(revertRoute, /if \(!request\.ok\) return c\.json\(\{ error: request\.message \}, 400\)/)
   inOrder(revertRoute, 'parseRevertRequest(', 'await updateWorld(', 'the request is read before the world is changed')
   assert.match(revertRoute, /planRevert\(world, \{ scanId: request\.scanId, patchId: request\.patchId \}\)/)
   assert.match(revertRoute, /throw new PlacementRefused\(plan\.status, plan\.message\)/)
   inOrder(revertRoute, 'world.editPatches.push(patch)', 'applyPatchToWorld(world, patch)', 'the undo is recorded and then applied')
-  assert.match(revertRoute, /redactWorldForClient\(world, requestToken\(c\)\)/)
+  assert.match(revertRoute, /redactWorldForCaller\(world, caller\)/)
   assert.match(revertRoute, /error instanceof PlacementRefused\) return c\.json\(\{ error: error\.message \}, error\.status\)/)
 })
 

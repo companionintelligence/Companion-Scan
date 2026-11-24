@@ -5,7 +5,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-const FALLBACK_HOSTNAME = 'liambook.capybara-ulmer.ts.net'
+// The name used when nothing says what this machine is called: reachable from this machine only. A neutral name,
+// never a real machine's (the repository is public). server/origin.ts FALLBACK_HOSTNAME is the same value.
+const FALLBACK_HOSTNAME = 'localhost'
 
 // Vite dev/preview port. Same variable name and default as main.ts's read of
 // Deno.env.get('VITE_PORT') — deliberately parallel one-liners (see
@@ -19,7 +21,10 @@ const VITE_PORT = Number(process.env.VITE_PORT ?? 5173)
  *   1. TAILSCALE_HOSTNAME / VITE_HOSTNAME env var
  *   2. `tailscale status --json` → Self.DNSName (works on Linux + macOS CLI installs)
  *   3. a <hostname>.ts.net.crt file sitting in the repo root (tailscale cert output)
- *   4. historical default (liambook)
+ *   4. FALLBACK_HOSTNAME, `localhost`, with one warning: no phone can reach it
+ *
+ * server/origin.ts resolveHostnameWith is the same algorithm for Deno. They are parallel on purpose (different
+ * runtimes, docs/factory/foundation-updates/0002): change both.
  */
 function resolveHostname(): { hostname: string; source: string } {
   const fromEnv = process.env.TAILSCALE_HOSTNAME ?? process.env.VITE_HOSTNAME
@@ -49,6 +54,13 @@ function resolveHostname(): { hostname: string; source: string } {
 
 const { hostname: HOSTNAME, source: HOSTNAME_SOURCE } = resolveHostname()
 console.log(`[vite] Hostname: ${HOSTNAME} (via ${HOSTNAME_SOURCE})`)
+if (HOSTNAME_SOURCE === 'default') {
+  console.warn(
+    `[vite] No host name found: TAILSCALE_HOSTNAME and VITE_HOSTNAME are unset, tailscale did not answer, and no ` +
+      `*.ts.net.crt file is in the working folder. Using ${FALLBACK_HOSTNAME}, which only this machine can reach: ` +
+      'phones cannot connect. Set TAILSCALE_HOSTNAME to this machine\'s tailnet name.',
+  )
+}
 
 // Deno API server the proxy forwards to. Overridable so test harnesses can
 // point one Vite instance at an isolated server (e.g. API_TARGET=http://localhost:8100).
@@ -148,16 +160,27 @@ for (const route of ['/rtc-signal', '/events']) {
 // no equivalent, so the same URL falls through to the SPA fallback (index.html,
 // the scanner start screen) instead. Mirror the rewrite here so `/editor` works
 // identically on `vite dev` and the production Deno static server.
+/**
+ * `/editor`, `/editor/`, either with a query: viewer.html with that query; null for any other path. The same rule as
+ * rewriteEditorPath in server/wp-a-static.ts, which main.ts's static handler uses. This is a copy, not an import, because
+ * the Docker image builds the bundle in a stage that has no server/ (Dockerfile, stage `web`), as with resolveHostname.
+ * tests/unit/deno/server_core_editor_route.test.ts holds the two bodies equal.
+ */
+function rewriteEditorPath(pathWithQuery: string): string | null {
+  const query = pathWithQuery.indexOf('?')
+  const pathname = query === -1 ? pathWithQuery : pathWithQuery.slice(0, query)
+  if (pathname !== '/editor' && pathname !== '/editor/') return null
+  return `/viewer.html${query === -1 ? '' : pathWithQuery.slice(query)}`
+}
+
 function rewriteEditorRoute() {
   return {
     name: 'rewrite-editor-route',
     configureServer(server: { middlewares: { use: (fn: (req: { url?: string }, res: unknown, next: () => void) => void) => void } }) {
       server.middlewares.use((req, _res, next) => {
-        if (req.url === '/editor' || req.url === '/editor/') {
-          req.url = '/viewer.html'
-        } else if (req.url?.startsWith('/editor?')) {
-          req.url = `/viewer.html?${req.url.slice('/editor?'.length)}`
-        }
+        // The rule main.ts's static handler applies (rewriteEditorPath above): `/editor`, `/editor/`, either with a query.
+        const rewritten = rewriteEditorPath(req.url ?? '')
+        if (rewritten) req.url = rewritten
         next()
       })
     },

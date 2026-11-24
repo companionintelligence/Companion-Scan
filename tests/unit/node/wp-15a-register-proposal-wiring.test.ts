@@ -62,7 +62,9 @@ test('source shape: the Advanced queue can queue the job, and Prepare still does
 test('source shape: the server dispatches the job type, lists it for the jobs route and queues it when a scan joins a Place', () => {
   const server = read('server/main.ts')
   assert.match(server, /if \(job\.type === 'place-register'\) \{\s+await _runPlaceRegisterJob\(slug, jobId\)\s+return\s+\}/)
-  assert.match(server, /const WORLD_JOB_TYPES = new Set<WorldJobType>\(\[[\s\S]*?'place-register',[\s\S]*?\]\)/)
+  // The jobs route takes the types the rules table starts by 'jobs-api' (server/world/job_request.ts).
+  assert.match(read('server/world/job_request.ts'), /'place-register': \{ needsScan: true, startedBy: \['jobs-api', 'upload'\]/)
+  assert.match(server, /parseJobRequest\(await jsonBody\(c\)\)/)
   assert.match(server, /void queuePlaceRegisterOnJoin\(filename, typeof metaRaw === 'string' \? metaRaw : null\)/)
   assert.match(server, /const guard = guardRegistrationPatch\(world, body\)/)
   // No branch sets a scan aligned on this job's account: `applyCompletedJobToWorld` has no case for it.

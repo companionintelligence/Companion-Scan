@@ -80,6 +80,51 @@ export function isAllowedOrigin(origin: string, allowlist: OriginAllowlist): boo
   }
 }
 
+// ── The host name phones use to reach this box ───────────────────────────────
+
+/**
+ * The name this server uses when nothing says what it is called. It is reachable from this machine
+ * only, so a share link or a 4D callback built from it works nowhere else, and the boot log says so
+ * (`HOSTNAME_FALLBACK_WARNING`). A neutral name, never a real machine's: the repository is public.
+ */
+export const FALLBACK_HOSTNAME = 'localhost'
+
+/** Where the host name came from, in the words the boot log prints. */
+export type HostnameSource = 'env' | 'tailscale cli' | 'cert file' | 'default'
+
+/** What the resolver may look at. main.ts passes Deno's environment, `tailscale status --json` and the working folder. */
+export interface HostnameProbes {
+  env: (name: string) => string | undefined
+  /** `Self.DNSName` from `tailscale status --json`, or null when tailscale is absent, stopped or slow. */
+  tailscaleDnsName: () => Promise<string | null>
+  /** The file names in the working folder, where `tailscale cert` leaves `<host>.ts.net.crt`. */
+  workingFolderFiles: () => Promise<string[]>
+}
+
+/**
+ * The host name, first hit wins: TAILSCALE_HOSTNAME or VITE_HOSTNAME, then tailscale's own name for this machine, then
+ * a `*.ts.net.crt` file in the working folder, then `FALLBACK_HOSTNAME`.
+ *
+ * vite.config.ts's resolveHostname() is the same algorithm for Node (docs/factory/foundation-updates/0002): they are
+ * deliberately parallel implementations, not a shared module, because the two run under different runtimes. Change both.
+ */
+export async function resolveHostnameWith(probes: HostnameProbes): Promise<{ hostname: string; source: HostnameSource }> {
+  const fromEnv = probes.env('TAILSCALE_HOSTNAME') ?? probes.env('VITE_HOSTNAME')
+  if (fromEnv) return { hostname: fromEnv, source: 'env' }
+  const dns = await probes.tailscaleDnsName().catch(() => null)
+  if (typeof dns === 'string' && dns.length > 0) return { hostname: dns.replace(/\.$/, ''), source: 'tailscale cli' }
+  const files = await probes.workingFolderFiles().catch(() => [] as string[])
+  const cert = files.find((name) => name.endsWith('.ts.net.crt'))
+  if (cert) return { hostname: cert.replace(/\.crt$/, ''), source: 'cert file' }
+  return { hostname: FALLBACK_HOSTNAME, source: 'default' }
+}
+
+/** The one warning the boot log prints when the resolver fell back. Names the settings, never a host. */
+export const HOSTNAME_FALLBACK_WARNING =
+  `No host name found: TAILSCALE_HOSTNAME and VITE_HOSTNAME are unset, tailscale did not answer, and no *.ts.net.crt ` +
+  `file is in the working folder. Using ${FALLBACK_HOSTNAME}, which only this machine can reach: phones cannot connect, ` +
+  `and share links and the 4D callback name ${FALLBACK_HOSTNAME}. Set TAILSCALE_HOSTNAME to this machine's tailnet name.`
+
 /**
  * Headers for a route that builds its own Response (the GLB and splat files). Echoes the caller's
  * origin only when it is allowed, never `*`. `Vary: Origin` stops a shared cache from handing one
