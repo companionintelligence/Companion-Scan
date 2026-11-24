@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * CI-executable half of the detection regression gate: starts the Deno
- * server with the deterministic mock engine, runs scripts/eval-cv.mjs
+ * CI-executable half of the detection regression gate: starts the API
+ * server (node server/main.ts) with the deterministic mock engine, runs scripts/eval-cv.mjs
  * against the synthetic corpus with STRICT=1, and tears the server down —
  * no Ollama, no GPU, no model weights, matching the "hard constraint: CI has
  * no model" section of docs/factory/06-detection-ground-truth/
@@ -20,7 +20,6 @@
  */
 import { execSync, spawn } from 'node:child_process'
 import { mkdirSync, rmSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -31,19 +30,14 @@ const SERVER_URL = `http://localhost:${PORT}`
 const RUN_DIR = join(root, '.test-run', 'ci-mock-gate')
 const READY_TIMEOUT_MS = 60_000
 
-const denoBin = (() => {
-  try { return execSync('command -v deno', { shell: '/bin/sh' }).toString().trim() } catch { /* not on PATH */ }
-  return join(homedir(), '.deno', 'bin', 'deno')
-})()
-
 rmSync(RUN_DIR, { recursive: true, force: true })
 for (const d of ['scans', 'worlds', 'summaries']) mkdirSync(join(RUN_DIR, d), { recursive: true })
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const server = spawn(
-  denoBin,
-  ['run', '--allow-net', '--allow-read', '--allow-write', '--allow-env', '--allow-ffi', 'server/main.ts'],
+  process.execPath,
+  ['server/main.ts'],
   {
     cwd: root,
     env: {
@@ -58,8 +52,8 @@ const server = spawn(
     detached: true, // own process group so teardown kills grandchildren too
   },
 )
-server.stdout.on('data', (d) => process.stdout.write(`[deno] ${d}`))
-server.stderr.on('data', (d) => process.stderr.write(`[deno] ${d}`))
+server.stdout.on('data', (d) => process.stdout.write(`[server] ${d}`))
+server.stderr.on('data', (d) => process.stderr.write(`[server] ${d}`))
 
 const killServer = () => { try { process.kill(-server.pid, 'SIGTERM') } catch { /* already gone */ } }
 process.on('SIGINT', () => { killServer(); process.exit(130) })

@@ -152,7 +152,7 @@
  * place that is not where the objects are.
  */
 import { Document, type NodeIO, Primitive } from '@gltf-transform/core'
-import { resolve } from '@std/path'
+import { resolve } from 'node:path'
 import { getGltfReadIO } from '../pipeline.ts'
 
 import type { PanopticLiftManifest, SplatAlignManifest } from '../../src/world/types.ts'
@@ -182,6 +182,8 @@ import {
   type RawPanopticFrame,
   type ThingSegment,
 } from './panoptic_segments.ts'
+import * as fs from 'node:fs/promises'
+import { readBytes } from '../fs_util.ts'
 
 export type { PanopticLiftManifest }
 
@@ -319,7 +321,7 @@ export async function readMetricFrame(sessionDir: string, glbBase: string): Prom
   for (const path of [`${glbBase}.splat-align.manifest.json`, `${sessionDir}/splat-align.manifest.json`]) {
     let parsed: unknown
     try {
-      parsed = JSON.parse(await Deno.readTextFile(path))
+      parsed = JSON.parse(await fs.readFile(path, 'utf8'))
     } catch {
       continue
     }
@@ -691,7 +693,7 @@ export function collectPointPositions(doc: Document): { positions: Float32Array;
 async function readCloudFromGlb(path: string): Promise<{ positions: Float32Array; count: number } | null> {
   try {
     const io = await getIO()
-    const doc = await io.readBinary(await Deno.readFile(path))
+    const doc = await io.readBinary(await readBytes(path))
     return collectPointPositions(doc)
   } catch {
     // A missing or undecodable GLB is a precondition failure, reported as a
@@ -707,7 +709,7 @@ async function finish(
 ): Promise<PanopticLiftManifest> {
   const full = { ...manifest, timing: { elapsedMs } }
   try {
-    await Deno.writeTextFile(manifestPath, JSON.stringify(full, null, 2))
+    await fs.writeFile(manifestPath, JSON.stringify(full, null, 2))
   } catch {
     // A manifest we cannot persist must not turn a completed run into a crash;
     // the returned value is still the job's result. Same rule as panoptic_scan.
@@ -770,7 +772,7 @@ export async function runPanopticLift(opts: PanopticLiftRunOptions): Promise<Pan
   //    skipped for a missing venv), which is a precondition, not a failure.
   let payload: { frames?: RawPanopticFrame[] }
   try {
-    payload = JSON.parse(await Deno.readTextFile(segmentsPath)) as typeof payload
+    payload = JSON.parse(await fs.readFile(segmentsPath, 'utf8')) as typeof payload
   } catch {
     return finish(manifestPath, {
       ...base,
@@ -832,7 +834,7 @@ export async function runPanopticLift(opts: PanopticLiftRunOptions): Promise<Pan
     if (dims.has(file)) return dims.get(file)!
     let out: { w: number; h: number } | null = null
     try {
-      out = readJpegDimensions(await Deno.readFile(`${sessionDir}/${file}`))
+      out = readJpegDimensions(await readBytes(`${sessionDir}/${file}`))
     } catch {
       out = null
     }
@@ -985,7 +987,7 @@ export async function runPanopticLift(opts: PanopticLiftRunOptions): Promise<Pan
     detections: out,
   }
   try {
-    await Deno.writeTextFile(detectionsPath, JSON.stringify(sidecar, null, 2))
+    await fs.writeFile(detectionsPath, JSON.stringify(sidecar, null, 2))
   } catch (e) {
     return finish(manifestPath, {
       ...base,

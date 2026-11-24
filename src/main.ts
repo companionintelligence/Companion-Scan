@@ -5,7 +5,7 @@
  *   1. Open IndexedDB store
  *   2. Mount UI (overlay + panel)
  *   3. Detect AR runtime (native ARKit / ARCore in the shell → 8th Wall → WebXR)
- *   4. Init inference router (WebGPU worker or Deno server path)
+ *   4. Init inference router (WebGPU worker or server path)
  *   5. Start AR session
  *   6. Wire capture button → infer → resolve → store → UI update loop
  *   7. Wire auto-capture toggle → pose-delta-based automated capture

@@ -1,11 +1,11 @@
 /**
  * `POST`/`GET /projects/:id/reference-photos` — the server half of wave 09
- * ticket 0007, against a live Deno server.
+ * ticket 0007, against a live server.
  *
  *   API_URL=http://localhost:8000 npx playwright test --project=api reference-photos
  *
  * Path safety and body validation are proved unit-wise in
- * `tests/unit/deno/reference_photos.test.ts`; this file proves the routes are
+ * `tests/unit/server/reference_photos.test.ts`; this file proves the routes are
  * actually wired to that logic and that the bytes survive a round trip. The
  * split matches how `/sessions/:id/keyframes` is covered — its validation is
  * shape-only, and its behaviour is exercised through `api-*` specs like this.

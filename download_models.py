@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download LFM2.5-VL-1.6B-ONNX model files for both browser and Deno server paths."""
+"""Download LFM2.5-VL-1.6B-ONNX model files for both browser and server paths."""
 from huggingface_hub import hf_hub_download
 import os
 import sys

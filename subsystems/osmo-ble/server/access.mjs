@@ -25,7 +25,7 @@
 // browser page (the CLI, the MCP server, curl), so it is never refused for its origin; the token,
 // when set, is what covers it.
 //
-// The rules are written in parallel to server/origin.ts (the main app's rules, in Deno), not shared
+// The rules are written in parallel to server/origin.ts (the main app's rules, in its server), not shared
 // with it. That is a different listener with a different trust boundary, in a different runtime.
 // They share its matching rules: whole origins only (never startsWith), and never the literal "null".
 

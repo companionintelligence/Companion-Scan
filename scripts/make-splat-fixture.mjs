@@ -3,7 +3,7 @@
  * splat-train integration test has something to serve, load, and screenshot.
  *
  * Why synthetic: the real trainer is Brush (a GPU binary) which can't run in
- * CI. The Deno driver's spawn surface is covered by splat_train.test.ts; what
+ * CI. The server driver's spawn surface is covered by splat_train.test.ts; what
  * the viewer test still needs is a *valid INRIA 3DGS .ply* on disk plus the
  * `<base>.splat-train.manifest.json` the world job writes. We synthesise both.
  * The data path (served .ply → SplatMesh) is identical to a real run.

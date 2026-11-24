@@ -17,7 +17,7 @@
  *
  * Why this is a module of its own and not lines in `main.ts`: the same reason `calibration_fields.ts` is. `main.ts`
  * cannot be imported by a test without running its top-level side effects, so the reading is tested here
- * (tests/unit/deno/frame_epoch_fields.test.ts) and a source-shape test holds `main.ts` to calling it.
+ * (tests/unit/server/frame_epoch_fields.test.ts) and a source-shape test holds `main.ts` to calling it.
  */
 import type { ScanQualitySummary } from '../src/world/types.ts'
 

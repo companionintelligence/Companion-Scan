@@ -33,10 +33,10 @@
  * Why this is a module of its own and not functions in `main.ts`: the same reason
  * `take_id.ts`, `scan_index.ts` and `world_lock.ts` exist. `main.ts` cannot be imported by a
  * test without running its top-level side effects (hostname resolution, VLM engine load,
- * `Deno.serve`). While these lived there nothing exercised them, and `asCalibrationMethod`
+ * `serve(...)`). While these lived there nothing exercised them, and `asCalibrationMethod`
  * stayed at the one-point tier after the two-point and known-distance tiers shipped, so a
  * real server never told the editor that a scan was two-point.
- * tests/unit/deno/calibration_fields.test.ts and tests/unit/deno/scan_manifest_calibration.test.ts
+ * tests/unit/server/calibration_fields.test.ts and tests/unit/server/scan_manifest_calibration.test.ts
  * pin them now.
  */
 import type { ScanManifest } from '../src/world/types.ts'
@@ -165,13 +165,13 @@ export function asOutsidePlaceFrame(record: unknown, flat?: unknown): true | und
  * not a string at all.
  *
  * Keep this list equal to that union. A tier added to the union stops the exhaustive tables
- * in tests/unit/deno/calibration_fields.test.ts compiling until they list it, and those
+ * in tests/unit/server/calibration_fields.test.ts compiling until they list it, and those
  * tests then fail until it is listed here.
  *
  * What the tier changes downstream, so that a widening here is not made lightly: it is the
  * viewer's gate for the red pins (`'two-point-ground'` only), and in server/memory_push.ts it
  * is the condition for shipping `spatial_frame` and the value of
- * `mesh_object_frame.calibration_method` (pinned in tests/unit/deno/memory_push.test.ts).
+ * `mesh_object_frame.calibration_method` (pinned in tests/unit/server/memory_push.test.ts).
  */
 export function asCalibrationMethod(value: unknown): ScanManifest['calibrationMethod'] {
   return value === 'two-point-ground' || value === 'ground-tap-compass' || value === 'known-distance'
@@ -206,7 +206,7 @@ export type ManifestCalibrationFields = Pick<
  * One more manifest field, beside those eleven: `true` when a two-point scan's calibration says it is in no Place frame, absent
  * otherwise (never `false`). It is `ScanManifest.calibrationOutsidePlaceFrame` (src/world/types.ts), which tells a scan that is in no
  * frame from one that is in a frame it cannot name (no `calibrationFrameId`). It is added beside `ManifestCalibrationFields` and not
- * into it, because that list is the eleven keys the S0 schema step added and tests/unit/deno/frame_schema_s0.test.ts pins it at
+ * into it, because that list is the eleven keys the S0 schema step added and tests/unit/server/frame_schema_s0.test.ts pins it at
  * those. A manifest row that carries it is read by the one predicate every reader asks, `isInPlaceFrame`
  * (src/world/frame-generations.ts): the server's counts, Thing matching and the editor's chip.
  */

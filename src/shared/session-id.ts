@@ -11,8 +11,8 @@
  * exactly this passed, because a non-empty string is truthy. See
  * docs/factory/07-scan-identity/0002-one-session-identity.md.
  *
- * Deno-API-free on purpose (ADR 0002): `main.ts`, the `DetectionStore` and the
- * GLB exporter all import this, so it cannot reach for `Deno` or for the DOM.
+ * Node-API-free on purpose (ADR 0002): `main.ts`, the `DetectionStore` and the
+ * GLB exporter all import this, so it cannot reach for `node:*` or for the DOM.
  * The existence-aware half lives in the root `session_id.ts`, which is
  * server-only because it stats the filesystem.
  */

@@ -4,7 +4,7 @@
  *
  * Why this exists: `listStoredScans()` loops every non-derived `.glb` and awaits
  * `readScanMeta()`, which called `readSessionRecordForScan()`, which ran its own
- * `Deno.readDir(SESSIONS_DIR)` and read `session.json` for every session directory —
+ * `fs.readdir(SESSIONS_DIR)` and read `session.json` for every session directory —
  * for every scan. That is O(scans × sessions), not merely "serial stats": a library of
  * ~2,900 files took 120 seconds against 18ms on an empty directory, and that timeout is
  * what made the editor's geomap fail during the readiness review, because the viewer
@@ -18,11 +18,13 @@
  *
  * It lives in its own module rather than in `main.ts` for the same reason `world_lock.ts`
  * and `world_job_pump.ts` do: so it is importable, and unit-testable, without `main.ts`'s
- * unconditional top-level `Deno.serve`. For the same reason it inlines its two predicates
+ * unconditional top-level `serve(...)`. For the same reason it inlines its two predicates
  * rather than importing them from `main.ts`.
  */
 
 /** Mirrors `main.ts`'s `asString` — inlined so this module imports nothing from it. */
+import * as fs from 'node:fs/promises'
+
 function asString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null
 }
@@ -35,7 +37,7 @@ function asString(value: unknown): string | null {
  */
 async function liveKeyframeCount(sessionsDir: string, sessionId: string): Promise<number> {
   try {
-    const jsonl = await Deno.readTextFile(`${sessionsDir}/${sessionId}/keyframes.jsonl`)
+    const jsonl = await fs.readFile(`${sessionsDir}/${sessionId}/keyframes.jsonl`, 'utf8')
     return jsonl.split('\n').filter(Boolean).length
   } catch {
     return 0
@@ -43,12 +45,12 @@ async function liveKeyframeCount(sessionsDir: string, sessionId: string): Promis
 }
 
 export interface SessionIndex {
-  /** session directory name → parsed session.json, in `Deno.readDir` order. */
+  /** session directory name → parsed session.json, in the directory's listing order. */
   bySessionId: Map<string, Record<string, unknown>>
   /** session record's `glbFilename` → that record. First writer in readDir order wins. */
   byGlb: Map<string, Record<string, unknown>>
   /**
-   * `takeId` → the session ids sharing it, in `Deno.readDir` order.
+   * `takeId` → the session ids sharing it, in the directory's listing order.
    *
    * A take is N simultaneous captures of one subject, and it is deliberately a
    * *derived* set rather than a stored aggregate — so this grouping is folded
@@ -76,11 +78,11 @@ export async function loadSessionIndex(sessionsDir: string): Promise<SessionInde
   const needsLiveCount: string[] = []
 
   try {
-    for await (const entry of Deno.readDir(sessionsDir)) {
-      if (!entry.isDirectory) continue
+    for (const entry of await fs.readdir(sessionsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
       try {
         const record = JSON.parse(
-          await Deno.readTextFile(`${sessionsDir}/${entry.name}/session.json`),
+          await fs.readFile(`${sessionsDir}/${entry.name}/session.json`, 'utf8'),
         ) as Record<string, unknown>
         bySessionId.set(entry.name, record)
         // Gated on the field already being present, not just on finalizedAt
@@ -161,7 +163,7 @@ export async function sessionForScan(
     if (indexed) return indexed
     try {
       return JSON.parse(
-        await Deno.readTextFile(`${sessionsDir}/${explicit}/session.json`),
+        await fs.readFile(`${sessionsDir}/${explicit}/session.json`, 'utf8'),
       ) as Record<string, unknown>
     } catch {
       return null

@@ -14,7 +14,7 @@
  *
  * Writing takes only the fixed-width layout NOAA's file has, with LF line endings, and refuses anything
  * else. Parsing and rendering are exact inverses: `renderCof(parseCof(text)) === text` for every text it
- * accepts, which is what lets tests/unit/deno/declination.test.ts rebuild the source file from the rows in
+ * accepts, which is what lets tests/unit/server/declination.test.ts rebuild the source file from the rows in
  * the repository and check its SHA-256 against the one recorded here. A claim that the table is that file
  * is then a measurement, not a comment.
  *
@@ -218,7 +218,7 @@ export function renderModule({ cof, sha256, origin }) {
     ' * share of the work: they are U.S. Government material and are not subject to copyright protection.',
     ' * Source: https://www.ncei.noaa.gov/products/world-magnetic-model',
     ' *',
-    ' * Browser-safe on purpose (ADR 0002): data only, no Deno or DOM references.',
+    ' * Browser-safe on purpose (ADR 0002): data only, no Node or DOM references.',
     ' */',
     '',
     '/** One coefficient row: degree n, order m, then g and h in nT at the epoch and their rates gDot and hDot in nT per year. */',

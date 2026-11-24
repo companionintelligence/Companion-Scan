@@ -5,7 +5,7 @@
  * `tests/mock-scanner-startup-budget.spec.ts` measures this by rendering the
  * page and reading `innerText`. That is the ground truth and it stays, but it
  * only runs where a browser and a Vite server do: GitHub CI never runs
- * Playwright at all (.github/workflows/deno-ci.yml installs with `deno install`
+ * Playwright at all (.github/workflows/server-ci.yml installs with `npm ci`
  * and runs no browser), so the assertion was dark everywhere except a local
  * `npm run loop`. It went 20 words over in #223 and nothing said so.
  *

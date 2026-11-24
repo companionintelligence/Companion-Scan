@@ -4,8 +4,8 @@
  * valid, and round-trips back through gltf-transform to confirm the POINTS
  * primitive shape — XYZ + COLOR_0 — survives quantisation.
  *
- * Runs under Node because @gltf-transform/functions depends on `sharp`,
- * whose native binary is npm-installed (not Deno-permissioned). Invoke via:
+ * Runs in the Node suite because @gltf-transform/functions depends on `sharp`,
+ * whose native binary is npm-installed. Invoke via:
  *
  *     node --experimental-strip-types --test lingbot_map_glb.test.ts
  */

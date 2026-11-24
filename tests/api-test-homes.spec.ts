@@ -4,7 +4,7 @@
  * artifacts → manifests → scan list flags → world synthesis.
  *
  * Browser-free (request fixture only). Run under the `api` project against a
- * directly reachable Deno server:
+ * directly reachable server:
  *
  *   npm run gen:test-data                              # once
  *   SCANS_DIR=/tmp/api-scans INFERENCE_MODE=mock npm run server   # test server

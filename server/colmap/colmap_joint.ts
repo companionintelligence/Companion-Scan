@@ -13,7 +13,7 @@
  * another session's frames), it does not judge the solve (which sessions joined and which did not is reported; what to
  * do about it is the registration job's), and it does not keep a reference model between runs.
  */
-import { basename, dirname, join, resolve } from '@std/path'
+import { basename, dirname, join, resolve } from 'node:path'
 import {
   buildJointPosesJson,
   type ColmapCamera,
@@ -71,6 +71,9 @@ import {
   type SessionPlacement,
 } from '../register/session_priors.ts'
 import { type KeyframeRecord, readJpegDimensions, readKeyframes } from '../splat/splat_train_dataset.ts'
+import * as fs from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
+import { readBytes } from '../fs_util.ts'
 
 /** One session of a joint solve. */
 export interface ColmapJointSession {
@@ -199,17 +202,17 @@ export interface ColmapJointResult {
 const JPEG_HEADER_BYTES = 256 * 1024
 
 export async function readFrameSize(path: string): Promise<{ width: number; height: number } | null> {
-  let file: Deno.FsFile | null = null
+  let file: FileHandle | null = null
   try {
-    file = await Deno.open(path, { read: true })
+    file = await fs.open(path, 'r')
     const buffer = new Uint8Array(JPEG_HEADER_BYTES)
-    const read = await file.read(buffer)
-    const size = readJpegDimensions(buffer.subarray(0, read ?? 0))
+    const { bytesRead } = await file.read(buffer, 0, buffer.byteLength)
+    const size = readJpegDimensions(buffer.subarray(0, bytesRead))
     return size ? { width: size.w, height: size.h } : null
   } catch {
     return null
   } finally {
-    file?.close()
+    await file?.close()
   }
 }
 
@@ -219,18 +222,17 @@ export async function readFrameSize(path: string): Promise<{ width: number; heig
  * equal, which is what a containment check needs and a text comparison cannot give: a trailing slash, a relative path, a
  * `.` or `..`, a link.
  *
- * It climbs from the whole path to the nearest ancestor that exists and asks `Deno.realPath` about that, with the path
- * exactly as written, so it names the place `Deno.mkdir` will make the directory in. That is not the same place in every
- * process: Deno follows a `..` after a symbolic link as the file system does under `-A`, and reads it as text when the
- * process runs with a permission list (`deno task start` does). Normalising the path first would pick one of the two and
- * be wrong in the other, with a link into a session followed by `..` reading as a place outside it.
+ * It climbs from the whole path to the nearest ancestor that exists and asks `fs.realpath` about that, with the path
+ * exactly as written, so it names the place `fs.mkdir` will make the directory in: both hand the path to the file
+ * system, which follows a `..` after a symbolic link from wherever the link leads. Normalising the path first would read
+ * the `..` as text instead, and a link into a session followed by `..` would read as a place other than the one written.
  */
 export async function locationOf(path: string): Promise<string> {
   const missing: string[] = []
   let existing = path
   for (;;) {
     try {
-      return join(await Deno.realPath(existing), ...missing.reverse())
+      return join(await fs.realpath(existing), ...missing.reverse())
     } catch {
       const parent = dirname(existing)
       if (parent === existing) return resolve(path)
@@ -255,7 +257,7 @@ async function finishJoint(
 ): Promise<ColmapJointResult> {
   const withTiming: ColmapJointManifest = { ...manifest, timing: { elapsedMs: Date.now() - started } }
   try {
-    await Deno.writeTextFile(manifestPath, JSON.stringify(withTiming, null, 2))
+    await fs.writeFile(manifestPath, JSON.stringify(withTiming, null, 2))
   } catch {
     // An output directory that vanished mid-run shouldn't mask the real result.
   }
@@ -337,11 +339,11 @@ export async function runColmapJointPoses(opts: ColmapJointRunOptions): Promise<
       return reject(`outDir must not be a session directory or inside one (it is ${id}): the solve writes its work there`)
     }
   }
-  await Deno.mkdir(outDir, { recursive: true })
+  await fs.mkdir(outDir, { recursive: true })
   // The poses of an earlier solve of this directory are not this solve's. Whatever happens from here, a reader that finds
   // `colmap.poses.json` finds the answer to this run or nothing.
   try {
-    await Deno.remove(`${outDir}/colmap.poses.json`)
+    await fs.rm(`${outDir}/colmap.poses.json`)
   } catch {
     // none there — fine
   }
@@ -372,8 +374,8 @@ export async function runColmapJointPoses(opts: ColmapJointRunOptions): Promise<
     const { sessionDir, placement } = session
     const names: string[] = []
     try {
-      for await (const entry of Deno.readDir(sessionDir)) {
-        if (entry.isFile && KEYFRAME_RE.test(entry.name)) names.push(entry.name)
+      for (const entry of await fs.readdir(sessionDir, { withFileTypes: true })) {
+        if (entry.isFile() && KEYFRAME_RE.test(entry.name)) names.push(entry.name)
       }
     } catch {
       return await finishJoint(manifestPath, { ...base, status: 'error', error: `session directory not found: ${sessionId}` }, 2, '', started)
@@ -488,13 +490,13 @@ export async function runColmapJointPoses(opts: ColmapJointRunOptions): Promise<
   })))
   let cachedFingerprint: string | null = null
   try {
-    cachedFingerprint = (await Deno.readTextFile(fingerprintPath)).trim()
+    cachedFingerprint = (await fs.readFile(fingerprintPath, 'utf8')).trim()
   } catch {
     // No record of what the workspace was built from.
   }
   let workspaceExists = true
   try {
-    await Deno.stat(work)
+    await fs.stat(work)
   } catch {
     workspaceExists = false
   }
@@ -505,32 +507,29 @@ export async function runColmapJointPoses(opts: ColmapJointRunOptions): Promise<
       `(${cachedFingerprint ? `${cachedFingerprint.slice(0, 12)} → ${fingerprint.slice(0, 12)}` : 'no recorded fingerprint'}) ` +
       '— discarding colmap-work/ and re-solving from scratch',
     )
-    await Deno.remove(work, { recursive: true })
+    await fs.rm(work, { recursive: true })
   }
-  await Deno.mkdir(listsDir, { recursive: true })
-  await Deno.writeTextFile(fingerprintPath, fingerprint)
+  await fs.mkdir(listsDir, { recursive: true })
+  await fs.writeFile(fingerprintPath, fingerprint)
 
   // Frames are linked (copied across devices) into `images/<sessionId>/`, the layout one-camera-per-folder reads.
   for (const session of withFrames) {
     const folder = `${imagesDir}/${session.sessionId}`
-    await Deno.mkdir(folder, { recursive: true })
+    await fs.mkdir(folder, { recursive: true })
     for (const frame of session.kept) {
       const dest = `${folder}/${frame.file}`
       try {
-        await Deno.remove(dest)
+        await fs.rm(dest)
       } catch {
         // not present — fine
       }
       try {
-        await Deno.link(`${session.sessionDir}/${frame.file}`, dest)
+        await fs.link(`${session.sessionDir}/${frame.file}`, dest)
       } catch {
-        await Deno.copyFile(`${session.sessionDir}/${frame.file}`, dest)
+        await fs.copyFile(`${session.sessionDir}/${frame.file}`, dest)
       }
     }
-    await Deno.writeTextFile(
-      `${listsDir}/${session.sessionId}.txt`,
-      session.kept.map((frame) => frameKey(session.sessionId, frame.file)).join('\n') + '\n',
-    )
+    await fs.writeFile(`${listsDir}/${session.sessionId}.txt`, session.kept.map((frame) => frameKey(session.sessionId, frame.file)).join('\n') + '\n')
   }
   const frameCount = totalFrames
 
@@ -561,7 +560,7 @@ export async function runColmapJointPoses(opts: ColmapJointRunOptions): Promise<
   // ── Matches ──
   if (plan.kind === 'pairs') {
     const pairsPath = `${work}/pairs.txt`
-    await Deno.writeTextFile(pairsPath, matchList)
+    await fs.writeFile(pairsPath, matchList)
     err = await step('matches_importer', matchesImporterArgs(params, db, pairsPath))
   } else {
     err = await step('exhaustive_matcher', exhaustiveMatcherArgs(params, db))
@@ -575,12 +574,12 @@ export async function runColmapJointPoses(opts: ColmapJointRunOptions): Promise<
   const grown = `${work}/sparse_grown`
   for (const stale of [sparse, grown]) {
     try {
-      await Deno.remove(stale, { recursive: true })
+      await fs.rm(stale, { recursive: true })
     } catch {
       // none there — fine
     }
   }
-  await Deno.mkdir(sparse, { recursive: true })
+  await fs.mkdir(sparse, { recursive: true })
   err = await step('mapper', mapperArgs(db, imagesDir, sparse))
   if (err) return await finishJoint(manifestPath, { ...soFar, status: 'error', error: err }, 2, logs.join('\n'), started)
 
@@ -601,18 +600,18 @@ export async function runColmapJointPoses(opts: ColmapJointRunOptions): Promise<
 
   // Second pass, seeded from the largest first-pass model, for the reason in colmap_poses.ts's header. A session COLMAP
   // built as a model of its own may still attach here, so "did it join" is read from the model that comes out of this.
-  await Deno.mkdir(grown, { recursive: true })
+  await fs.mkdir(grown, { recursive: true })
   const growErr = await step('mapper(grow)', growMapperArgs(db, imagesDir, largest.dir, grown))
   const modelDir = growErr ? largest.dir : await bestOf(grown, largest.dir)
 
-  const images = parseImagesBin(await Deno.readFile(`${modelDir}/images.bin`))
+  const images = parseImagesBin(await readBytes(`${modelDir}/images.bin`))
   if (images.length === 0) {
     return await finishJoint(manifestPath, { ...soFar, status: 'error', error: 'model contains no registered images' }, 2, logs.join('\n'), started)
   }
   let pointCount = 0
   let reprojectionSum = 0
   try {
-    const points = parsePoints3DBin(await Deno.readFile(`${modelDir}/points3D.bin`))
+    const points = parsePoints3DBin(await readBytes(`${modelDir}/points3D.bin`))
     pointCount = points.length
     for (const point of points) reprojectionSum += point.error
   } catch {
@@ -620,7 +619,7 @@ export async function runColmapJointPoses(opts: ColmapJointRunOptions): Promise<
   }
   let cameras: ColmapCamera[] = []
   try {
-    cameras = parseCamerasBin(await Deno.readFile(`${modelDir}/cameras.bin`))
+    cameras = parseCamerasBin(await readBytes(`${modelDir}/cameras.bin`))
   } catch {
     // Without cameras.bin the lens of each session is simply not recorded.
   }
@@ -660,7 +659,7 @@ export async function runColmapJointPoses(opts: ColmapJointRunOptions): Promise<
   }
 
   const posesPath = `${outDir}/colmap.poses.json`
-  await Deno.writeTextFile(posesPath, JSON.stringify(buildJointPosesJson(images, lenses), null, 2))
+  await fs.writeFile(posesPath, JSON.stringify(buildJointPosesJson(images, lenses), null, 2))
 
   return await finishJoint(manifestPath, {
     ...soFar,

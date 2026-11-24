@@ -2,7 +2,7 @@
  * Inference router — selects server or WebGPU path.
  *
  * Server path (default):
- *   POSTs the image to the Deno inference server (localhost:8000, proxied by Vite).
+ *   POSTs the image to the inference server (localhost:8000, proxied by Vite).
  *   Faster in practice since the server runs multi-threaded ONNX on all machine cores.
  *
  * WebGPU path (opt-in via settings):

@@ -63,6 +63,8 @@ import type { CentreStats } from './splat_ply_stats.ts'
 import { centreStats, fractionOutside, readPlyCentres } from './splat_ply_stats.ts'
 // The one fractional, zero-admitting env rule (server/run_with_deadline.ts), shared with colmap_poses.ts.
 import { numFromEnv } from '../run_with_deadline.ts'
+import * as fs from 'node:fs/promises'
+import { readBytes } from '../fs_util.ts'
 
 /** Why a splat was judged degenerate. Codes, so a caller can branch without parsing prose. */
 export type SplatQualityReason =
@@ -340,7 +342,7 @@ export async function measureSplatQuality(opts: {
 }): Promise<SplatQuality | null> {
   let splatBytes: Uint8Array
   try {
-    splatBytes = await Deno.readFile(opts.plyPath)
+    splatBytes = await readBytes(opts.plyPath)
   } catch {
     return null
   }
@@ -353,7 +355,7 @@ export async function measureSplatQuality(opts: {
   const thresholds = resolveSplatQualityThresholds()
   if (opts.seedPlyPath) {
     try {
-      const seedRead = readPlyCentres(await Deno.readFile(opts.seedPlyPath))
+      const seedRead = readPlyCentres(await readBytes(opts.seedPlyPath))
       if (seedRead && seedRead.xyz.length > 0) {
         seed = centreStats(seedRead.xyz, seedRead.declaredCount)
         outsideSeedFraction = fractionOutside(splatRead.xyz, seed, thresholds.seedBoxInflation)
@@ -383,7 +385,7 @@ export async function measureSplatQuality(opts: {
  */
 async function readPoseQuality(sessionDir: string): Promise<{ degenerate?: boolean } | null> {
   try {
-    const raw = await Deno.readTextFile(`${sessionDir}/colmap-poses.manifest.json`)
+    const raw = await fs.readFile(`${sessionDir}/colmap-poses.manifest.json`, 'utf8')
     const parsed = JSON.parse(raw) as { quality?: { degenerate?: unknown } }
     const degenerate = parsed.quality?.degenerate
     return typeof degenerate === 'boolean' ? { degenerate } : null

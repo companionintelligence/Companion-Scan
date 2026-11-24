@@ -22,6 +22,9 @@
  */
 import type { WorldProject } from '../src/world/types.ts'
 import { runningScanJobs, type RunningScanJob, scanJobsInWorld } from './scan_job_guard.ts'
+import * as fs from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
+import { isNotFound } from './fs_util.ts'
 
 /** The first four bytes of a binary glTF, 'glTF', and the type of the chunk that must follow its header, 'JSON'. */
 const GLB_MAGIC = 0x46546c67
@@ -75,13 +78,14 @@ export interface ScanWorldSide {
 }
 
 /** Reads up to `length` bytes from where `file` is, fewer when it ends first. */
-async function readUpTo(file: Deno.FsFile, length: number): Promise<Uint8Array> {
+async function readUpTo(file: FileHandle, length: number): Promise<Uint8Array> {
   const bytes = new Uint8Array(length)
   let got = 0
   while (got < length) {
-    const n = await file.read(bytes.subarray(got))
-    if (n === null) break
-    got += n
+    // No position: the read starts where the last one ended, and moves the file's position on.
+    const { bytesRead } = await file.read(bytes, got, length - got)
+    if (bytesRead === 0) break
+    got += bytesRead
   }
   return bytes.subarray(0, got)
 }
@@ -92,11 +96,11 @@ async function readUpTo(file: Deno.FsFile, length: number): Promise<Uint8Array> 
  * the two headers and that chunk are read, never the geometry after it. A read that fails is thrown.
  */
 async function exportHolds(path: string, needles: readonly string[]): Promise<'holds' | 'does-not' | 'unreadable' | 'gone'> {
-  let file: Deno.FsFile
+  let file: FileHandle
   try {
-    file = await Deno.open(path, { read: true })
+    file = await fs.open(path, 'r')
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return 'gone'
+    if (isNotFound(error)) return 'gone'
     throw error
   }
   try {
@@ -111,7 +115,7 @@ async function exportHolds(path: string, needles: readonly string[]): Promise<'h
     const text = new TextDecoder().decode(chunk)
     return needles.some((needle) => text.includes(needle)) ? 'holds' : 'does-not'
   } finally {
-    file.close()
+    await file.close()
   }
 }
 
@@ -119,10 +123,10 @@ export function scanWorldSide(deps: ScanWorldSideDeps): ScanWorldSide {
   /** Removes the file at `path`. Resolves whether there was one. A path that is already gone is not an error. */
   async function removePath(path: string): Promise<boolean> {
     try {
-      await Deno.remove(path)
+      await fs.rm(path)
       return true
     } catch (error) {
-      if (error instanceof Deno.errors.NotFound) return false
+      if (isNotFound(error)) return false
       throw error
     }
   }
@@ -134,11 +138,11 @@ export function scanWorldSide(deps: ScanWorldSideDeps): ScanWorldSide {
   async function exportFileNames(): Promise<string[]> {
     const names: string[] = []
     try {
-      for await (const entry of Deno.readDir(deps.worldsDir)) {
-        if (entry.isFile && entry.name.endsWith('.world.glb')) names.push(entry.name)
+      for (const entry of await fs.readdir(deps.worldsDir, { withFileTypes: true })) {
+        if (entry.isFile() && entry.name.endsWith('.world.glb')) names.push(entry.name)
       }
     } catch (error) {
-      if (error instanceof Deno.errors.NotFound) return []
+      if (isNotFound(error)) return []
       throw error
     }
     return names

@@ -10,7 +10,7 @@
  * Where the file came from: A copy of WMM.COF read on 2026-11-16 from the Navigraph/wmm2025 mirror on
  *   GitHub (src/wmm2025/WMM.COF), not NOAA's own download, which sits behind a survey page. Its 90 rows
  *   agree with NOAA's 12 published test rows to their printed precision
- *   (tests/unit/deno/declination.test.ts). They have not been compared with NOAA's own file: 'node
+ *   (tests/unit/server/declination.test.ts). They have not been compared with NOAA's own file: 'node
  *   scripts/gen-wmm-coefficients.mjs <NOAA file> --check' does that, and exits 0 when the rows are
  *   identical.
  * The rows render back to that file byte for byte (renderCof in the generator); the declination test
@@ -25,7 +25,7 @@
  * share of the work: they are U.S. Government material and are not subject to copyright protection.
  * Source: https://www.ncei.noaa.gov/products/world-magnetic-model
  *
- * Browser-safe on purpose (ADR 0002): data only, no Deno or DOM references.
+ * Browser-safe on purpose (ADR 0002): data only, no Node or DOM references.
  */
 
 /** One coefficient row: degree n, order m, then g and h in nT at the epoch and their rates gDot and hDot in nT per year. */

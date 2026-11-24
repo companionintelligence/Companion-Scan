@@ -37,6 +37,8 @@ import { safeSlug } from './scan_id.ts'
 import { SESSION_ID_RE } from './session_id.ts'
 import { movesScanByMatrix } from './world/scan_carry.ts'
 import { withWorldLock } from './world/world_lock.ts'
+import * as fs from 'node:fs/promises'
+import { isNotFound } from './fs_util.ts'
 
 /**
  * The scans made from an upload that `projectId` holds, as the synthetic filenames (`<sessionId>.glb`) the world and
@@ -46,17 +48,17 @@ import { withWorldLock } from './world/world_lock.ts'
 export async function uploadScansOfPlace(scansDir: string, projectId: string): Promise<string[]> {
   const found: string[] = []
   const sidecars: string[] = []
-  for await (const entry of Deno.readDir(scansDir)) {
-    if (!entry.isFile || !entry.name.endsWith('.json')) continue
+  for (const entry of await fs.readdir(scansDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue
     if (SESSION_ID_RE.test(entry.name.slice(0, -'.json'.length))) sidecars.push(entry.name)
   }
   for (const sidecar of sidecars) {
     const base = sidecar.slice(0, -'.json'.length)
     try {
-      const meta: unknown = JSON.parse(await Deno.readTextFile(`${scansDir}/${sidecar}`))
+      const meta: unknown = JSON.parse(await fs.readFile(`${scansDir}/${sidecar}`, 'utf8'))
       if (!meta || typeof meta !== 'object' || (meta as Record<string, unknown>)['projectId'] !== projectId) continue
       // A scan with a real GLB is one of the Place's GLB scans already.
-      const hasGlb = await Deno.stat(`${scansDir}/${base}.glb`).then(() => true, () => false)
+      const hasGlb = await fs.stat(`${scansDir}/${base}.glb`).then(() => true, () => false)
       if (!hasGlb) found.push(`${base}.glb`)
     } catch { /* an unreadable sidecar names no Place */ }
   }
@@ -71,13 +73,13 @@ export async function removePlaceMedia(mediaRoot: string, projectId: string): Pr
   const dir = projectMediaDirPath(mediaRoot, projectId)
   if (!dir) return false
   try {
-    const info = await Deno.lstat(dir)
+    const info = await fs.lstat(dir)
     // A link here would be removed as a link, never followed; anything but a folder is not ours.
-    if (!info.isDirectory) return false
-    await Deno.remove(dir, { recursive: true })
+    if (!info.isDirectory()) return false
+    await fs.rm(dir, { recursive: true })
     return true
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return false
+    if (isNotFound(error)) return false
     throw error
   }
 }
@@ -109,11 +111,11 @@ export interface LeftoverWorlds {
 async function worldFileNames(worldsDir: string): Promise<string[]> {
   const names: string[] = []
   try {
-    for await (const entry of Deno.readDir(worldsDir)) {
-      if (entry.isFile && entry.name.endsWith('.json')) names.push(entry.name)
+    for (const entry of await fs.readdir(worldsDir, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith('.json')) names.push(entry.name)
     }
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return []
+    if (isNotFound(error)) return []
     throw error
   }
   return names
@@ -128,12 +130,12 @@ export async function placeWorldSlugs(worldsDir: string, projectId: string): Pro
   const slugs: string[] = []
   for (const name of await worldFileNames(worldsDir)) {
     try {
-      const parsed: unknown = JSON.parse(await Deno.readTextFile(`${worldsDir}/${name}`))
+      const parsed: unknown = JSON.parse(await fs.readFile(`${worldsDir}/${name}`, 'utf8'))
       if (parsed && typeof parsed === 'object' && (parsed as StoredWorld)['projectId'] === projectId) slugs.push(name.slice(0, -'.json'.length))
     } catch (error) {
       // A file that is not JSON, or that went between the listing and the read, is not a world this Place can own. A read that
       // failed for any other reason (EACCES, EIO, EMFILE) may be one: it is not skipped, so nothing says "gone" over it.
-      if (!(error instanceof SyntaxError || error instanceof Deno.errors.NotFound)) throw error
+      if (!(error instanceof SyntaxError || isNotFound(error))) throw error
     }
   }
   return slugs
@@ -158,11 +160,11 @@ async function removeWorldsOf(worldsDir: string, projectId: string, keep?: KeepW
     const outcome = await withWorldLock(safeSlug(base), async (): Promise<{ removed: true; placements: number } | 'kept' | 'not-ours'> => {
       let parsed: unknown
       try {
-        parsed = JSON.parse(await Deno.readTextFile(`${worldsDir}/${name}`))
+        parsed = JSON.parse(await fs.readFile(`${worldsDir}/${name}`, 'utf8'))
       } catch (error) {
         // Not JSON, or already gone: not a world this Place can own. Any other failure to read the file (EACCES, EIO, EMFILE) may
         // be one, so it is not read as "not ours": it stops the removal, and the merge and the DELETE answer that it was not done.
-        if (error instanceof SyntaxError || error instanceof Deno.errors.NotFound) return 'not-ours'
+        if (error instanceof SyntaxError || isNotFound(error)) return 'not-ours'
         throw error
       }
       if (!parsed || typeof parsed !== 'object' || (parsed as StoredWorld)['projectId'] !== projectId) return 'not-ours'
@@ -172,9 +174,9 @@ async function removeWorldsOf(worldsDir: string, projectId: string, keep?: KeepW
       // The export first: a failure then leaves the world, which still names the Place, to be found again.
       for (const path of [`${worldsDir}/${base}.world.glb`, `${worldsDir}/${name}`]) {
         try {
-          await Deno.remove(path)
+          await fs.rm(path)
         } catch (error) {
-          if (!(error instanceof Deno.errors.NotFound)) throw error
+          if (!(isNotFound(error))) throw error
         }
       }
       return { removed: true, placements }
@@ -239,7 +241,7 @@ export async function worldHoldsScansOnDisk(world: StoredWorld, scansDir: string
   for (const scan of scans) {
     const filename = (scan as { filename?: unknown } | null)?.filename
     if (typeof filename !== 'string' || !isPlainScanFilename(filename)) continue
-    if (await Deno.stat(`${scansDir}/${filename}`).then(() => true, () => false)) return true
+    if (await fs.stat(`${scansDir}/${filename}`).then(() => true, () => false)) return true
   }
   return false
 }

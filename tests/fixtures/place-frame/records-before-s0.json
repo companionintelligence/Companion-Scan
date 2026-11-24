@@ -4,7 +4,7 @@
     "They were produced by running that build's own writers, not typed in: the calibration flow (runProjectCalibration), the phone's",
     "frame upload (persistProjectSpatialFrame) and the scan export (exportToGLB), through tests/unit/node/support/real-writers.ts.",
     "The session in every scenario started facing 137 degrees, with the camera turned 75 left and tilted 60 down, and the baseline",
-    "from point A to point B on a bearing of 123 degrees; the physical model is tests/unit/deno/physical_oracle.ts.",
+    "from point A to point B on a bearing of 123 degrees; the physical model is tests/unit/server/physical_oracle.ts.",
     "Nothing in the records below was edited by hand: each is what a writer returned (a frame, a calibration, a sidecar) or sent.",
     "This file is not regenerated. A build that writes more than these records has more records to keep, not different ones:",
     "its writers' output goes in a file beside this one, and both stay."

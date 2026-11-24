@@ -1,6 +1,6 @@
 name: Publish container
 
-# Builds the single-container image (Deno API + built viewer bundle), boots it,
+# Builds the single-container image (the Node API server + built viewer bundle), boots it,
 # gates on /health and the static UI, then pushes to GHCR.
 #
 # PUBLISHING IS MANUAL. Automatic triggers are gated (see the block below), so

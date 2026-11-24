@@ -18,7 +18,7 @@
  * centres onto truth has an RMS of 0.000433 m. At that fidelity a single
  * distance determines the scale of the entire reconstruction, and the ten
  * inter-station distances it was never given come back with an RMS error of
- * 0.00012 m (see the measurements in tests/unit/deno/known_distance.test.ts,
+ * 0.00012 m (see the measurements in tests/unit/server/known_distance.test.ts,
  * which run against that session).
  *
  * ── What one distance does and does not buy ────────────────────────────────
@@ -54,6 +54,7 @@ import type { ScanCalibration } from '../../src/world/types.ts'
 import type { ColmapPosesManifest } from '../../src/world/manifests.ts'
 import type { KeyframeRecord } from '../splat/splat_train_dataset.ts'
 import type { Vec3Tuple } from '../splat/splat_align.ts'
+import * as fs from 'node:fs/promises'
 
 /**
  * Frames below this in a viewpoint group and the group is not a measurement.
@@ -173,7 +174,7 @@ export function viewpointsFromKeyframes(records: KeyframeRecord[]): Viewpoint[] 
 export async function readSolveGravity(sessionDir: string): Promise<boolean> {
   let raw: string
   try {
-    raw = await Deno.readTextFile(`${sessionDir}/colmap-poses.manifest.json`)
+    raw = await fs.readFile(`${sessionDir}/colmap-poses.manifest.json`, 'utf8')
   } catch {
     return false
   }
@@ -497,7 +498,7 @@ export function parseDistanceMeasurements(raw: unknown): ParsedMeasurements {
 export async function readKnownDistances(sessionDir: string): Promise<DistanceMeasurement[]> {
   let record: Record<string, unknown>
   try {
-    record = JSON.parse(await Deno.readTextFile(`${sessionDir}/session.json`)) as Record<string, unknown>
+    record = JSON.parse(await fs.readFile(`${sessionDir}/session.json`, 'utf8')) as Record<string, unknown>
   } catch {
     return []
   }
@@ -518,8 +519,8 @@ export async function writeKnownDistances(
   measurements: DistanceMeasurement[],
 ): Promise<DistanceMeasurement[]> {
   const path = `${sessionDir}/session.json`
-  const record = JSON.parse(await Deno.readTextFile(path)) as Record<string, unknown>
+  const record = JSON.parse(await fs.readFile(path, 'utf8')) as Record<string, unknown>
   record[KNOWN_DISTANCES_FIELD] = measurements
-  await Deno.writeTextFile(path, JSON.stringify(record, null, 2))
+  await fs.writeFile(path, JSON.stringify(record, null, 2))
   return measurements
 }

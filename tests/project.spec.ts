@@ -1,5 +1,5 @@
 /**
- * Project management API tests — exercises the Deno/Hono server's
+ * Project management API tests — exercises the Hono server's
  * /projects and /process-scan endpoints via the Vite dev server proxy.
  *
  * Run:

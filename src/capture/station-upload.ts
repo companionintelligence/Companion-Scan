@@ -35,7 +35,7 @@
  * a measurement can name the spots it was taken between: `station-0` is the
  * first spot.
  *
- * A constant rather than an import — the module that consumes it is Deno server
+ * A constant rather than an import — the module that consumes it is server
  * code — so the two ends of the wire are one edit apart.
  */
 export const VIEWPOINT_PREFIX = 'station-'

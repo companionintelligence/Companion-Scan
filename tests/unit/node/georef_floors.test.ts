@@ -24,10 +24,10 @@ test('a scan whose compass spread is over the placement gate is wider than any s
   assert.ok(PLACEMENT_MAX_BEARING_SPREAD_DEG > BEARING_SIGMA_FLOOR_SEED_IOS_DEG)
 })
 
-test('georef.ts imports nothing that is not browser-safe (ADR 0002): no Deno, Node or DOM reference', () => {
+test('georef.ts imports nothing that is not browser-safe (ADR 0002): no Node or DOM reference', () => {
   const source = readFileSync(new URL('../../../src/world/georef.ts', import.meta.url), 'utf8')
   const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-  assert.doesNotMatch(code, /\bDeno\b/)
+  assert.doesNotMatch(code, /\bfrom\s+['\"]node:|\bprocess\.(?:env|argv|exit|cwd|platform|arch|versions|execPath|on)\b|\bBuffer\.(?:from|alloc|concat|isBuffer)\b/)
   assert.doesNotMatch(code, /\b(document|window|navigator|localStorage)\b/)
   assert.doesNotMatch(code, /from '(node:|fs|path|crypto)/)
   // Only the import statements: a message that says "from '${source}'" is not one.

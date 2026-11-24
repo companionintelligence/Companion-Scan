@@ -3,10 +3,10 @@
  * both the server and the capture client import, how the phone's existing frame code reads the server's new
  * answers, and the New Place form's default type (D7).
  *
- * The server's own tests are tests/unit/deno/frame_generations.test.ts (the rules and the compare-and-swap write),
+ * The server's own tests are tests/unit/server/frame_generations.test.ts (the rules and the compare-and-swap write),
  * scan_carry.test.ts and frame_generations_route.test.ts (the real server over HTTP). What only Node can say is here:
  *
- *  - `src/world/frame-generations.ts` is a file the browser imports, so it holds no Deno reference and imports no
+ *  - `src/world/frame-generations.ts` is a file the browser imports, so it holds no Node reference and imports no
  *    server module (ADR 0002), and the ids the capture client mints with it are frame ids in both shapes;
  *  - a phone built before ids, whose frame code is the code in this tree (src/project/frame-sync.ts), meets the
  *    server's replace rule through the real write function: its override of a Place that has no frame id still
@@ -66,10 +66,10 @@ function frame(createdAt: string, separationM: number, frameId?: string): Projec
 
 // ── The shared module ────────────────────────────────────────────────────────────────────────────
 
-test('the rules module is a file the browser imports: no Deno reference, no server module', () => {
+test('the rules module is a file the browser imports: no Node reference, no server module', () => {
   // The code, not the comments that explain why it has none.
   const source = sourceOf('src/world/frame-generations.ts').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-  assert.doesNotMatch(source, /\bDeno\b/, 'ADR 0002: a Deno reference in a file the browser imports')
+  assert.doesNotMatch(source, /\bprocess\.|\bBuffer\./, 'ADR 0002: a Node global in a file the browser imports')
   assert.doesNotMatch(source, /from\s+['"][^'"]*\bserver\b[^'"]*['"]/, 'it imports no server module')
   assert.doesNotMatch(source, /from\s+['"]node:/, 'and no Node module')
   const imports = [...source.matchAll(/from\s+'([^']+)'/g)].map((match) => match[1])

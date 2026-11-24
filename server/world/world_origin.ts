@@ -2,7 +2,7 @@
  * Where a scan goes in a Place's world: the world's origin, the placement of a calibrated scan through the Place's
  * georeference, the placement of a scan with no calibration, and what changes when the georeference does.
  *
- * Deno-API-free on purpose, like ./world_membership.ts (ADR 0004: server/main.ts cannot be imported by a test, so what
+ * Node-API-free on purpose, like ./world_membership.ts (ADR 0004: server/main.ts cannot be imported by a test, so what
  * can be tested on its own lives here). It takes the world, the Place's facts and a few readers of a sidecar, and
  * returns matrices and stamps; the hooks in `scanManifestFromStored`, `synthesizeWorld` and `refreshWorldScans`
  * (server/main.ts) are a few lines each that call it. The decision is docs/adr/0015-scene-convention-and-georeference.md.
@@ -12,7 +12,7 @@
  * A world declares its axes (`localFrame.axes.z`). `'north'` is every world file written before this decision: its
  * (east, up, north) axes are left-handed, and what was placed in it from GPS and compass is mirrored (ADR 0015, 1).
  * Nothing here recomputes such a world, and a scan added to it is placed exactly as it always was
- * (server/main.ts keeps that path; `tests/unit/deno/world_placement_golden.test.ts` holds it bit for bit). `'south'` is the
+ * (server/main.ts keeps that path; `tests/unit/server/world_placement_golden.test.ts` holds it bit for bit). `'south'` is the
  * right-handed scene: x east, y up, z south. A new world declares it, and a legacy world declares it the day its Place gets
  * a georeference and its scans are placed again. This file places scans in the second.
  *

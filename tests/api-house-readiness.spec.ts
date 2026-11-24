@@ -1,6 +1,6 @@
 /**
  * House-readiness preflight — the green light before the operator walks into the
- * two-story test house with a laptop and phone. Runs against a live Deno server
+ * two-story test house with a laptop and phone. Runs against a live server
  * (mock or ollama), one lightweight probe per surface the house protocol leans
  * on, so a broken server is caught at the door instead of on the stairs.
  *

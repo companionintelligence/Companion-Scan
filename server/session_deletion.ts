@@ -54,6 +54,9 @@ import { loadSessionIndex, type SessionIndex } from './scan_index.ts'
 import { SESSION_ID_RE, sessionDirPath } from './session_id.ts'
 import { PART_SUFFIX } from './world/scan_store.ts'
 import { queueKeyframeWrite } from './wp-a-keyframes.ts'
+import * as fs from 'node:fs/promises'
+import { errorKind, isNotFound } from './fs_util.ts'
+import type { Stats } from 'node:fs'
 
 /** What became of each session a call was asked to remove. Session ids and nothing from inside a session. */
 export interface SessionDeletionReport {
@@ -124,7 +127,7 @@ async function mapBounded<T, R>(items: readonly T[], work: (item: T) => Promise<
 
 async function readSidecar(path: string): Promise<Record<string, unknown>> {
   try {
-    const parsed: unknown = JSON.parse(await Deno.readTextFile(path))
+    const parsed: unknown = JSON.parse(await fs.readFile(path, 'utf8'))
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
   } catch {
     return {}
@@ -154,8 +157,8 @@ export async function collectScanSessionLinks(
   const glbs = new Set<string>()
   const uploadSidecars: string[] = []
   const parts: string[] = []
-  for await (const entry of Deno.readDir(scansDir)) {
-    if (!entry.isFile) continue
+  for (const entry of await fs.readdir(scansDir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue
     if (entry.name.endsWith('.glb') && !DERIVED_GLB.test(entry.name)) glbs.add(entry.name)
     else if (entry.name.endsWith(`.glb${PART_SUFFIX}`)) parts.push(entry.name)
     else if (entry.name.endsWith('.json') && isSessionId(entry.name.slice(0, -'.json'.length))) uploadSidecars.push(entry.name)
@@ -169,7 +172,7 @@ export async function collectScanSessionLinks(
     const future = part.slice(0, -PART_SUFFIX.length)
     if (glbs.has(future) || filenames.includes(future)) continue
     try {
-      const info = await Deno.stat(`${scansDir}/${part}`)
+      const info = await fs.stat(`${scansDir}/${part}`)
       if (info.mtime && now - info.mtime.getTime() <= UNPUBLISHED_UPLOAD_MAX_AGE_MS) filenames.push(future)
     } catch { /* gone since the listing: published or abandoned, either way not a user */ }
   }
@@ -206,15 +209,15 @@ export async function directoryBytes(dir: string): Promise<number> {
   let total = 0
   const names: Array<{ name: string; isDirectory: boolean }> = []
   try {
-    for await (const entry of Deno.readDir(dir)) names.push({ name: entry.name, isDirectory: entry.isDirectory })
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) names.push({ name: entry.name, isDirectory: entry.isDirectory() })
   } catch {
     return 0
   }
   const sizes = await mapBounded(names, async ({ name, isDirectory }) => {
     if (isDirectory) return await directoryBytes(`${dir}/${name}`)
     try {
-      const info = await Deno.lstat(`${dir}/${name}`)
-      return info.isFile ? info.size : 0
+      const info = await fs.lstat(`${dir}/${name}`)
+      return info.isFile() ? info.size : 0
     } catch {
       return 0
     }
@@ -225,15 +228,15 @@ export async function directoryBytes(dir: string): Promise<number> {
 
 /** The name of an error, for a report that must not carry a path. */
 function reasonOf(error: unknown): string {
-  return error instanceof Error ? error.name : 'Error'
+  return errorKind(error)
 }
 
 /** Removes `path` (a directory with its contents, or a file or link on its own). A path that is already gone is done. */
 async function removeIfPresent(path: string): Promise<void> {
   try {
-    await Deno.remove(path, { recursive: true })
+    await fs.rm(path, { recursive: true })
   } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error
+    if (!(isNotFound(error))) throw error
   }
 }
 
@@ -281,9 +284,9 @@ export function removeSessionDirectory(
     for (let pass = 0; pass < MAX_QUIET_PASSES; pass++) {
       const names: string[] = []
       try {
-        for await (const entry of Deno.readDir(dir)) names.push(entry.name)
+        for (const entry of await fs.readdir(dir, { withFileTypes: true })) names.push(entry.name)
       } catch (error) {
-        if (error instanceof Deno.errors.NotFound) return pass > 0
+        if (isNotFound(error)) return pass > 0
         throw error
       }
       const others = names.filter((item) => item !== 'session.json')
@@ -324,11 +327,11 @@ export async function deleteSessionDirectories(
       continue
     }
     const removeCopies = opts.removeCopies ? () => opts.removeCopies!(sessionId) : undefined
-    let info: Deno.FileInfo
+    let info: Stats
     try {
-      info = await Deno.lstat(dir)
+      info = await fs.lstat(dir)
     } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) {
+      if (!(isNotFound(error))) {
         report.failed.push({ sessionId, reason: reasonOf(error) })
         continue
       }
@@ -340,7 +343,7 @@ export async function deleteSessionDirectories(
       }
       continue
     }
-    if (!info.isDirectory) {
+    if (!info.isDirectory()) {
       report.failed.push({ sessionId, reason: 'NotADirectory' })
       continue
     }
@@ -411,11 +414,11 @@ export async function deleteAllSessions(
 ): Promise<SessionDeletionReport> {
   const ids: string[] = []
   try {
-    for await (const entry of Deno.readDir(sessionsDir)) {
-      if (entry.isDirectory && isSessionId(entry.name)) ids.push(entry.name)
+    for (const entry of await fs.readdir(sessionsDir, { withFileTypes: true })) {
+      if (entry.isDirectory() && isSessionId(entry.name)) ids.push(entry.name)
     }
   } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error
+    if (!(isNotFound(error))) throw error
   }
   return await deleteSessionDirectories(sessionsDir, ids, opts)
 }

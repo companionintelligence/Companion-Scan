@@ -55,6 +55,8 @@
 import {
   type EnvReader,
   type ExecPlatform,
+  hostArch,
+  hostPlatform,
   isRunnable,
   locateTool,
   readEnv,
@@ -70,6 +72,7 @@ import { configFromEnv as memoryPushConfigFromEnv } from './memory_push.ts'
 import { FDANYONE_HOST_REMEDIATION } from './person4d/person_4d.ts'
 import { onnxModelPaths } from './lfm-driver-onnx.ts'
 import { normalizeOllamaHost } from '../src/shared/ollama-host.ts'
+import * as fs from 'node:fs/promises'
 
 /** How a tool is looked for: an executable, a checkout dir, a data file, either of those, or a network service. */
 export type ToolKind = LookupKind | 'service'
@@ -147,7 +150,7 @@ export interface GpuCapability {
    * can compute on it — see this module's header and `GPU_NOTE`.
    */
   detected: boolean
-  /** What answered: a binary name, or `Deno.build` for the Apple Silicon fact. */
+  /** What answered: a binary name, or `process.arch` for the Apple Silicon fact. */
   via: string
   detail?: string
   remediation?: string
@@ -212,7 +215,7 @@ export interface VulkanCapability {
 
 export interface CapabilityReport {
   generatedAt: string
-  platform: { os: ExecPlatform; arch: string; deno: string }
+  platform: { os: ExecPlatform; arch: string; node: string }
   tools: ToolCapability[]
   gpu: { detected: GpuCapability[]; vulkan: VulkanCapability; note: string }
   pipelines: PipelineCapability[]
@@ -556,20 +559,6 @@ export function serviceProbes(env: EnvReader): ServiceProbe[] {
   return probes
 }
 
-/**
- * Whether this process may reach `url` without asking. The CLI's documented
- * flags (`--allow-read --allow-env --allow-run`) grant no network, and a fetch
- * there would either prompt in a terminal or fail and read as "the service is
- * down". Neither is true, so an unpermitted probe is not made at all.
- */
-export function networkPermitted(url: string): boolean {
-  try {
-    return Deno.permissions.querySync({ name: 'net', host: new URL(url).host }).state === 'granted'
-  } catch {
-    return false
-  }
-}
-
 /** Ask one service's health URL, bounded. Never throws. */
 async function probeServiceHealth(
   probe: ServiceProbe,
@@ -610,7 +599,7 @@ export interface RunResult {
 export interface CapabilityProbeOptions {
   platform?: ExecPlatform
   arch?: string
-  denoVersion?: string
+  nodeVersion?: string
   env?: EnvReader
   home?: string
   /**
@@ -912,8 +901,8 @@ export function assessPipelines(
  * report is ever wired into one.
  */
 export async function probeCapabilities(opts: CapabilityProbeOptions = {}): Promise<CapabilityReport> {
-  const platform = opts.platform ?? Deno.build.os
-  const arch = opts.arch ?? Deno.build.arch
+  const platform = opts.platform ?? hostPlatform()
+  const arch = opts.arch ?? hostArch()
   const env: EnvReader = opts.env ?? readEnv
   const home = opts.home ?? resolveHome(env)
   const timeoutMs = opts.timeoutMs ?? 10_000
@@ -971,16 +960,11 @@ export async function probeCapabilities(opts: CapabilityProbeOptions = {}): Prom
       tool.found = false
       tool.remediation = `No ONNX model at ${probe.requiresDir}. Run \`npm run setup:models\`, or set MODEL_DIR.`
     }
-    let notProbed = 'versions off'
+    const notProbed = 'versions off'
     if (tool.found && wantVersions && probe.health) {
-      if (opts._fetch || networkPermitted(probe.health.url)) {
-        const health = await probeServiceHealth(probe, doFetch, Math.min(timeoutMs, SERVICE_PROBE_TIMEOUT_MS))
-        tool.reachable = health.reachable
-        tool.detail = health.detail
-      } else {
-        notProbed = 'this process has no network permission; add --allow-net'
-        tool.detail = notProbed
-      }
+      const health = await probeServiceHealth(probe, doFetch, Math.min(timeoutMs, SERVICE_PROBE_TIMEOUT_MS))
+      tool.reachable = health.reachable
+      tool.detail = health.detail
     }
     if (tool.found && probe.foundOnlyIfReachable && tool.reachable !== true) {
       tool.found = false
@@ -1005,7 +989,7 @@ export async function probeCapabilities(opts: CapabilityProbeOptions = {}): Prom
 
   return {
     generatedAt: new Date().toISOString(),
-    platform: { os: platform, arch, deno: opts.denoVersion ?? Deno.version.deno },
+    platform: { os: platform, arch, node: opts.nodeVersion ?? process.versions.node },
     tools,
     gpu: {
       detected: await probeGpu({ platform, arch, run, which: deps.which, wantVersions }),
@@ -1024,7 +1008,7 @@ export async function probeCapabilities(opts: CapabilityProbeOptions = {}): Prom
  * the box someone is trying to set up.
  *
  * Apple is the one vendor with no binary to probe: there is no `apple-smi`, and
- * every arm64 Mac has an integrated GPU, so `Deno.build` is the measurement.
+ * every arm64 Mac has an integrated GPU, so `process.platform` and `process.arch` are the measurement.
  */
 export async function probeGpu(opts: {
   platform: ExecPlatform
@@ -1072,7 +1056,7 @@ export async function probeGpu(opts: {
   out.push({
     vendor: 'apple',
     detected: apple,
-    via: 'Deno.build',
+    via: 'process.arch',
     ...(apple ? { detail: `Apple Silicon (${opts.platform}/${opts.arch}) — integrated GPU, Metal` } : {}),
     ...(apple ? {} : {
       remediation: 'Not an Apple Silicon host — nothing to install; Metal/MPS is unavailable here.',
@@ -1087,7 +1071,7 @@ export async function probeGpu(opts: {
 /**
  * Where the Vulkan loader library lives, in the order the linker would find it.
  *
- * Deno's arch strings ('x86_64', 'aarch64') are exactly the prefix Debian's
+ * The report's arch strings (`hostArch`: 'x86_64', 'aarch64') are exactly the prefix Debian's
  * multiarch triple uses, so the first candidate covers Ubuntu/Debian and the
  * next two cover the /usr/lib64 (Fedora/SUSE) and merged-/usr layouts. Measured
  * on this box: /usr/lib/x86_64-linux-gnu/libvulkan.so.1 → libvulkan.so.1.4.341.
@@ -1189,7 +1173,7 @@ export async function probeVulkan(opts: {
     return {
       status: 'not-applicable',
       measured: false,
-      via: 'Deno.build',
+      via: 'process.platform',
       devices: [],
       icdManifests: [],
       detail: 'macOS — wgpu targets Metal here, so Brush/Spirula need no Vulkan loader (MoltenVK is optional).',
@@ -1320,7 +1304,7 @@ export async function probeVulkan(opts: {
  */
 export function formatCapabilityReport(report: CapabilityReport): string {
   const lines: string[] = []
-  lines.push(`platform  ${report.platform.os}/${report.platform.arch}  deno ${report.platform.deno}`)
+  lines.push(`platform  ${report.platform.os}/${report.platform.arch}  node ${report.platform.node}`)
   lines.push(`probed    ${report.generatedAt}`)
   lines.push('')
   lines.push('TOOLS')
@@ -1402,8 +1386,8 @@ export async function runCapture(bin: string, args: string[], timeoutMs: number)
 async function readDirNames(path: string): Promise<string[]> {
   const names: string[] = []
   try {
-    for await (const entry of Deno.readDir(path)) {
-      if (entry.isFile || entry.isSymlink) names.push(entry.name)
+    for (const entry of await fs.readdir(path, { withFileTypes: true })) {
+      if (entry.isFile() || entry.isSymbolicLink()) names.push(entry.name)
     }
   } catch {
     return []
@@ -1413,8 +1397,8 @@ async function readDirNames(path: string): Promise<string[]> {
 
 async function statKind(path: string, want: 'dir' | 'file'): Promise<boolean> {
   try {
-    const info = await Deno.stat(path)
-    return want === 'dir' ? info.isDirectory : info.isFile
+    const info = await fs.stat(path)
+    return want === 'dir' ? info.isDirectory() : info.isFile()
   } catch {
     return false
   }
@@ -1436,8 +1420,8 @@ function lastLine(text: string): string {
 }
 
 if (import.meta.main) {
-  const json = Deno.args.includes('--json')
-  const fast = Deno.args.includes('--no-versions')
+  const json = process.argv.slice(2).includes('--json')
+  const fast = process.argv.slice(2).includes('--no-versions')
   const report = await probeCapabilities({ versions: !fast })
   console.log(json ? JSON.stringify(report, null, 2) : formatCapabilityReport(report))
   // A blocked pipeline is information, not a failure of the probe — exit 0 so

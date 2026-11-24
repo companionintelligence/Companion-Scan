@@ -149,10 +149,10 @@
  * `motion` in the diagnostics and the sidecar keeps the distribution of step sizes, step
  * times and unexplained moves, so a scan's own record says where the benign p99 sits.
  */
-import type { Pose } from './provider'
-import type { AnchorLossKind, AnchorMovement } from './anchors'
-import type { GroundEstimate } from '../scene/pointcloud'
-import type { FrameClosureRecord } from './closure'
+import type { Pose } from './provider.ts'
+import type { AnchorLossKind, AnchorMovement } from './anchors.ts'
+import type { GroundEstimate } from '../scene/pointcloud.ts'
+import type { FrameClosureRecord } from './closure.ts'
 import { yawTwistDeg } from '../shared/pose-math.ts'
 import { REASON_RELOCALIZING, isUnstableTrackingReason } from './tracking-reasons.ts'
 

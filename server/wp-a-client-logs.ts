@@ -14,6 +14,8 @@
  *     (env, default 10 MiB). The previous .1 is replaced, so at most two files are kept.
  */
 import { pageUrlWithoutQuery, redactTokens } from './wp-a-log.ts'
+import * as fs from 'node:fs/promises'
+import { isNotFound } from './fs_util.ts'
 
 /** The body of one POST /client-logs is cut off at this many bytes. */
 export const CLIENT_LOG_MAX_BODY_BYTES = 16_384
@@ -65,13 +67,14 @@ export class HitLimiter {
 }
 
 /**
- * The connecting peer's address, from the connection info Deno.serve passes to the
- * app (Hono keeps it as `c.env`). `'unknown'` when there is none, for example under
- * `app.request()` in a test.
+ * The connecting peer's address, from the Node request `@hono/node-server` hands the
+ * app (Hono keeps its bindings as `c.env`, and the request is `incoming`). `'unknown'`
+ * when there is none, for example under `app.request()` in a test.
  */
 export function remoteAddressOf(env: unknown): string {
-  const hostname = (env as { remoteAddr?: { hostname?: unknown } } | null | undefined)?.remoteAddr?.hostname
-  return typeof hostname === 'string' && hostname.length > 0 ? hostname : 'unknown'
+  const address = (env as { incoming?: { socket?: { remoteAddress?: unknown } } } | null | undefined)?.incoming?.socket
+    ?.remoteAddress
+  return typeof address === 'string' && address.length > 0 ? address : 'unknown'
 }
 
 /** One record as it is written to client-logs.jsonl and broadcast on /events. */
@@ -124,10 +127,10 @@ export function appendClientLog(path: string, text: string, maxBytes: number): P
 async function appendRotating(path: string, text: string, maxBytes: number): Promise<void> {
   let size = 0
   try {
-    size = (await Deno.stat(path)).size
+    size = (await fs.stat(path)).size
   } catch (err) {
-    if (!(err instanceof Deno.errors.NotFound)) throw err
+    if (!(isNotFound(err))) throw err
   }
-  if (size >= maxBytes) await Deno.rename(path, `${path}.1`)
-  await Deno.writeTextFile(path, text, { append: true })
+  if (size >= maxBytes) await fs.rename(path, `${path}.1`)
+  await fs.appendFile(path, text)
 }

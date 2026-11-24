@@ -12,10 +12,10 @@
  * the caller must pass an async hitTestFn override in that case.
  */
 import * as THREE from 'three'
-import type { ARProvider, Pose, HitResult } from '../ar/provider'
-import type { RawDetection } from '../inference/prompt'
-import type { PointCloud } from '../scene/pointcloud'
-import type { DetectionObservation } from '../world/types'
+import type { ARProvider, Pose, HitResult } from '../ar/provider.ts'
+import type { RawDetection } from '../inference/prompt.ts'
+import type { PointCloud } from '../scene/pointcloud.ts'
+import type { DetectionObservation } from '../world/types.ts'
 import { MAX_DEPTH_M, MIN_DEPTH_M } from '../shared/panoptic_lift.ts'
 
 // Widened from 0.3 m: hit-test/raycast noise and viewing-angle differences

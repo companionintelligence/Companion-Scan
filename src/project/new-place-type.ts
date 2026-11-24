@@ -7,7 +7,7 @@
  * Building now. The person can still choose any of the four, and every Place already saved keeps its type.
  *
  * In its own module so the default is one value a test can read, and not the `selected` attribute of an option in
- * a template string in src/main.ts. Deno-API-free and DOM-free (ADR 0002): it builds text.
+ * a template string in src/main.ts. Node-API-free and DOM-free (ADR 0002): it builds text.
  */
 import type { PlaceType } from '../world/types.ts'
 

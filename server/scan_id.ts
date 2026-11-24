@@ -4,11 +4,11 @@
  * They live in their own module, rather than in `main.ts`, for exactly the
  * reason `world_prune.ts` and `scan_index.ts` do: `main.ts` cannot be imported
  * without running its unconditional top-level side effects (hostname
- * resolution, VLM engine load, `Deno.serve`), and `migrate_scan_ids.ts` needs
+ * resolution, VLM engine load, `serve(...)`), and `migrate_scan_ids.ts` needs
  * the *identical* derivation — not a second copy of it that can drift.
  * Per ADR 0001, one derivation point, not two.
  *
- * Deno-API-free on purpose (ADR 0002), though nothing in `src/` should import
+ * Node-API-free on purpose (ADR 0002), though nothing in `src/` should import
  * it: the server owns scan identity.
  */
 import type { ScanManifest } from '../src/world/types.ts'

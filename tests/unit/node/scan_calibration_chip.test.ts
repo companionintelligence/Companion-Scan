@@ -203,7 +203,7 @@ test('a scan with no calibration has no chip, so the list keeps the GPS text it 
 })
 
 test("a scan whose only calibration record is the one splat-align wrote has no chip: the manifest carries no tier for it, and the list keeps the GPS text", () => {
-  // The manifest fields tests/unit/deno/scan_manifest_calibration.test.ts shows calibrationFromMeta yields for that sidecar:
+  // The manifest fields tests/unit/server/scan_manifest_calibration.test.ts shows calibrationFromMeta yields for that sidecar:
   // no tier, the flat 'uncalibrated', and no measurements. That scan is placed by GPS or the grid, so it is not told
   // it was calibrated.
   const fromSplatAlignOnly: ChipScan & { accuracyM: number } = {

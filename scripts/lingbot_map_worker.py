@@ -8,13 +8,13 @@ produce three sibling artifacts in the same session directory:
     lingbot-map.poses.json        per-frame intrinsics + camera-to-world poses
     lingbot-map.manifest.json     index + run stats (always written)
 
-The script is invoked as a subprocess from the Deno server. Exit codes:
+The script is invoked as a subprocess from the server. Exit codes:
 
     0   success or skipped-with-reason (manifest still written)
     2   unrecoverable input error (manifest may not exist)
     3   model load / inference error (manifest written with ``error``)
 
-Why the worker writes a manifest even when it fails: the Deno coordinator
+Why the worker writes a manifest even when it fails: the server coordinator
 serves ``lingbot-map.manifest.json`` over HTTP and shows ``error`` /
 ``skippedReason`` in the world-job artifact, so the UI can explain *why* a
 reconstruction did not produce a point cloud instead of falling back to a
@@ -102,7 +102,7 @@ def _float_or_none(v: Any) -> float | None:
 
 
 # The keys a degenerate verdict owns. server/lingbot-map/lingbot_map.ts writes them
-# after it judges a cloud, and the Deno side reads them back to refuse or skip that
+# after it judges a cloud, and the server side reads them back to refuse or skip that
 # cloud (splat_train_dataset.ts, splat_detect.ts, server/wp-a-cloud-verdict.ts).
 VERDICT_KEYS = ("quality", "remediation")
 
@@ -127,7 +127,7 @@ def _degenerate_verdict(session_dir: Path) -> dict[str, Any]:
 def _write_manifest(session_dir: Path, payload: dict[str, Any]) -> None:
     """Write the manifest. A skip or an error keeps an earlier degenerate verdict.
 
-    The Deno side refuses or skips a cloud on the strength of its verdict. An ok run
+    The server refuses or skips a cloud on the strength of its verdict. An ok run
     drops the verdict, because its own cloud replaces the earlier one. A skip or an
     error keeps it, because a run that stops before writing leaves the earlier cloud
     on disk.

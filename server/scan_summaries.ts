@@ -22,6 +22,8 @@
  * A file a reply names is the summary's own file name, never a path.
  */
 import { SESSION_ID_RE } from './session_id.ts'
+import * as fs from 'node:fs/promises'
+import { errorKind, isNotFound } from './fs_util.ts'
 
 /** The folder the summaries that name no server session are kept in. No session id can be this name (`sess-…`). */
 export const UNLINKED_SUMMARIES = 'unlinked'
@@ -54,9 +56,9 @@ export async function storeSummary(opts: {
 }): Promise<{ filename: string; sessionId: string | null }> {
   const sessionFolder = summaryFolderFor(opts.summariesDir, opts.sessionId)
   const folder = sessionFolder ?? `${opts.summariesDir}/${UNLINKED_SUMMARIES}`
-  await Deno.mkdir(folder, { recursive: true })
+  await fs.mkdir(folder, { recursive: true })
   const filename = summaryFileName(opts.originalName, opts.now)
-  await Deno.writeTextFile(`${folder}/${filename}`, opts.text)
+  await fs.writeFile(`${folder}/${filename}`, opts.text)
   return { filename, sessionId: sessionFolder ? opts.sessionId as string : null }
 }
 
@@ -70,12 +72,12 @@ export async function removeSessionSummaries(summariesDir: string, sessionId: st
   if (!folder) return 0
   let count = 0
   try {
-    for await (const entry of Deno.readDir(folder)) if (entry.isFile) count += 1
+    for (const entry of await fs.readdir(folder, { withFileTypes: true })) if (entry.isFile()) count += 1
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return 0
+    if (isNotFound(error)) return 0
     throw error
   }
-  await Deno.remove(folder, { recursive: true })
+  await fs.rm(folder, { recursive: true })
   return count
 }
 
@@ -87,20 +89,20 @@ export async function removeAllSummaries(summariesDir: string): Promise<{ remove
   const result = { removed: 0, failed: 0 }
   const names: Array<{ name: string; isDirectory: boolean }> = []
   try {
-    for await (const entry of Deno.readDir(summariesDir)) names.push({ name: entry.name, isDirectory: entry.isDirectory })
+    for (const entry of await fs.readdir(summariesDir, { withFileTypes: true })) names.push({ name: entry.name, isDirectory: entry.isDirectory() })
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return result
-    console.error(`[summaries] could not list the summaries (${error instanceof Error ? error.name : 'Error'})`)
+    if (isNotFound(error)) return result
+    console.error(`[summaries] could not list the summaries (${errorKind(error)})`)
     result.failed += 1
     return result
   }
   for (const { name, isDirectory } of names) {
     try {
-      await Deno.remove(`${summariesDir}/${name}`, { recursive: isDirectory })
+      await fs.rm(`${summariesDir}/${name}`, { recursive: isDirectory })
       result.removed += 1
     } catch (error) {
-      if (error instanceof Deno.errors.NotFound) continue
-      console.error(`[summaries] could not remove a summary (${error instanceof Error ? error.name : 'Error'})`)
+      if (isNotFound(error)) continue
+      console.error(`[summaries] could not remove a summary (${errorKind(error)})`)
       result.failed += 1
     }
   }

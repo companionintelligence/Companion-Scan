@@ -14,7 +14,7 @@
  * events the real controls fire, and in tests/unit/node/stitch_real_gizmo.test.ts with three.js's own
  * TransformControls; what is checked here is the page: the fields, the buttons, the save and the server.
  *
- * Requirements: Vite dev server (VITE_URL) + Deno server behind the proxy, and test-data (npm run gen:test-data).
+ * Requirements: Vite dev server (VITE_URL) + server behind the proxy, and test-data (npm run gen:test-data).
  * Run: npx playwright test --project=chromium-mock mock-editor-stitching
  */
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'

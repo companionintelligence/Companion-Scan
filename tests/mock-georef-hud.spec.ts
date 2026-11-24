@@ -10,7 +10,7 @@
  *     frames the world when it loads, so the target is not at the landmark; the latitude and longitude printed are checked against a
  *     flat-earth estimate from the east and north printed beside them and the record's origin, which is independent of the app's own
  *     geodesy and good to centimetres over a few metres (the geodesy itself is pinned to millimetres in
- *     tests/unit/deno/georef_vectors.test.ts). The target is then panned with the mouse, as a person pans, and the readout follows.
+ *     tests/unit/server/georef_vectors.test.ts). The target is then panned with the mouse, as a person pans, and the readout follows.
  *  2. A world file from before the scene was corrected (`z: 'north'`) says so: "Mirrored placement: N scans" counts the scans that
  *     were placed by GPS and compass and not moved, and "Re-place by GPS" opens the location panel (the World tab, the section open,
  *     the cursor in the latitude) and not something else.
@@ -26,7 +26,7 @@
  * Every /worlds, /projects and /scans response is mocked, with a GLB that is a valid but empty glTF scene, and the mocked Place keeps
  * its record and its version as the server does: a write names the version it expects and a stale one is a 409. This covers the
  * client only. The server side of the same contract (the CAS, the validator, the world it places again) runs the real route in
- * tests/unit/deno/georef_route.test.ts and georef_world.test.ts; nothing here says what a real server would place where, because the
+ * tests/unit/server/georef_route.test.ts and georef_world.test.ts; nothing here says what a real server would place where, because the
  * mocked world is written by this file.
  *
  * Run: npx playwright test --project=chromium-mock mock-georef-hud

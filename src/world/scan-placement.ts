@@ -7,9 +7,9 @@
  * one smeared it, and the placement the scan arrived with was overwritten, so a bad move could
  * not be taken back. Everything here is pure and works on plain `number[]` column-major
  * matrices (the layout of `localToWorld`, `THREE.Matrix4.fromArray` and `transformPoint` in
- * ./geo.ts), so the Deno server and the editor use the same rules.
+ * ./geo.ts), so the server and the editor use the same rules.
  *
- * Deno-API-free on purpose (ADR 0002): the editor imports this file, and so do Node tests.
+ * Node-API-free on purpose (ADR 0002): the editor imports this file, and so do Node tests.
  *
  * ## The numbers in here are adopted, not measured (ADR 0005 rule 5)
  *

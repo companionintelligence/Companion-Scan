@@ -2,12 +2,12 @@
  * Server-side capture-session path resolution.
  *
  * The id *vocabulary* lives in `src/shared/session-id.ts` so both runtimes
- * share one regex (ADR 0002 — that file must stay Deno-API-free). This module
+ * share one regex (ADR 0002 — that file must stay Node-API-free). This module
  * is the half that touches the filesystem, and it exists separately from
  * `main.ts` for the same reason `world_prune.ts`, `scan_index.ts` and
  * `world_lock.ts` do: `main.ts` cannot be imported by a test without running
  * its unconditional top-level side effects (hostname resolution, VLM engine
- * load, `Deno.serve`).
+ * load, `serve(...)`).
  *
  * Two resolvers, deliberately:
  *
@@ -23,6 +23,7 @@
  * See docs/factory/07-scan-identity/0002-one-session-identity.md.
  */
 import { SESSION_ID_RE } from '../src/shared/session-id.ts'
+import * as fs from 'node:fs/promises'
 
 export { isServerSessionId, newServerSessionId, SESSION_ID_RE } from '../src/shared/session-id.ts'
 
@@ -48,8 +49,8 @@ export async function resolveSessionDir(
   const dir = sessionDirPath(sessionsDir, id)
   if (!dir) return null
   try {
-    const stat = await Deno.stat(dir)
-    return stat.isDirectory ? dir : null
+    const stat = await fs.stat(dir)
+    return stat.isDirectory() ? dir : null
   } catch {
     return null
   }

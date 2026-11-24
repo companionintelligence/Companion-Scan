@@ -26,7 +26,7 @@
  * file.
  *
  * Runtime-agnostic: safe to import from src/ (Vite/browser) and tests/
- * (Playwright, already TypeScript). Not imported by Deno server code —
+ * (Playwright, already TypeScript). Not imported by server code —
  * these are all browser-only storage keys.
  */
 

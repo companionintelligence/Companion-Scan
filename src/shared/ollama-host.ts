@@ -6,7 +6,7 @@
  * fetchable as-is (0.0.0.0 means "every interface" to a server, not a real
  * destination for a client), so this rewrites it to 127.0.0.1.
  *
- * Runtime-agnostic: imported by Deno server code (inference.ts) and by Node
+ * Runtime-agnostic: imported by server code (inference.ts) and by Node
  * scripts (scripts/bench-models.mjs, scripts/setup-models.mjs) alike,
  * following the src/shared/ precedent. Previously a local, unexported
  * function inside inference.ts — bench-models.mjs and setup-models.mjs each

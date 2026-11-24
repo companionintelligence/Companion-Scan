@@ -5,7 +5,7 @@
  * first-run visitor reads at most 120 words before the camera opens. On
  * 2026-08-30 the real number was 140, and had been since #223 — the screen
  * grew a subject question and a third capture card, and nothing said so,
- * because GitHub CI runs no Playwright at all (.github/workflows/deno-ci.yml)
+ * because GitHub CI runs no Playwright at all (.github/workflows/server-ci.yml)
  * and the only gate that does run that spec is a local `npm run loop`.
  *
  * So the budget moved here, where `npm run verify` — and therefore the

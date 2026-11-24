@@ -11,8 +11,7 @@
  * The QR code is a stub here: the sheet takes its renderer as an argument, and the repo's real one sits on
  * a vendored encoder that plain type-stripping cannot load (it uses a TypeScript namespace). Everything that
  * needs the real code (the byte-for-byte snapshots, the modules matching the encoder's, the command line)
- * is in `fiducial_print_sheet_qr.test.ts`, which runs under `--experimental-transform-types`. This file
- * runs under the repo's standard `node --experimental-strip-types`.
+ * is in `fiducial_print_sheet_qr.test.ts`, which compiles the renderer first. This file runs as it is.
  *
  * Run: node --experimental-strip-types --no-warnings --test tests/unit/node/fiducial_print_sheet.test.ts
  */

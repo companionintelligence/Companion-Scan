@@ -1958,7 +1958,7 @@ const routes = {
       return [502, {
         error: String(err.message || err),
         base,
-        remediation: 'Is the CI-Spatial Deno server running on that origin? Set CI_SPATIAL_URL to point elsewhere.',
+        remediation: 'Is the CI-Spatial server running on that origin? Set CI_SPATIAL_URL to point elsewhere.',
       }];
     }
   },

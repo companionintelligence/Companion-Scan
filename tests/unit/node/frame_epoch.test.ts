@@ -4,7 +4,7 @@
  * Pure: the tracker takes a frame at a time with its own clock, so every case here is a
  * script of frames, with no AR runtime and no wall clock. The provider wiring is tested in
  * frame_epoch_eighthwall.test.ts and frame_epoch_webxr.test.ts; the cloud in
- * tests/unit/deno/pointcloud.test.ts.
+ * tests/unit/server/pointcloud.test.ts.
  *
  * The thresholds are adopted, not measured (ADR 0005 rule 5; device experiment DX4 sets
  * them). These tests pin what each does at the numbers the brief names (a 0.31 m jump, a

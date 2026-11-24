@@ -9,7 +9,7 @@
  *   property uchar green  (optional)
  *   property uchar blue   (optional)
  *
- * Kept runtime-agnostic (no Deno / DOM globals) so both the Deno server's GLB
+ * Kept runtime-agnostic (no Node / DOM globals) so both the server's GLB
  * builder and the browser viewer can import it.
  */
 

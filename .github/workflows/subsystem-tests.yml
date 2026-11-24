@@ -5,7 +5,7 @@ name: Subsystem Tests
 # rest run only through each subsystem's own script, and this is where those run. None needs a gimbal,
 # Bluetooth, a GPU or a model.
 #
-# Run by hand, as every workflow here is: deno-ci.yml keeps its push and pull request triggers gated.
+# Run by hand, as every workflow here is: server-ci.yml keeps its push and pull request triggers gated.
 on:
   workflow_dispatch:
 

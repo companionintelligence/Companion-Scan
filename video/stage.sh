@@ -11,7 +11,7 @@
 #
 # ── Why this delegates instead of doing it itself ────────────────────────────
 # It used to inline the two-server sequence documented at the top of
-# video/capture.config.mjs: start Deno, `COUNT=3 npm run seed:test-data`, start
+# video/capture.config.mjs: start the server, `COUNT=3 npm run seed:test-data`, start
 # Vite. That sequence is subtly wrong, and every one of its defects reached the
 # committed screenshots as a plausible-looking frame rather than a failure:
 #
@@ -63,14 +63,12 @@ stage_up() {
   [ "$STAGE_PORT" = 5173 ] || echo "note: :5173 was busy, using :$STAGE_PORT"
   [ "$API_PORT" = 8000 ]  || echo "note: :8000 was busy, using :$API_PORT"
 
-  # `deno install`, NOT `npm ci`. deno.json sets "nodeModulesDir": "auto", so
-  # Deno owns node_modules here and installs the npm: specifiers its own import
-  # map declares. `npm ci` installs from package-lock and leaves out packages the
-  # scripts need — @gltf-transform/core among them, which makes generate-test-homes
-  # die with ERR_MODULE_NOT_FOUND on a clean checkout. Deno installs both those
-  # and vite, and video-stage.mjs runs vite through node_modules/vite/bin/vite.js,
-  # so this install is what puts it there.
-  ( cd "$REPO_ROOT" && deno install )
+  # `npm ci`, from the lockfile: it installs what the scripts need
+  # (@gltf-transform/core, which generate-test-homes imports, and the server's
+  # packages) and vite, which video-stage.mjs runs through
+  # node_modules/vite/bin/vite.js. The CUDA skip stops onnxruntime-node's
+  # install script from fetching a CUDA build that answers 404.
+  ( cd "$REPO_ROOT" && ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci --no-audit --no-fund )
 
   # A per-run data dir, not video-stage.mjs's shared default under $TMPDIR: two
   # agents staging this repo at once would otherwise wipe each other's world on
@@ -111,7 +109,7 @@ stage_up() {
 }
 
 stage_down() {
-  # Kill the CHILDREN first, then the wrapper. video-stage.mjs spawns deno and
+  # Kill the CHILDREN first, then the wrapper. video-stage.mjs spawns the server and
   # vite and traps SIGTERM to take them with it, but if it has already gone the
   # children would be left holding the ports.
   #

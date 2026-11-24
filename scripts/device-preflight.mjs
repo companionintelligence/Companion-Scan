@@ -11,7 +11,7 @@
  * then VITE_HOSTNAME, then the Tailscale CLI's own DNS name.
  *
  * Every check goes through the same path a phone takes: Tailscale host, the Vite
- * HTTPS origin, and the Vite proxy into the Deno API. The CORS answer Vite gives the two phone
+ * HTTPS origin, and the Vite proxy into the API server. The CORS answer Vite gives the two phone
  * shells' origins, and the built mobile bundle, are checked too.
  *
  * Exit 1 if any check FAILs. WARN means the test can still run, but a result may

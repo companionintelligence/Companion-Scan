@@ -4,7 +4,7 @@ import { wsUrl } from '../shared/api-base.ts'
  *
  * Streams the AR camera canvas (or a fallback getUserMedia stream) to the
  * desktop viewer via a peer-to-peer WebRTC connection.  Signaling is relayed
- * through the Deno server's /rtc-signal WebSocket endpoint.
+ * through the server's /rtc-signal WebSocket endpoint.
  *
  * Usage:
  *   const bc = new RtcBroadcaster('room-abc')

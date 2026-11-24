@@ -56,6 +56,8 @@ import {
   parseFrameReplaces,
 } from '../src/world/frame-generations.ts'
 import { decideReplacement } from './place_frames.ts'
+import * as fs from 'node:fs/promises'
+import { isNotFound } from './fs_util.ts'
 
 export function isPlaceType(value: unknown): value is PlaceType {
   return value === 'building' || value === 'floor' || value === 'room' || value === 'other'
@@ -80,9 +82,9 @@ export class RegistryUnparsableError extends Error {
 export async function readRegistry(path: string): Promise<Project[] | null> {
   let text: string
   try {
-    text = await Deno.readTextFile(path)
+    text = await fs.readFile(path, 'utf8')
   } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return null
+    if (isNotFound(err)) return null
     throw err
   }
   let parsed: unknown
@@ -117,7 +119,7 @@ async function isUnparsableRegistry(path: string): Promise<boolean> {
 export async function copyUnparsableRegistryAside(path: string, now = Date.now()): Promise<string | null> {
   if (!(await isUnparsableRegistry(path))) return null
   const aside = `${path}.corrupt-${now}`
-  await Deno.copyFile(path, aside)
+  await fs.copyFile(path, aside)
   return aside
 }
 
@@ -160,29 +162,29 @@ export async function saveRegistry(
   const backupTmpFile = `${path}.bak.${crypto.randomUUID()}.tmp`
   try {
     const text = JSON.stringify(projects, null, 2)
-    await Deno.writeTextFile(tmpFile, text)
+    await fs.writeFile(tmpFile, text)
     const corruptCopy = await copyUnparsableRegistryAside(path, now)
     // An unparsable file is not a version, so it is not the backup, and the registry being saved over it is not either: it was built
     // from nothing that could be read, so the backup, whatever the save removes, is left as it is (see SaveRegistryOptions).
     if (corruptCopy === null) {
       if (options.keepPrevious === false) {
         // Written beside the backup and renamed over it, so that the backup is never a half-written file.
-        await Deno.writeTextFile(backupTmpFile, text)
-        await Deno.rename(backupTmpFile, `${path}.bak`)
+        await fs.writeFile(backupTmpFile, text)
+        await fs.rename(backupTmpFile, `${path}.bak`)
       } else {
         try {
-          await Deno.copyFile(path, `${path}.bak`)
+          await fs.copyFile(path, `${path}.bak`)
         } catch (err) {
           // No file to keep a copy of (the first save).
-          if (!(err instanceof Deno.errors.NotFound)) throw err
+          if (!(isNotFound(err))) throw err
         }
       }
     }
-    await Deno.rename(tmpFile, path)
+    await fs.rename(tmpFile, path)
     return corruptCopy
   } catch (err) {
-    await Deno.remove(tmpFile).catch(() => undefined)
-    await Deno.remove(backupTmpFile).catch(() => undefined)
+    await fs.rm(tmpFile).catch(() => undefined)
+    await fs.rm(backupTmpFile).catch(() => undefined)
     throw err
   }
 }

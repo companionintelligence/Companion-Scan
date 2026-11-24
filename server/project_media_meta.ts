@@ -1,6 +1,6 @@
 /**
  * The pure half of the Place photo storage: the layout, the roles, the paths and the validation of a photo's `meta`.
- * It reads no file and names no Deno API, so a test of the browser side (a spec's stand-in server, say) can import the
+ * It reads no file and names no Node API, so a test of the browser side (a spec's stand-in server, say) can import the
  * real validators and be held to the real field names (ADR 0002). The file operations are `./project_media.ts`, which
  * re-exports all of this.
  *
@@ -10,7 +10,7 @@
  * This module exists separately from `main.ts` for the same reason
  * `session_id.ts` does: `main.ts` cannot be imported by a test without running
  * its unconditional top-level side effects (hostname resolution, VLM engine
- * load, `Deno.serve`). The path-safety and body-validation logic is the part
+ * load, `serve(...)`). The path-safety and body-validation logic is the part
  * that must be provable, so it lives where a test can reach it.
  *
  * Layout mirrors `sessionDir()`'s: one directory per Place, named by an id

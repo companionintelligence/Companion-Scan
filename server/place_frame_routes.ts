@@ -5,7 +5,7 @@
  * A module of its own, registered on the server's app by one call in `server/main.ts`, so the hub carries a hook and not
  * the routes. Everything these routes need from the server is handed in (`PlaceFrameRouteDeps`): the Place registry,
  * the scan counts, where photos live and how large one may be. They sit behind the Companion session guard like every
- * `/projects` route, which `server/main.ts` applies to the path and not to a handler; tests/unit/deno/frame_generations_route.test.ts
+ * `/projects` route, which `server/main.ts` applies to the path and not to a handler; tests/unit/server/frame_generations_route.test.ts
  * runs them through the real server in every guard mode.
  *
  * The writes that change a Place's frame (`PUT /projects/:id/spatial-frame`), move scans between Places (merge, a
@@ -24,6 +24,7 @@ import {
   storeFramePhoto,
 } from './project_media.ts'
 import { readFormDataCapped } from './wp-a-body.ts'
+import { readBytes } from './fs_util.ts'
 
 /** What the routes need from the server. */
 export interface PlaceFrameRouteDeps {
@@ -95,7 +96,7 @@ export function registerPlaceFrameRoutes(app: Hono, deps: PlaceFrameRouteDeps): 
     const role = roleForFramePhotoFile(c.req.param('file'))
     if (!dir || !role) return c.json({ error: 'Invalid reference photo path' }, 400)
     try {
-      return new Response(await Deno.readFile(`${dir}/${framePhotoFileName(role)}`), {
+      return new Response(await readBytes(`${dir}/${framePhotoFileName(role)}`), {
         headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' },
       })
     } catch {

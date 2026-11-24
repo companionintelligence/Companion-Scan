@@ -4,7 +4,7 @@
  * of the inside of a home (docs/operations/PRIVACY.md); COLMAP's feature database and sparse model are those photographs in
  * another form (keypoints, descriptors, and a coloured point cloud of the room). Owner decision D15 made the deletion path a
  * condition of using frames at all, so this module is the deletion design of the photo method, and its tests
- * (tests/unit/deno/sfm_privacy.test.ts) run the real deletion and retention code against real directories.
+ * (tests/unit/server/sfm_privacy.test.ts) run the real deletion and retention code against real directories.
  *
  * ## Two kinds of thing
  *
@@ -42,8 +42,11 @@
  * No image, thumbnail or derived picture leaves a session directory or the work directory, and nothing is sent anywhere: COLMAP is a
  * local process on the CPU (server/register/place_register_sfm.ts). Nothing here logs a path.
  */
-import { basename, join } from '@std/path'
+import { basename, join } from 'node:path'
 import { queueKeyframeWrite } from '../wp-a-keyframes.ts'
+import * as fs from 'node:fs/promises'
+import { errorKind, isNotFound } from '../fs_util.ts'
+import type { Dirent } from 'node:fs'
 
 /** The folder inside a session directory that holds the reference cache. */
 export const REFERENCE_CACHE_DIR = 'sfm-reference'
@@ -94,7 +97,7 @@ export function referenceCacheDir(sessionDir: string): string {
 
 async function exists(path: string): Promise<boolean> {
   try {
-    await Deno.stat(path)
+    await fs.stat(path)
     return true
   } catch {
     return false
@@ -103,9 +106,9 @@ async function exists(path: string): Promise<boolean> {
 
 async function removeIfPresent(path: string): Promise<void> {
   try {
-    await Deno.remove(path, { recursive: true })
+    await fs.rm(path, { recursive: true })
   } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error
+    if (!(isNotFound(error))) throw error
   }
 }
 
@@ -136,7 +139,7 @@ export function lookupReferenceCache(sessionDir: string, expect: ReferenceCacheE
     }
     let manifest: unknown
     try {
-      manifest = JSON.parse(await Deno.readTextFile(`${dir}/reference.json`))
+      manifest = JSON.parse(await fs.readFile(`${dir}/reference.json`, 'utf8'))
     } catch {
       return await discard('manifest')
     }
@@ -170,7 +173,7 @@ export function discardStaleReferenceCache(
     if (!(await exists(dir))) return false
     let manifest: unknown = null
     try {
-      manifest = JSON.parse(await Deno.readTextFile(`${dir}/reference.json`))
+      manifest = JSON.parse(await fs.readFile(`${dir}/reference.json`, 'utf8'))
     } catch { /* an unreadable manifest is a cache nobody can vouch for */ }
     if (isManifest(manifest) && manifest.projectId === current.projectId && manifest.frameId === current.frameId) return false
     await removeIfPresent(dir)
@@ -180,9 +183,9 @@ export function discardStaleReferenceCache(
 
 /** Copies every file directly inside `from` into `to` (created). A model is a handful of flat files; no sub-directory is followed. */
 export async function copyFlatDir(from: string, to: string): Promise<void> {
-  await Deno.mkdir(to, { recursive: true })
-  for await (const entry of Deno.readDir(from)) {
-    if (entry.isFile) await Deno.copyFile(`${from}/${entry.name}`, `${to}/${entry.name}`)
+  await fs.mkdir(to, { recursive: true })
+  for (const entry of await fs.readdir(from, { withFileTypes: true })) {
+    if (entry.isFile()) await fs.copyFile(`${from}/${entry.name}`, `${to}/${entry.name}`)
   }
 }
 
@@ -206,14 +209,14 @@ export function publishReferenceCache(
     const dir = referenceCacheDir(sessionDir)
     await removeIfPresent(dir)
     try {
-      await Deno.mkdir(dir, { recursive: true })
+      await fs.mkdir(dir, { recursive: true })
       try {
-        await Deno.rename(staging.dbPath, `${dir}/db.db`)
+        await fs.rename(staging.dbPath, `${dir}/db.db`)
       } catch {
-        await Deno.copyFile(staging.dbPath, `${dir}/db.db`)
+        await fs.copyFile(staging.dbPath, `${dir}/db.db`)
       }
       await copyFlatDir(staging.modelDir, `${dir}/sparse`)
-      await Deno.writeTextFile(`${dir}/reference.json`, JSON.stringify(manifest, null, 2))
+      await fs.writeFile(`${dir}/reference.json`, JSON.stringify(manifest, null, 2))
       return true
     } catch (error) {
       // A cache that could not be completed is not left half-made beside the photographs.
@@ -264,11 +267,11 @@ export function workDirFor(workRoot: string, jobId: string, unique: string = cry
  */
 export async function sweepWorkDirs(workRoot: string): Promise<number> {
   let removed = 0
-  const found: Deno.DirEntry[] = []
+  const found: Dirent[] = []
   try {
-    for await (const entry of Deno.readDir(workRoot)) found.push(entry)
+    for (const entry of await fs.readdir(workRoot, { withFileTypes: true })) found.push(entry)
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return 0
+    if (isNotFound(error)) return 0
     throw error
   }
   for (const entry of found) {
@@ -276,12 +279,12 @@ export async function sweepWorkDirs(workRoot: string): Promise<number> {
     const path = join(workRoot, entry.name)
     if (activeWorkDirs.has(path)) continue
     try {
-      // A link is unlinked: Deno.remove with `recursive` on one could follow it.
-      if (entry.isSymlink) await Deno.remove(path)
+      // A link is unlinked: a recursive fs.rm on one could follow it.
+      if (entry.isSymbolicLink()) await fs.rm(path)
       else await removeIfPresent(path)
       removed += 1
     } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) throw error
+      if (!(isNotFound(error))) throw error
     }
   }
   return removed
@@ -298,8 +301,8 @@ export async function sweepAllWorkDirs(mediaRoot: string): Promise<{ removed: nu
   let removed = 0
   let failed = 0
   try {
-    for await (const place of Deno.readDir(mediaRoot)) {
-      if (!place.isDirectory) continue
+    for (const place of await fs.readdir(mediaRoot, { withFileTypes: true })) {
+      if (!place.isDirectory()) continue
       try {
         removed += await sweepWorkDirs(`${mediaRoot}/${place.name}/${WORK_ROOT_DIR}`)
       } catch {
@@ -307,7 +310,7 @@ export async function sweepAllWorkDirs(mediaRoot: string): Promise<{ removed: nu
       }
     }
   } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) failed += 1
+    if (!(isNotFound(error))) failed += 1
   }
   return { removed, failed }
 }
@@ -324,12 +327,12 @@ export async function withWorkDir<T>(workRoot: string, jobId: string, work: (dir
   } catch (error) {
     // An earlier run's leftovers that cannot be removed are for the boot sweep and the clear-everything route to report; this run's own
     // directory is a different one.
-    console.error(`[place-register-sfm] could not remove an earlier run's work directory (${error instanceof Error ? error.name : 'Error'})`)
+    console.error(`[place-register-sfm] could not remove an earlier run's work directory (${errorKind(error)})`)
   }
-  await Deno.mkdir(workRoot, { recursive: true })
+  await fs.mkdir(workRoot, { recursive: true })
   const dir = workDirFor(workRoot, jobId)
   // Not recursive: a directory that is already there is never shared.
-  await Deno.mkdir(dir)
+  await fs.mkdir(dir)
   activeWorkDirs.add(dir)
   try {
     return await work(dir)
@@ -339,7 +342,7 @@ export async function withWorkDir<T>(workRoot: string, jobId: string, work: (dir
       await removeIfPresent(dir)
     } catch (error) {
       // The run's own outcome stands; the sweep at the next start and at boot is what removes what could not be removed now.
-      console.error(`[place-register-sfm] could not remove a work directory (${error instanceof Error ? error.name : 'Error'})`)
+      console.error(`[place-register-sfm] could not remove a work directory (${errorKind(error)})`)
     }
   }
 }

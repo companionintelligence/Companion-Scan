@@ -10,14 +10,14 @@
  * anonymous. See docs/factory/07-scan-identity/0003-node-level-glb-provenance.md.
  *
  * ADR 0002: this file is imported by browser code (`src/export/gltf.ts`,
- * `src/viewer/editor.ts`) *and* by repo-root Deno code (`pipeline.ts`), so it
- * must stay free of `Deno.*`, of the DOM, and of `three`. It exports runtime
+ * `src/viewer/editor.ts`) *and* by server code (`server/pipeline.ts`), so it
+ * must stay free of `node:*` imports, of the DOM, and of `three`. It exports runtime
  * values as well as types, which is why it lives in `src/shared/` rather than
  * `src/world/` — ticket 0004's pipeline guard needs the key names at runtime.
  *
  * Import extensions differ by runtime and are load-bearing:
  *   from `src/`      → `from '../shared/provenance'`      (no extension, Vite/tsc)
- *   from repo root   → `from './provenance.ts'` (with extension, Deno/node)
+ *   from server/     → `from '../src/shared/provenance.ts'` (with extension: Node resolves it as written)
  */
 
 /**

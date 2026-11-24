@@ -3,7 +3,7 @@
  *
  * Neither `src/viewer/viewer.ts` nor `server/main.ts` can be imported here (three.js and the DOM; a server that listens at import), so, like
  * wp-15a-register-proposal-wiring.test.ts, these read the sources and are named "source shape:". They claim no behaviour: that the
- * method runs is tests/unit/deno/place_register_sfm_job.test.ts, and that it runs inside the real server's pump is
+ * method runs is tests/unit/server/place_register_sfm_job.test.ts, and that it runs inside the real server's pump is
  * place_register_server.test.ts. What they hold is the part a rename or a moved line silently breaks: the request the card's button
  * sends, a class the card draws that the page has no rule for, the host the job is given, and the two sweeps that remove what a killed
  * run left (at boot, and when every scan is cleared).
@@ -60,7 +60,7 @@ test('source shape: the job is given the photo method\'s host, and that host is 
   const host = server.slice(server.indexOf('function placeRegisterSfmHost()'))
   const body = host.slice(0, host.indexOf('\n}\n'))
   // Off unless PLACE_REGISTER_SFM=1, read from the environment each time the job runs.
-  assert.match(body, /enabled: sfmEnabled\(\(name\) => Deno\.env\.get\(name\)\)/)
+  assert.match(body, /enabled: sfmEnabled\(\(name\) => process\.env\[name\]\)/)
   assert.match(body, /sessionsDir: SESSIONS_DIR/)
   // The working folder is the Place's own data directory, which removing the Place removes whole.
   assert.match(body, /projectMediaDirPath\(PROJECT_MEDIA_DIR, projectId\)/)

@@ -426,7 +426,7 @@ export async function exportToGLB(data: ExportData, options: ExportOptions = {})
 }
 
 /**
- * POST the GLB to the Deno server's /upload-scan endpoint so it is persisted
+ * POST the GLB to the server's /upload-scan endpoint so it is persisted
  * in the scans/ folder and available in the 3D viewer.
  * Returns the server-assigned filename, or null when the upload failed.
  */

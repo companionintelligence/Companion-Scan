@@ -38,7 +38,7 @@
  * are in `stats.groups`, the one that matters first (the group of the named `referenceSessionId`, else the largest),
  * and every session outside it is isolated.
  *
- * Pure: no Deno API, no file access. Deterministic: the same images give the same pairs in the same order, whatever
+ * Pure: no Node API, no file access. Deterministic: the same images give the same pairs in the same order, whatever
  * order the images arrive in.
  */
 

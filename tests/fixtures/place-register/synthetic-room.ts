@@ -13,7 +13,7 @@
  * moved) and the second cloud is carried through an injected placement error
  * with {@link misplace}. The matcher's job is to find the move that undoes it.
  *
- * Pure TypeScript with no runtime API, so Deno and Node tests both load it.
+ * Pure TypeScript with no runtime API, so the server suite and the Node tests both load it.
  */
 
 /** A deterministic 32-bit generator (mulberry32), the same one scripts/make-lingbot-fixture.mjs uses. */

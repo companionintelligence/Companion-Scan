@@ -1,9 +1,9 @@
-#!/usr/bin/env -S deno run -A
+#!/usr/bin/env node
 /**
  * End-to-end room scan: photos in, splat out, no GPU box and no manual steps.
  *
- *   deno run -A scripts/scan-room.ts <session-id> [--iters 15000] [--no-finish]
- *   deno run -A scripts/scan-room.ts --pool <id-a> <id-b> … --as <new-session-id>
+ *   node scripts/scan-room.ts <session-id> [--iters 15000] [--no-finish]
+ *   node scripts/scan-room.ts --pool <id-a> <id-b> … --as <new-session-id>
  *
  * Runs the same drivers the world-job coordinator runs — `runSplatTrain`
  * (which auto-chains `runColmapPoses` for a pose-less session) and
@@ -23,47 +23,45 @@
  */
 import { runSplatTrain } from '../server/splat/splat_train.ts'
 import { runSplatFinish } from '../server/splat/splat_finish.ts'
+import * as fs from 'node:fs/promises'
 
-const SCANS = Deno.env.get('SCANS_DIR') ?? `${Deno.cwd()}/scans`
+const SCANS = process.env.SCANS_DIR ?? `${process.cwd()}/scans`
 const SESSIONS = `${SCANS}/sessions`
 
 function fail(msg: string): never {
   console.error(`error: ${msg}`)
-  Deno.exit(1)
+  process.exit(1)
 }
 
 /** Merge several sessions' keyframes into one, renumbering to stay contiguous. */
 async function pool(ids: string[], target: string): Promise<string> {
   const dir = `${SESSIONS}/${target}`
-  await Deno.remove(dir, { recursive: true }).catch(() => {})
-  await Deno.mkdir(dir, { recursive: true })
+  await fs.rm(dir, { recursive: true }).catch(() => {})
+  await fs.mkdir(dir, { recursive: true })
 
   let n = 0
   const lines: string[] = []
   for (const id of ids) {
     const src = `${SESSIONS}/${id}`
     const names: string[] = []
-    for await (const e of Deno.readDir(src)) {
-      if (e.isFile && /^kf-\d+\.jpg$/.test(e.name)) names.push(e.name)
+    for (const e of await fs.readdir(src, { withFileTypes: true })) {
+      if (e.isFile() && /^kf-\d+\.jpg$/.test(e.name)) names.push(e.name)
     }
     for (const name of names.sort()) {
       const dest = `kf-${String(n).padStart(5, '0')}.jpg`
-      await Deno.copyFile(`${src}/${name}`, `${dir}/${dest}`)
+      await fs.copyFile(`${src}/${name}`, `${dir}/${dest}`)
       lines.push(JSON.stringify({ index: n, file: dest, timestamp: n * 100, sourceSession: id }))
       n++
     }
   }
   if (n === 0) fail(`no keyframes found across: ${ids.join(', ')}`)
-  await Deno.writeTextFile(`${dir}/keyframes.jsonl`, lines.join('\n') + '\n')
-  await Deno.writeTextFile(
-    `${dir}/session.json`,
-    JSON.stringify({ sessionId: target, source: 'photo-ingest', frameCount: n, keyframeCount: n }, null, 2),
-  )
+  await fs.writeFile(`${dir}/keyframes.jsonl`, lines.join('\n') + '\n')
+  await fs.writeFile(`${dir}/session.json`, JSON.stringify({ sessionId: target, source: 'photo-ingest', frameCount: n, keyframeCount: n }, null, 2))
   console.log(`pooled ${n} keyframes from ${ids.length} session(s) → ${target}`)
   return target
 }
 
-const args = [...Deno.args]
+const args = [...process.argv.slice(2)]
 const flag = (name: string, fallback: string): string => {
   const i = args.indexOf(name)
   if (i === -1) return fallback
@@ -94,7 +92,7 @@ if (has('--pool')) {
 
 const sessionDir = `${SESSIONS}/${sessionId}`
 try {
-  if (!(await Deno.stat(sessionDir)).isDirectory) fail(`not a directory: ${sessionDir}`)
+  if (!(await fs.stat(sessionDir)).isDirectory()) fail(`not a directory: ${sessionDir}`)
 } catch {
   fail(`no such session: ${sessionDir}`)
 }
@@ -109,12 +107,12 @@ console.log(`  status ${train.status}  frames ${train.manifest.frameCount ?? '-'
 if (train.status === 'skipped') {
   console.error(`  skipped: ${train.manifest.skippedReason}`)
   if (train.manifest.remediation) console.error(`  fix: ${train.manifest.remediation}`)
-  Deno.exit(2)
+  process.exit(2)
 }
 if (train.status !== 'ok') {
   console.error(`  error: ${train.manifest.error}`)
   console.error(train.log.slice(-1500))
-  Deno.exit(1)
+  process.exit(1)
 }
 
 if (!skipFinish) {
@@ -131,7 +129,7 @@ if (!skipFinish) {
     console.log(`  ${s.inputBytes} B → sog ${s.sogBytes} B (${pct(s.sogBytes)})  compressed ${s.compressedBytes} B (${pct(s.compressedBytes)})`)
   } else if (finish.status === 'skipped') {
     console.error(`  skipped: ${finish.manifest.skippedReason}`)
-    Deno.exit(2)
+    process.exit(2)
   }
 }
 

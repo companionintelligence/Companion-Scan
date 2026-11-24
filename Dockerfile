@@ -1,11 +1,11 @@
 # Companion Scan — single-container image for CI-Hub marketplace installs.
 #
 # Stage 1 builds the Vite static bundle (scanner + editor UI); stage 2 is the
-# Deno API server, which also serves that bundle via the STATIC_DIR
+# API server on Node, which also serves that bundle via the STATIC_DIR
 # fall-through in server/main.ts — one container, one port (8000), UI + API.
 
 # Stage 1 — build the static viewer bundle (vite)
-FROM node:22-alpine AS web
+FROM node:26-alpine AS web
 WORKDIR /web
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund --ignore-scripts
@@ -26,34 +26,44 @@ COPY public/ ./public/
 COPY scripts/copy-draco.mjs ./scripts/copy-draco.mjs
 RUN node scripts/copy-draco.mjs && npx vite build
 
-# Stage 2 — Deno server + workers
-FROM denoland/deno:2.8.3
+# Stage 2 — the API server, on Node 26 (the version .node-version names; see ADR 0016)
+# Debian, not Alpine: onnxruntime-node ships glibc builds only.
+FROM node:26-trixie-slim
 WORKDIR /app
 
-# node + ffmpeg power the /ingest-video and /ingest-photos routes (server/main.ts
+# ffmpeg powers the /ingest-video and /ingest-photos routes (server/main.ts
 # spawns `node scripts/ingest-*.mjs`, which shell out to ffmpeg/ffprobe).
-USER root
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends nodejs ffmpeg \
+  && apt-get install -y --no-install-recommends ffmpeg \
   && rm -rf /var/lib/apt/lists/*
+
+# The server's packages, from the lockfile, before the source: a source change
+# then reuses this layer. --omit=dev leaves out the build and test tools.
+# --ignore-scripts skips the root package's postinstall (it copies browser
+# assets that the bundle from stage 1 already holds) and its git-hook setup
+# (there is no checkout here); onnxruntime-node's CPU libraries ship in its
+# package, and its install script only fetches the CUDA ones, which this image
+# does not use.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
 # Server modules. `COPY server/ ./server/` grabs the whole directory rather than
 # a hand-maintained file list — the previous approach (an explicit COPY list,
 # then a *.ts glob at the repo root) twice fell behind as server/main.ts grew
-# new static imports the list didn't name, breaking `deno cache` here without
-# anyone noticing (publishing is workflow_dispatch-only). A directory copy
-# can't have that failure mode: it structurally cannot omit a file that exists
-# under server/. `*.ts` at the root now only matches vite.config.ts and
-# playwright.config.ts (everything server-side now lives under server/), so
-# it's kept as a harmless glob rather than deleted, for the same reason: it's
-# what stops the next root-level module from silently missing the build
-# instead of failing it.
-COPY *.ts deno.json deno.lock ./
+# new static imports the list didn't name, so the image failed to load
+# server/main.ts without anyone noticing (publishing is workflow_dispatch-only).
+# A directory copy can't have that failure mode: it structurally cannot omit a
+# file that exists under server/. `*.ts` at the root now only matches
+# vite.config.ts and playwright.config.ts (everything server-side now lives
+# under server/), so it's kept as a harmless glob rather than deleted, for the
+# same reason: it's what stops the next root-level module from silently missing
+# the build instead of failing it.
+COPY *.ts ./
 COPY server/ ./server/
 COPY src/world/ ./src/world/
 COPY src/shared/ ./src/shared/
 # server/inference.ts imports ../src/inference/lfm-driver.ts; omitting this broke
-# `deno cache` (Module not found) in the 2026-09-06 publish run.
+# the image's module load (Module not found) in the 2026-09-06 publish run.
 COPY src/inference/ ./src/inference/
 # server/main.ts imports ../src/geo/tile-source.ts (the map tile setting, which the browser reads
 # too). One file, not src/geo/: the rest of that folder is browser code the image has no use for.
@@ -87,17 +97,8 @@ COPY --from=web /web/dist ./dist
 #
 # Persist scans (uploads + optimized artifacts + keyframe sessions) and worlds:
 #   docker run -v scans:/app/scans -v worlds:/app/worlds ...
-RUN deno cache server/main.ts
 
 EXPOSE 8000
 
-# --allow-run is required for the world jobs (python/brush) and the
-# ingest routes (node); see PR #22.
-CMD ["deno", "run", \
-     "--allow-net", \
-     "--allow-read", \
-     "--allow-write", \
-     "--allow-env", \
-     "--allow-ffi", \
-     "--allow-run", \
-     "server/main.ts"]
+# Node runs the TypeScript as it is, stripping its types: there is no build step.
+CMD ["node", "server/main.ts"]

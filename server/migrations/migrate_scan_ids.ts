@@ -37,10 +37,10 @@
  * server process writing the same WORLDS_DIR.
  *
  * Usage:
- *   deno run --allow-read --allow-write --allow-env migrate_scan_ids.ts
- *   deno task migrate-scan-ids
- *   deno task migrate-scan-ids -- --force-clear   (only when a run must clear more than
- *                                                  SESSION_CLEAR_LIMIT session links)
+ *   node server/migrations/migrate_scan_ids.ts
+ *   npm run migrate:scan-ids
+ *   npm run migrate:scan-ids -- --force-clear   (only when a run must clear more than
+ *                                                SESSION_CLEAR_LIMIT session links)
  *
  * Before the first write, every world file is copied to
  * `<WORLDS_DIR>/.pre-migrate-<timestamp>/`. A run refuses, and writes nothing,
@@ -54,6 +54,8 @@
 import type { ScanManifest, WorldProject } from '../../src/world/types.ts'
 import { withWorldLock } from '../world/world_lock.ts'
 import { legacyScanId, safeSlug, scanIdFor } from '../scan_id.ts'
+import * as fs from 'node:fs/promises'
+import { isNotFound } from '../fs_util.ts'
 
 /** One patch/job reference that named an id shared by more than one scan. */
 export interface AmbiguousRemap {
@@ -319,7 +321,7 @@ interface PlannedWorld {
  * a malformed jobs.json.
  */
 async function readWorldFile(path: string): Promise<WorldProject> {
-  const raw = await Deno.readTextFile(path)
+  const raw = await fs.readFile(path, 'utf8')
   let world: WorldProject
   try {
     world = JSON.parse(raw) as WorldProject
@@ -358,11 +360,11 @@ export async function migrateScanIds(opts: MigrateScanIdsOptions): Promise<Migra
 
   const names: string[] = []
   try {
-    for await (const entry of Deno.readDir(worldsDir)) {
-      if (entry.isFile && entry.name.endsWith('.json')) names.push(entry.name)
+    for (const entry of await fs.readdir(worldsDir, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith('.json')) names.push(entry.name)
     }
   } catch (err) {
-    if (err instanceof Deno.errors.NotFound) {
+    if (isNotFound(err)) {
       log(`[migrate-scan-ids] no worlds directory at ${worldsDir} — nothing to migrate.`)
       return summary
     }
@@ -384,11 +386,11 @@ export async function migrateScanIds(opts: MigrateScanIdsOptions): Promise<Migra
   if (opts.sessionsDir) {
     const present = new Set<string>()
     try {
-      for await (const entry of Deno.readDir(opts.sessionsDir)) {
-        if (entry.isDirectory) present.add(entry.name)
+      for (const entry of await fs.readdir(opts.sessionsDir, { withFileTypes: true })) {
+        if (entry.isDirectory()) present.add(entry.name)
       }
     } catch (err) {
-      if (!(err instanceof Deno.errors.NotFound)) throw err
+      if (!(isNotFound(err))) throw err
       sessionsMissing = true
     }
     sessionExists = (sessionId: string) => present.has(sessionId)
@@ -432,8 +434,8 @@ export async function migrateScanIds(opts: MigrateScanIdsOptions): Promise<Migra
   // WORLDS_DIR, because main.ts reads every `*.json` there as a world.
   if (planned.some((p) => p.result.changed)) {
     const backupDir = `${worldsDir}/.pre-migrate-${new Date().toISOString().replace(/[:.]/g, '-')}`
-    await Deno.mkdir(backupDir)
-    for (const p of planned) await Deno.copyFile(p.path, `${backupDir}/${p.name}`)
+    await fs.mkdir(backupDir)
+    for (const p of planned) await fs.copyFile(p.path, `${backupDir}/${p.name}`)
     log(`[migrate-scan-ids] backed up ${planned.length} world file(s) to ${backupDir} before writing.`)
   }
 
@@ -447,8 +449,8 @@ export async function migrateScanIds(opts: MigrateScanIdsOptions): Promise<Migra
       if (outcome.changed) {
         world.updatedAt = new Date().toISOString()
         const tmp = `${path}.${crypto.randomUUID()}.tmp`
-        await Deno.writeTextFile(tmp, JSON.stringify(world, null, 2))
-        await Deno.rename(tmp, path)
+        await fs.writeFile(tmp, JSON.stringify(world, null, 2))
+        await fs.rename(tmp, path)
       }
       return outcome
     })
@@ -471,10 +473,10 @@ export async function migrateScanIds(opts: MigrateScanIdsOptions): Promise<Migra
 }
 
 if (import.meta.main) {
-  const worldsDir = Deno.env.get('WORLDS_DIR') ?? './worlds'
-  const scansDir = Deno.env.get('SCANS_DIR') ?? './scans'
-  const sessionsDir = Deno.env.get('SESSIONS_DIR') ?? `${scansDir}/sessions`
-  const forceClear = Deno.args.includes('--force-clear')
+  const worldsDir = process.env.WORLDS_DIR ?? './worlds'
+  const scansDir = process.env.SCANS_DIR ?? './scans'
+  const sessionsDir = process.env.SESSIONS_DIR ?? `${scansDir}/sessions`
+  const forceClear = process.argv.slice(2).includes('--force-clear')
   console.warn(
     `[migrate-scan-ids] Run this with the server STOPPED. The per-slug world lock is in-process ` +
       `only (ADR 0004), so it cannot exclude a running server writing ${worldsDir}.`,
@@ -500,6 +502,6 @@ if (import.meta.main) {
     }
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err))
-    Deno.exit(1)
+    process.exit(1)
   }
 }

@@ -12,7 +12,7 @@ import type { WorldJob } from '../world/types.ts'
  * event type, add it here first, then reference `EVENT.XXX` from the
  * producer/consumer — never re-introduce a raw string literal.
  *
- * Runtime-agnostic: imported by Deno (`main.ts`) and the Vite/browser bundle
+ * Runtime-agnostic: imported by the server (`main.ts`) and the Vite/browser bundle
  * (`src/viewer/viewer.ts`), following the `src/shared/` precedent
  * (`cv-palette.ts`, `test-homes.ts`).
  *

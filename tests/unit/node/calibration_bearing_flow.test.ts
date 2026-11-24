@@ -1,9 +1,9 @@
 /**
  * The calibration flow itself (`runProjectCalibration`, src/ar/project-calibration.ts), driven end to end
- * against the physical model in tests/unit/deno/physical_oracle.ts: a session that starts facing some
+ * against the physical model in tests/unit/server/physical_oracle.ts: a session that starts facing some
  * bearing, a camera that turns and tilts, a perfect compass, and two physical floor features the user taps.
  *
- * The pure bearing functions are pinned in tests/unit/deno/world_registration.test.ts. This file is about
+ * The pure bearing functions are pinned in tests/unit/server/world_registration.test.ts. This file is about
  * the wiring around them, which is where the sign error lived: what the flow hands `sessionFrameBearingDeg`,
  * which way it draws the AR north tick, what the one-point tier builds and when it refuses, and what lands on
  * the records it returns.
@@ -48,7 +48,7 @@ import {
   perfectCompassBearing,
   rotateByQuat,
   trueSessionZBearing,
-} from '../deno/physical_oracle.ts'
+} from '../server/physical_oracle.ts'
 import { compassReadingFromEvent, pairCompassWithPose, rawOrientationOf, type CompassReading } from '../../../src/geo/compass-heading.ts'
 import { arPoseFor, eulerAnglesFor, phoneAt } from './compass_oracle.ts'
 

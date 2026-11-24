@@ -27,11 +27,11 @@
  * playback stutter unpredictably; holding degrades smoothly and is visibly
  * honest about what it is doing.
  */
-import type { Person4DManifest } from '../world/types'
-import { disposeSplat, loadSplat, type LoadedSplat } from './splat-viewer'
-import { frameIndexAt, PlaybackClock, windowAround } from './playback-clock'
+import type { Person4DManifest } from '../world/types.ts'
+import { disposeSplat, loadSplat, type LoadedSplat } from './splat-viewer.ts'
+import { frameIndexAt, PlaybackClock, windowAround } from './playback-clock.ts'
 import { apiUrl } from '../shared/api-base.ts'
-import { scanArtifactBaseOf } from './splat-layer'
+import { scanArtifactBaseOf } from './splat-layer.ts'
 
 /**
  * Frames kept resident either side of the playhead.

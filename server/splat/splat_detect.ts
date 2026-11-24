@@ -42,8 +42,8 @@
  */
 
 // The manifest type lives in src/world/manifests.ts, not here — see that
-// file's header (it's the canonical, Deno-API-free home so the browser
-// viewer can type-import it without dragging this file's `Deno.*` calls into
+// file's header (it's the canonical, Node-API-free home so the browser
+// viewer can type-import it without dragging this file's `node:*` imports into
 // its DOM-lib type-check program). Re-exported below so
 // `import type { SplatDetectManifest } from './splat_detect.ts'` still works.
 import type { SplatDetectManifest } from '../../src/world/types.ts'
@@ -57,6 +57,8 @@ import {
   writeRunnerManifest,
 } from '../run_with_deadline.ts'
 import { lingBotCloudCollapsed } from './splat_train_dataset.ts'
+import * as fs from 'node:fs/promises'
+import { makeTempDir } from '../fs_util.ts'
 export type { SplatDetectManifest }
 
 /** The documented venv and checkout: the shared table's fallbacks (runnerToolLookups, server/exec_probe.ts). */
@@ -121,19 +123,19 @@ export interface SplatDetectResult {
 }
 
 export function resolveParams(opts: SplatDetectRunOptions) {
-  const python = opts.python ?? Deno.env.get('SPLAT_DETECT_PYTHON') ?? DEFAULT_DETECT_PYTHON
-  const detectDir = opts.detectDir ?? Deno.env.get('SPLAT_DETECT_DIR') ?? DEFAULT_DETECT_DIR
-  const prompt = opts.prompt ?? Deno.env.get('SPLAT_DETECT_PROMPT') ?? DEFAULT_DETECT_PROMPT
+  const python = opts.python ?? process.env.SPLAT_DETECT_PYTHON ?? DEFAULT_DETECT_PYTHON
+  const detectDir = opts.detectDir ?? process.env.SPLAT_DETECT_DIR ?? DEFAULT_DETECT_DIR
+  const prompt = opts.prompt ?? process.env.SPLAT_DETECT_PROMPT ?? DEFAULT_DETECT_PROMPT
   // '' is "no pin": the child is then not given HIP_VISIBLE_DEVICES at all.
-  const hipVisibleDevices = opts.hipVisibleDevices ?? Deno.env.get('HIP_VISIBLE_DEVICES') ?? ''
-  const pointSplatSize = opts.pointSplatSize ?? Deno.env.get('POINT_SPLAT_SIZE') ?? '6'
-  const quality = opts.quality ?? Deno.env.get('SPLAT_DETECT_QUALITY') ?? 'medium'
+  const hipVisibleDevices = opts.hipVisibleDevices ?? process.env.HIP_VISIBLE_DEVICES ?? ''
+  const pointSplatSize = opts.pointSplatSize ?? process.env.POINT_SPLAT_SIZE ?? '6'
+  const quality = opts.quality ?? process.env.SPLAT_DETECT_QUALITY ?? 'medium'
   // Clustering knobs: undefined means "let run_local.py use its own default"
   // (score 0.12 / votes 8 / peak 0.40) so we never fight the analyzer when
   // untuned — override only once calibrated on a real room splat.
-  const scoreThreshold = opts.scoreThreshold ?? Deno.env.get('SPLAT_DETECT_SCORE_THRESHOLD') ?? undefined
-  const minVotes = opts.minVotes ?? Deno.env.get('SPLAT_DETECT_MIN_VOTES') ?? undefined
-  const minPeakScore = opts.minPeakScore ?? Deno.env.get('SPLAT_DETECT_MIN_PEAK_SCORE') ?? undefined
+  const scoreThreshold = opts.scoreThreshold ?? process.env.SPLAT_DETECT_SCORE_THRESHOLD ?? undefined
+  const minVotes = opts.minVotes ?? process.env.SPLAT_DETECT_MIN_VOTES ?? undefined
+  const minPeakScore = opts.minPeakScore ?? process.env.SPLAT_DETECT_MIN_PEAK_SCORE ?? undefined
   return {
     python,
     detectDir,
@@ -223,7 +225,7 @@ export async function runSplatDetect(opts: SplatDetectRunOptions): Promise<Splat
   //    plain point cloud into a 3DGS-attribute PLY the analyzer loader ingests.
   let detectPly: string
   let convertedPly: string | undefined
-  const jobDir = await Deno.makeTempDir({ prefix: 'splat-detect-' })
+  const jobDir = await makeTempDir({ prefix: 'splat-detect-' })
   try {
     if (opts.splatPlyPath && (await exists(opts.splatPlyPath))) {
       detectPly = opts.splatPlyPath
@@ -318,7 +320,7 @@ export async function runSplatDetect(opts: SplatDetectRunOptions): Promise<Splat
     const producedInteractions = `${jobDir}/interactions.json`
     let interactionsText: string
     try {
-      interactionsText = await Deno.readTextFile(producedInteractions)
+      interactionsText = await fs.readFile(producedInteractions, 'utf8')
     } catch {
       return _finish(manifestPath, {
         ...baseManifest,
@@ -330,7 +332,7 @@ export async function runSplatDetect(opts: SplatDetectRunOptions): Promise<Splat
     const objectCount = countInteractions(interactionsText) ?? 0
 
     // 5. Land interactions.json next to the scan.
-    await Deno.writeTextFile(opts.outputInteractionsPath, interactionsText)
+    await fs.writeFile(opts.outputInteractionsPath, interactionsText)
 
     const manifest: SplatDetectManifest = {
       ...baseManifest,
@@ -393,7 +395,7 @@ export function gpuPinEnv(hipVisibleDevices: string): Record<string, string> {
 
 async function exists(path: string): Promise<boolean> {
   try {
-    await Deno.stat(path)
+    await fs.stat(path)
     return true
   } catch {
     return false
@@ -402,7 +404,7 @@ async function exists(path: string): Promise<boolean> {
 
 async function removeQuietly(path: string): Promise<void> {
   try {
-    await Deno.remove(path, { recursive: true })
+    await fs.rm(path, { recursive: true })
   } catch {
     // already gone
   }

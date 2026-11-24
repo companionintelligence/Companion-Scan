@@ -17,7 +17,7 @@
  *     any uncalibrated scan, and the sidecar and manifest say why.
  *
  * This is its own module for the reason server/calibration_fields.ts is: server/main.ts cannot be
- * imported by a test without starting the server. Deno-API-free (ADR 0002); the rules themselves live in
+ * imported by a test without starting the server. Node-API-free (ADR 0002); the rules themselves live in
  * src/world/scan-placement.ts so the editor applies the same ones before it asks.
  */
 import { checkPlacementMatrix, checkTransformMatrix } from '../../src/world/scan-placement.ts'

@@ -8,7 +8,7 @@
  * against (`ScanCalibration.frameId`), so the editor can tell the scans of the current reference from the scans of an
  * earlier one.
  *
- * Pure, and imported by the browser (ADR 0002): no DOM, no Deno, no clock.
+ * Pure, and imported by the browser (ADR 0002): no DOM, no Node API, no clock.
  *
  * ## One file for the phone, one for the server
  *

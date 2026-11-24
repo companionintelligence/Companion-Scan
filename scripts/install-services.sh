@@ -4,7 +4,7 @@
 #   scripts/install-services.sh [--no-enable]
 #
 # - Substitutes absolute paths into the unit templates (user units do not get
-#   your login shell PATH, so npm/deno must be absolute).
+#   your login shell PATH, so npm/node must be absolute).
 # - Seeds ~/.config/cscan/env from deploy/cscan.env.example if absent, merging
 #   ~/.config/cscan/env.lingbot (LingBot-Map worker config) when present.
 # - Enables + starts cscan-server, cscan-web, and the weekly cert timer.
@@ -25,11 +25,12 @@ die() { echo "[install-services] ERROR: $*" >&2; exit 1; }
 
 # ── Resolve absolute binaries ────────────────────────────────────────────────
 NPM_BIN="$(command -v npm)" || die "npm not on PATH"
-DENO_BIN="$(command -v deno || true)"
-[ -n "$DENO_BIN" ] || DENO_BIN="$HOME/.deno/bin/deno"
-[ -x "$DENO_BIN" ] || die "deno not found (looked on PATH and at ~/.deno/bin/deno)"
-NODE_DIR="$(dirname "$(command -v node)")"
-SERVICE_PATH="$NODE_DIR:$(dirname "$DENO_BIN"):/usr/local/bin:/usr/bin:/bin"
+NODE_BIN="$(command -v node)" || die "node not on PATH"
+# The server runs its TypeScript directly, which needs the Node that package.json's engines names.
+"$NODE_BIN" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 26 ? 0 : 1)' \
+  || die "node $("$NODE_BIN" --version) is older than 26 (nvm install 26, then re-run)"
+NODE_DIR="$(dirname "$NODE_BIN")"
+SERVICE_PATH="$NODE_DIR:/usr/local/bin:/usr/bin:/bin"
 
 # ── Hostname (mirror vite.config.ts resolution) ─────────────────────────────
 HOSTNAME_TS="${TAILSCALE_HOSTNAME:-}"
@@ -66,7 +67,7 @@ fi
 # ── Install units ────────────────────────────────────────────────────────────
 for unit in cscan-server.service cscan-web.service cscan-cert.service cscan-cert.timer; do
   sed -e "s|__REPO__|$REPO|g" \
-      -e "s|__DENO__|$DENO_BIN|g" \
+      -e "s|__NODE__|$NODE_BIN|g" \
       -e "s|__NPM__|$NPM_BIN|g" \
       "$UNIT_SRC/$unit" > "$UNIT_DST/$unit"
   echo "[install-services] installed $UNIT_DST/$unit"

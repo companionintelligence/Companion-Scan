@@ -13,6 +13,8 @@
  * session could both read the budget before either wrote, and both append a line for one index.
  */
 import { withWorldLock } from './world/world_lock.ts'
+import * as fs from 'node:fs/promises'
+import { isNotFound } from './fs_util.ts'
 
 /** A session may hold this many bytes of keyframes when KEYFRAME_SESSION_MAX_BYTES is unset: 2 GiB. */
 export const KEYFRAME_SESSION_DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
@@ -27,17 +29,17 @@ export const KEYFRAME_FILE_RE = /^kf-\d{5}\.jpg$/
 export async function keyframeSizesIn(dir: string, fileName: RegExp): Promise<Map<string, number>> {
   const names: string[] = []
   try {
-    for await (const entry of Deno.readDir(dir)) {
-      if (entry.isFile && fileName.test(entry.name)) names.push(entry.name)
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+      if (entry.isFile() && fileName.test(entry.name)) names.push(entry.name)
     }
   } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return new Map()
+    if (isNotFound(err)) return new Map()
     throw err
   }
   const sizes = new Map<string, number>()
   await Promise.all(names.map(async (name) => {
     try {
-      sizes.set(name, (await Deno.stat(`${dir}/${name}`)).size)
+      sizes.set(name, (await fs.stat(`${dir}/${name}`)).size)
     } catch {
       // Removed between the listing and the stat: it no longer counts.
     }
@@ -71,9 +73,9 @@ export function overKeyframeBudget(
 export async function keyframeRecorded(jsonlPath: string, name: string): Promise<boolean> {
   let text: string
   try {
-    text = await Deno.readTextFile(jsonlPath)
+    text = await fs.readFile(jsonlPath, 'utf8')
   } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return false
+    if (isNotFound(err)) return false
     throw err
   }
   return text.split('\n').some((line) => {
@@ -120,16 +122,12 @@ export function writeKeyframe(sessionDir: string, frame: KeyframeWrite): Promise
   return queueKeyframeWrite(sessionDir, async () => {
     const sizes = await keyframeSizesIn(sessionDir, frame.fileName)
     if (overKeyframeBudget(sizes, frame.name, frame.bytes.byteLength, frame.maxBytes)) return 'over-budget'
-    await Deno.writeFile(`${sessionDir}/${frame.name}`, frame.bytes)
+    await fs.writeFile(`${sessionDir}/${frame.name}`, frame.bytes)
     // A repeated index (a retry) overwrites its frame. It adds no second line when the first one is
     // recorded, because finalize counts the lines of keyframes.jsonl.
     const repeated = sizes.has(frame.name)
     if (!repeated || !(await keyframeRecorded(`${sessionDir}/keyframes.jsonl`, frame.name))) {
-      await Deno.writeTextFile(
-        `${sessionDir}/keyframes.jsonl`,
-        JSON.stringify({ ...frame.meta, file: frame.name, bytes: frame.bytes.byteLength, receivedAt: Date.now() }) + '\n',
-        { append: true },
-      )
+      await fs.appendFile(`${sessionDir}/keyframes.jsonl`, JSON.stringify({ ...frame.meta, file: frame.name, bytes: frame.bytes.byteLength, receivedAt: Date.now() }) + '\n')
     }
     return 'written'
   })
@@ -143,7 +141,7 @@ export function writeKeyframe(sessionDir: string, frame: KeyframeWrite): Promise
 export function countKeyframeLines(sessionDir: string): Promise<number> {
   return queueKeyframeWrite(sessionDir, async () => {
     try {
-      const jsonl = await Deno.readTextFile(sessionDir + '/keyframes.jsonl')
+      const jsonl = await fs.readFile(sessionDir + '/keyframes.jsonl', 'utf8')
       return jsonl.split('\n').filter(Boolean).length
     } catch {
       return 0

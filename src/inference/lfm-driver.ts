@@ -4,11 +4,11 @@
  * This is the 3-stage (embed_tokens / embed_images / decoder) autoregressive
  * loop with its manually managed KV cache, plus the patchify maths that turns
  * a decoded image into the model's `pixel_values` input. It imports nothing
- * from `Deno`, `onnxruntime-node`, or Jimp — every runtime-specific operation
+ * from `node:*`, `onnxruntime-node`, or Jimp — every runtime-specific operation
  * (session creation, tokenizer JSON load, image decode, tensor construction)
  * goes through the four-member `LfmPort` a caller supplies.
  *
- * Extracted from the Deno server's inference.ts (see
+ * Extracted from the server's inference.ts (see
  * docs/factory/05-on-device-inference/0001-extract-lfm-driver-runtime-port.md)
  * so the loop is written once and shared by both the server
  * (server/lfm-driver-onnx.ts, onnxruntime-node) and, per ticket 0003, the

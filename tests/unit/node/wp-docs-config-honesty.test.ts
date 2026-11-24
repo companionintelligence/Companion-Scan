@@ -106,7 +106,7 @@ test('.env.example gives every budgetFromEnv variable the default the code uses,
 
 test('.env.example documents the LingBot-Map frame cap, with the default the code uses', () => {
   const source = read('server/lingbot-map/lingbot_map.ts')
-  const fallback = source.match(/Deno\.env\.get\('LINGBOT_MAP_MAX_FRAMES'\)\s*\?\?\s*'(\d+)'/)?.[1]
+  const fallback = source.match(/process\.env\.LINGBOT_MAP_MAX_FRAMES\s*\?\?\s*'(\d+)'/)?.[1]
   assert.ok(fallback, 'the LINGBOT_MAP_MAX_FRAMES read moved: update this test')
   assert.equal(exampleValue(read('.env.example'), 'LINGBOT_MAP_MAX_FRAMES'), fallback)
 })
@@ -198,7 +198,7 @@ test('Vite keeps a .env file out of process.env and hands its VITE_ names to the
   }
   for (const [where, text] of Object.entries(passages)) {
     assert.ok(text.length > 0, `${where} is missing`)
-    assert.match(text, /--env-file/, `${where} must say which commands pass --env-file to the Deno server`)
+    assert.match(text, /--env-file/, `${where} must say which commands pass --env-file to the server`)
     assert.match(text, /process\.env/, `${where} must say a .env file does not reach process.env`)
     assert.match(text, /import\.meta\.env/, `${where} must say the VITE_ names in a .env file reach the browser as import.meta.env`)
     for (const name of CONFIG_READS) assert.ok(text.includes(name), `${where} must name ${name}, which vite.config.ts cannot get from a .env file`)
@@ -206,12 +206,9 @@ test('Vite keeps a .env file out of process.env and hands its VITE_ names to the
   }
 })
 
-test('the Deno server gets --env-file from the npm and deno tasks, not from the systemd unit or the Docker image, as .env.example and architecture.md say', () => {
+test('the server gets --env-file from npm run server, not from the systemd unit or the Docker image, as .env.example and architecture.md say', () => {
   const scripts = JSON.parse(read('package.json')).scripts as Record<string, string>
-  const tasks = JSON.parse(read('deno.json')).tasks as Record<string, string>
-  for (const [what, command] of [['npm run server', scripts.server], ['deno task dev', tasks.dev], ['deno task start', tasks.start]] as const) {
-    assert.match(command, /--env-file/, `${what} no longer passes --env-file: the docs say it does`)
-  }
+  assert.match(scripts.server, /--env-file/, 'npm run server no longer passes --env-file: the docs say it does')
   assert.match(scripts.start, /npm run server/, 'npm start no longer runs npm run server: the docs say it reads a .env file')
   assert.doesNotMatch(read('deploy/systemd/cscan-server.service'), /--env-file/, 'the systemd unit passes --env-file now: the docs say it does not')
   assert.doesNotMatch(read('Dockerfile'), /--env-file/, 'the Docker image passes --env-file now: the docs say it does not')
@@ -342,7 +339,7 @@ const pageNeverReachesArcoreInstall =
 /** The generated notices carry the ARCore Additional Terms' text after Google's disclosure, so the terms are reproduced and not only linked. */
 const noticesReproduceArcoreTerms = /arcore-additional-terms\.txt/.test(read('scripts/native/third-party-notices.mjs'))
 const exportWorldHasARunner = /job\.type === 'export-world'\)\s*\{\s*await _runExportWorldJob/.test(read('server/main.ts'))
-const envFileIsPassed = /--env-file/.test(JSON.parse(read('package.json')).scripts.server) && /--env-file/.test(read('deno.json'))
+const envFileIsPassed = /--env-file/.test(JSON.parse(read('package.json')).scripts.server)
 const capabilitiesIsServed = /app\.get\('\/capabilities'/.test(read('server/main.ts'))
 const memoryPushHasButton = /publish: \[[^\]]*'memory-push'/.test(read('src/viewer/viewer.ts'))
 /** `_xpu_result` hands back fp16_ok=False, so `use_autocast_fp16()` is false on Intel XPU. */
@@ -374,10 +371,10 @@ const retired: Array<{ file: string; says: RegExp; holds: boolean; because: stri
   { file: 'docs/product/UX_FLOW.md', says: /`person-4d-reconstruct` and `memory-push` only via the API/, holds: memoryPushHasButton, because: "the editor's Publish step queues memory-push" },
   { file: 'docs/roadmap.md', says: /rather than a manifest\/worker-ready step/, holds: exportWorldHasARunner, because: 'export-world already builds one GLB for the Place' },
   { file: 'docs/operations/PLATFORM_SUPPORT.md', says: /Not yet wired into the product/, holds: capabilitiesIsServed, because: 'server/main.ts serves GET /capabilities' },
-  { file: '.env.example', says: /\.env files are NOT\s+# loaded automatically|docs\/DEPLOY\.md/, holds: envFileIsPassed, because: '`npm run server` and the deno tasks pass --env-file, and the deploy doc is docs/operations/DEPLOY.md' },
-  { file: 'docs/architecture.md', says: /`\.env`\s+is \*\*not\*\* auto-loaded/, holds: envFileIsPassed, because: '`npm run server` and the deno tasks pass --env-file' },
-  { file: 'docs/pipelines/splat-train.md', says: /Nothing in `package\.json` or `deno\.json` passes/, holds: envFileIsPassed, because: '`npm run server` and the deno tasks pass --env-file' },
-  { file: 'docs/pipelines/panoptic-scan.md', says: /nothing passes `--env-file`/, holds: envFileIsPassed, because: '`npm run server` and the deno tasks pass --env-file' },
+  { file: '.env.example', says: /\.env files are NOT\s+# loaded automatically|docs\/DEPLOY\.md/, holds: envFileIsPassed, because: '`npm run server` passes --env-file-if-exists, and the deploy doc is docs/operations/DEPLOY.md' },
+  { file: 'docs/architecture.md', says: /`\.env`\s+is \*\*not\*\* auto-loaded/, holds: envFileIsPassed, because: '`npm run server` passes --env-file-if-exists' },
+  { file: 'docs/pipelines/splat-train.md', says: /Nothing in `package\.json` or `deno\.json` passes/, holds: envFileIsPassed, because: '`npm run server` passes --env-file-if-exists' },
+  { file: 'docs/pipelines/panoptic-scan.md', says: /nothing passes `--env-file`/, holds: envFileIsPassed, because: '`npm run server` passes --env-file-if-exists' },
   { file: 'docs/pipelines/lingbot-map.md', says: /fp16 autocast runs on `cuda` and `xpu` only/, holds: xpuStaysFp32, because: 'XPU is fp32 until fp16 is measured on Intel hardware (_torch_device.py, _xpu_result), so autocast never runs there' },
   { file: 'NOTICE.md', says: /Google requires an app\s+that uses ARCore to tell its users|provided by Google LLC/, holds: true, because: "Google's privacy-requirements page says an app must disclose the use prominently and offers its sentence as one way to do that; the sentence says \"provided by Google\", not \"Google LLC\"" },
   { file: 'THIRD_PARTY.md', says: /provided by Google LLC/, holds: true, because: "Google's privacy-requirements page words the sentence \"provided by Google\", not \"Google LLC\"" },

@@ -21,10 +21,14 @@
  * A crash between the steps leaves a `.part` (and perhaps a sidecar) that nothing reads: no half-made scan, but some
  * bytes on disk until someone deletes them.
  *
- * Deno APIs live here and not in patch_validate.ts, which the browser's rules (ADR 0002) keep Deno-free.
+ * Node APIs live here and not in patch_validate.ts, which the browser's rules (ADR 0002) keep Node-free.
  */
 
 /** The ending of a scan that is still being written. It is not `.glb`, so no listing of scans includes it. */
+import * as fs from 'node:fs/promises'
+import { isNotFound, isAlreadyExists } from '../fs_util.ts'
+import type { FileHandle } from 'node:fs/promises'
+
 export const PART_SUFFIX = '.part'
 
 /** Where the write has got to, for a test that wants to look at the scans directory between two steps. */
@@ -45,26 +49,31 @@ export interface StoreRequest {
 
 async function exists(path: string): Promise<boolean> {
   try {
-    await Deno.stat(path)
+    await fs.stat(path)
     return true
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return false
+    if (isNotFound(error)) return false
     throw error
   }
 }
 
 async function removeQuietly(path: string): Promise<void> {
   try {
-    await Deno.remove(path)
+    await fs.rm(path)
   } catch {
     // Already gone, or not ours to worry about: the write's own error is the one worth reporting.
   }
 }
 
+/** What `writeAll` needs of a file: `FileHandle#write`, which says how many bytes it took. */
+export interface ByteSink {
+  write(bytes: Uint8Array): Promise<{ bytesWritten: number }>
+}
+
 /** Every byte of `bytes`: a single `write` may take fewer than it is given. */
-export async function writeAll(handle: Pick<Deno.FsFile, 'write'>, bytes: Uint8Array): Promise<void> {
+export async function writeAll(handle: ByteSink, bytes: Uint8Array): Promise<void> {
   let offset = 0
-  while (offset < bytes.byteLength) offset += await handle.write(bytes.subarray(offset))
+  while (offset < bytes.byteLength) offset += (await handle.write(bytes.subarray(offset))).bytesWritten
 }
 
 /** Stores the scan and returns the file name it was given: `<ts>_<name>.glb`, or with a suffix when that name was taken. */
@@ -74,20 +83,20 @@ export async function storeUploadedScan(request: StoreRequest): Promise<string> 
 
   // The name is claimed by the filesystem and not by a check followed by a write, which two uploads can both win.
   let filename: string | null = null
-  let handle: Deno.FsFile | null = null
+  let handle: FileHandle | null = null
   for (let attempt = 0; attempt < 8; attempt++) {
     const suffix = attempt === 0 ? '' : `-${crypto.randomUUID().slice(0, 8)}`
     const candidate = `${ts}_${stem}${suffix}.glb`
-    let claim: Deno.FsFile
+    let claim: FileHandle
     try {
-      claim = await Deno.open(`${dir}/${candidate}${PART_SUFFIX}`, { write: true, createNew: true })
+      claim = await fs.open(`${dir}/${candidate}${PART_SUFFIX}`, 'wx')
     } catch (error) {
-      if (error instanceof Deno.errors.AlreadyExists) continue
+      if (isAlreadyExists(error)) continue
       throw error
     }
     // An upload that finished before this claim has no `.part` left to collide with, but its `.glb` is there.
     if (await exists(`${dir}/${candidate}`)) {
-      claim.close()
+      await claim.close()
       await removeQuietly(`${dir}/${candidate}${PART_SUFFIX}`)
       continue
     }
@@ -97,7 +106,7 @@ export async function storeUploadedScan(request: StoreRequest): Promise<string> 
   }
   if (!filename || !handle) throw new Error(`could not allocate a unique filename for ${request.safeName} after 8 attempts`)
 
-  const claimedFile: Deno.FsFile = handle
+  const claimedFile: FileHandle = handle
   const final = `${dir}/${filename}`
   const part = `${final}${PART_SUFFIX}`
   const sidecarPath = final.replace(/\.glb$/, '.json')
@@ -105,32 +114,32 @@ export async function storeUploadedScan(request: StoreRequest): Promise<string> 
   let sidecarStored = false
   let published = false
   let open = true
-  const closeClaim = (): void => {
+  const closeClaim = async (): Promise<void> => {
     if (!open) return
     open = false
-    claimedFile.close()
+    await claimedFile.close()
   }
   try {
     await observe?.('claimed')
     try {
       await writeAll(claimedFile, bytes)
     } finally {
-      closeClaim()
+      await closeClaim()
     }
     await observe?.('bytes-written')
     if (sidecar !== null) {
-      await Deno.writeTextFile(sidecarTemp, sidecar)
-      await Deno.rename(sidecarTemp, sidecarPath)
+      await fs.writeFile(sidecarTemp, sidecar)
+      await fs.rename(sidecarTemp, sidecarPath)
       sidecarStored = true
     }
     await observe?.('sidecar-written')
-    await Deno.rename(part, final)
+    await fs.rename(part, final)
     published = true
     await observe?.('published')
     return filename
   } catch (error) {
     // Nothing of a scan that did not arrive is left behind for a reader to find. One that did arrive keeps what it has.
-    closeClaim()
+    await closeClaim()
     if (!published) {
       await removeQuietly(part)
       await removeQuietly(sidecarTemp)

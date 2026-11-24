@@ -3,7 +3,7 @@
  * (server/main.ts), over HTTP.
  *
  * tests/unit/node/wp-place-frame-sync.test.ts scripts the server's answers by hand, and
- * tests/unit/deno/place_frame_route.test.ts never runs the client, so neither can say that the two halves agree
+ * tests/unit/server/place_frame_route.test.ts never runs the client, so neither can say that the two halves agree
  * about what is on the wire. This file runs both for real: the server is spawned on a free port with every
  * directory it writes in a temp folder, the phone's IndexedDB is the in-memory one the unit tests use
  * (./support/fake-indexeddb.ts), and the network is `fetch`.
@@ -19,15 +19,14 @@
  *  - a registry the operator restored from a backup does not strand a phone on a frame the server no longer has;
  *  - this phone's own frame, saved a moment earlier in another form, is not a conflict with itself.
  *
- * Needs `deno` on the PATH. Without it the tests are skipped, and the Deno suite (`deno task test`) still runs the
- * server half. No fixed port is bound: the server listens on port 0.
+ * The server runs on the Node that runs this file. No fixed port is bound: the server listens on port 0.
  *
  * Run: npm run test:wave (the `wp-` prefix is what that script globs), or
  *      node --experimental-strip-types --no-warnings --test tests/unit/node/wp-place-frame-contract.test.ts
  */
 import { after, before, mock, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -48,9 +47,6 @@ import type { PendingReferencePhoto } from '../../../src/ar/reference-photo.ts'
 import type { Project, ProjectSpatialFrame } from '../../../src/world/types.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
-const DENO = process.env['DENO_BIN'] ?? 'deno'
-const hasDeno = spawnSync(DENO, ['--version'], { stdio: 'ignore' }).status === 0
-const skip = hasDeno ? false : 'deno is not on the PATH'
 
 // ── The real server ──────────────────────────────────────────────────────────────────────────────
 
@@ -59,7 +55,6 @@ let root = ''
 let base = ''
 
 before(async () => {
-  if (!hasDeno) return
   root = mkdtempSync(join(tmpdir(), 'wp-frame-contract-'))
   const env: Record<string, string> = {
     PATH: process.env['PATH'] ?? '',
@@ -73,12 +68,8 @@ before(async () => {
     INFERENCE_MODE: 'mock',
     TAILSCALE_HOSTNAME: 'scan.test',
   }
-  for (const name of ['DENO_DIR', 'XDG_CACHE_HOME', 'TMPDIR', 'SSL_CERT_FILE']) if (process.env[name]) env[name] = process.env[name]!
-  child = spawn(
-    DENO,
-    ['run', '--no-prompt', '--allow-net', '--allow-read', '--allow-write', '--allow-env', '--allow-ffi', '--allow-run', join(ROOT, 'server/main.ts')],
-    { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] },
-  )
+  for (const name of ['XDG_CACHE_HOME', 'TMPDIR', 'SSL_CERT_FILE']) if (process.env[name]) env[name] = process.env[name]!
+  child = spawn(process.execPath, [join(ROOT, 'server/main.ts')], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] })
   let output = ''
   const port = await new Promise<number>((done, fail) => {
     const timer = setTimeout(() => fail(new Error(`the server did not start\n${output.slice(-2000)}`)), 90_000)
@@ -203,7 +194,7 @@ async function startPage(store: ProjectStore, net: Link, projectId: string) {
 
 // ── The tests ────────────────────────────────────────────────────────────────────────────────────
 
-test('a calibration saved offline reaches the server when the phone is back, and a "Use anyway" after it is not refused as a conflict with the phone\'s own frame', { skip }, async () => {
+test('a calibration saved offline reaches the server when the phone is back, and a "Use anyway" after it is not refused as a conflict with the phone\'s own frame', async () => {
   install()
   const store = await openStore()
   const net = link()
@@ -240,7 +231,7 @@ test('a calibration saved offline reaches the server when the phone is back, and
   }
 })
 
-test('a frame made against a Place another phone has calibrated since is refused, and the page works against the frame the server holds', { skip }, async () => {
+test('a frame made against a Place another phone has calibrated since is refused, and the page works against the frame the server holds', async () => {
   install()
   const store = await openStore()
   const net = link()
@@ -274,7 +265,7 @@ test('a frame made against a Place another phone has calibrated since is refused
   }
 })
 
-test('the phone that loses a race does not replace the photos of the one that won, and keeps no copy of its own against the winner\'s frame', { skip }, async () => {
+test('the phone that loses a race does not replace the photos of the one that won, and keeps no copy of its own against the winner\'s frame', async () => {
   const storeA = await (async () => { install(); return openStore() })()
   const storeB = await (async () => { install(); return openStore() })()
   const net = link()
@@ -297,7 +288,7 @@ test('the phone that loses a race does not replace the photos of the one that wo
   assert.deepEqual(await storeB.listReferencePhotos(id), [], 'B kept no copy that its own picker would draw against A\'s frame')
 })
 
-test('a calibration made offline uploads its photos after its frame, once the phone is back', { skip }, async () => {
+test('a calibration made offline uploads its photos after its frame, once the phone is back', async () => {
   install()
   const store = await openStore()
   const net = link()
@@ -324,7 +315,7 @@ test('a calibration made offline uploads its photos after its frame, once the ph
   assert.deepEqual(await store.listPendingFrames(), [], 'and nothing is left waiting')
 })
 
-test('two calibrations made on one phone while it was offline leave the newer one as the Place\'s frame', { skip }, async () => {
+test('two calibrations made on one phone while it was offline leave the newer one as the Place\'s frame', async () => {
   install()
   const store = await openStore()
   const net = link()
@@ -350,7 +341,7 @@ test('two calibrations made on one phone while it was offline leave the newer on
   assert.equal(held.spatialFrameRevision, 1)
 })
 
-test('this phone\'s own frame, saved a moment earlier in another form, is not a conflict with itself', { skip }, async () => {
+test('this phone\'s own frame, saved a moment earlier in another form, is not a conflict with itself', async () => {
   install()
   const store = await openStore()
   const net = link()
@@ -372,7 +363,7 @@ test('this phone\'s own frame, saved a moment earlier in another form, is not a 
   assert.deepEqual(await store.listPendingFrames(), [])
 })
 
-test('a registry restored from a backup does not strand the phone on a frame the server no longer has', { skip }, async () => {
+test('a registry restored from a backup does not strand the phone on a frame the server no longer has', async () => {
   install()
   const store = await openStore()
   const net = link()

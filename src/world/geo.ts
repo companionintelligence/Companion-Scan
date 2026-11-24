@@ -1,4 +1,4 @@
-import type { BearingConvention, GeoPose, Quat, Vec3 } from './types'
+import type { BearingConvention, GeoPose, Quat, Vec3 } from './types.ts'
 
 const EARTH_RADIUS_M = 6_378_137
 const DEG_TO_RAD = Math.PI / 180
@@ -233,7 +233,7 @@ export function bearingConventionFromSearch(search: string): BearingConvention {
  * **twice the turn since session start** everywhere else — a 90° turn gave a
  * bearing 180° out. Its tests derived their "truth" through
  * `composeYUpTransform`, which assumes the same yaw direction, so they passed.
- * tests/unit/deno/world_registration.test.ts checks against a physical model
+ * tests/unit/server/world_registration.test.ts checks against a physical model
  * that shares no code with this file, and keeps the old rule as a regression
  * guard (an assertion that it disagrees).
  *
@@ -534,7 +534,7 @@ export function twoPointToProjectTransform(landmark: Vec3, headingMarker: Vec3):
   // `twoPointHeadingDeg`) come out along project +Z, the value handed to that
   // builder must be the baseline's bearing negated. Verified by
   // `twoPointToProjectTransform: the heading marker lands on +Z at the
-  // recorded separation` in tests/unit/deno/anchor_calibration.test.ts, which
+  // recorded separation` in tests/unit/server/anchor_calibration.test.ts, which
   // fails by exactly this sign if the negation is dropped.
   return anchorToProjectTransform(landmark, -twoPointHeadingDeg(landmark, headingMarker))
 }

@@ -21,6 +21,8 @@
  */
 
 /** A PLY scalar type name → its width in bytes. Big-endian is not supported. */
+import { readBytes } from '../fs_util.ts'
+
 const TYPE_SIZES: Record<string, number> = {
   char: 1,
   uchar: 1,
@@ -301,7 +303,7 @@ export function centreStats(xyz: Float64Array, declaredCount = xyz.length / 3): 
 export async function plyCentreStats(path: string): Promise<CentreStats | null> {
   let bytes: Uint8Array
   try {
-    bytes = await Deno.readFile(path)
+    bytes = await readBytes(path)
   } catch {
     return null
   }

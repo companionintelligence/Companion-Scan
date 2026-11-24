@@ -11,13 +11,15 @@ import {
   projectMediaDirPath,
 } from './project_media_meta.ts'
 import type { CalibrationReferencePhoto, ProjectSpatialFrame } from '../src/world/types.ts'
+import * as fs from 'node:fs/promises'
+import { readBytes, isNotFound } from './fs_util.ts'
 
 export * from './project_media_meta.ts'
 
 /** `<dir>/reference-photos.json`: the record of what was uploaded into a photo folder, beside the photos. */
 async function readPhotoIndex(dir: string): Promise<Record<string, unknown>> {
   try {
-    return JSON.parse(await Deno.readTextFile(`${dir}/reference-photos.json`)) as Record<string, unknown>
+    return JSON.parse(await fs.readFile(`${dir}/reference-photos.json`, 'utf8')) as Record<string, unknown>
   } catch {
     return {}
   }
@@ -29,13 +31,10 @@ async function readPhotoIndex(dir: string): Promise<Record<string, unknown>> {
  * folder keeps the index of what it was sent, as the Place's folder does.
  */
 export async function storeFramePhoto(dir: string, meta: FramePhotoMeta, bytes: Uint8Array): Promise<void> {
-  await Deno.mkdir(dir, { recursive: true })
+  await fs.mkdir(dir, { recursive: true })
   const name = framePhotoFileName(meta.role)
-  await Deno.writeFile(`${dir}/${name}`, bytes)
-  await Deno.writeTextFile(
-    `${dir}/reference-photos.json`,
-    JSON.stringify({ ...(await readPhotoIndex(dir)), [meta.role]: { ...meta, file: name, bytes: bytes.byteLength, receivedAt: Date.now() } }, null, 2),
-  )
+  await fs.writeFile(`${dir}/${name}`, bytes)
+  await fs.writeFile(`${dir}/reference-photos.json`, JSON.stringify({ ...(await readPhotoIndex(dir)), [meta.role]: { ...meta, file: name, bytes: bytes.byteLength, receivedAt: Date.now() } }, null, 2))
 }
 
 /**
@@ -64,7 +63,7 @@ function safeDecode(text: string): string | null {
 
 /** Whether two files hold the same bytes. Throws NotFound when either is missing. */
 async function sameBytes(a: string, b: string): Promise<boolean> {
-  const [first, second] = await Promise.all([Deno.readFile(a), Deno.readFile(b)])
+  const [first, second] = await Promise.all([readBytes(a), readBytes(b)])
   return first.length === second.length && first.every((byte, i) => byte === second[i])
 }
 
@@ -101,7 +100,7 @@ export async function copyFramePhotos(
     const file = (scoped?.[3] ?? legacy?.[2])!
     const folder = frameId ? `frames/${frameId}/` : ''
     try {
-      await Deno.mkdir(`${toDir}/${folder}`, { recursive: true })
+      await fs.mkdir(`${toDir}/${folder}`, { recursive: true })
       const source = `${fromDir}/${folder}${file}`
       const target = `${toDir}/${folder}${file}`
       try {
@@ -109,8 +108,8 @@ export async function copyFramePhotos(
         // bytes may be named by this record.
         if (!(await sameBytes(source, target))) continue
       } catch (error) {
-        if (!(error instanceof Deno.errors.NotFound)) throw error
-        await Deno.copyFile(source, target)
+        if (!(isNotFound(error))) throw error
+        await fs.copyFile(source, target)
       }
       record.url = frameId
         ? `/projects/${encodeURIComponent(toProjectId)}/frames/${frameId}/${file}`
@@ -139,15 +138,15 @@ export async function copyFrameFolder(
   const from = framePhotoDirPath(root, fromProjectId, frameId)
   const to = framePhotoDirPath(root, toProjectId, frameId)
   if (from === null || to === null || from === to) return 0
-  const exists = (path: string) => Deno.stat(path).then(() => true, () => false)
+  const exists = (path: string) => fs.stat(path).then(() => true, () => false)
   let copied = 0
   for (const role of FRAME_PHOTO_ROLES) {
     const name = framePhotoFileName(role)
     // A photo that is not there is not copied, and one already at the other end is that Place's own: it stays.
     if (!(await exists(`${from}/${name}`)) || (await exists(`${to}/${name}`))) continue
     try {
-      await Deno.mkdir(to, { recursive: true })
-      await Deno.copyFile(`${from}/${name}`, `${to}/${name}`)
+      await fs.mkdir(to, { recursive: true })
+      await fs.copyFile(`${from}/${name}`, `${to}/${name}`)
       copied += 1
     } catch { /* this one could not be copied: the others still are */ }
   }

@@ -67,6 +67,8 @@ import type {
 } from '../src/world/types.ts'
 import { type DetectObjectRecord, parseDetectRecords } from '../src/world/detect-objects.ts'
 import { georeferenceBlock } from '../src/world/georef.ts'
+import * as fs from 'node:fs/promises'
+import { isNotFound, readBytes } from './fs_util.ts'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -89,7 +91,7 @@ export interface MemoryPushConfig {
   maxUploadBytes: number
 }
 
-export function configFromEnv(env: (k: string) => string | undefined = Deno.env.get): MemoryPushConfig {
+export function configFromEnv(env: (k: string) => string | undefined = (k) => process.env[k]): MemoryPushConfig {
   const baseUrl = (env('CI_SERVER_URL') ?? '').trim().replace(/\/+$/, '')
   const token = (env('CI_SERVER_TOKEN') ?? '').trim()
   const maxRaw = Number(env('MEMORY_PUSH_MAX_UPLOAD_BYTES') ?? '')
@@ -196,10 +198,10 @@ async function uploadFile(
     return { id: null, skippedReason: overLimitReason(file.label, file.bytes.byteLength, cfg) }
   }
   const form = new FormData()
-  // Deno.readFile hands back an ArrayBuffer-backed view, but its type is
-  // widened to ArrayBufferLike (which BlobPart rejects). Cast rather than
+  // readBytes hands back an ArrayBuffer-backed view, but a caller's type may
+  // be widened to ArrayBufferLike (which a Blob part rejects). Cast rather than
   // copy — a re-alloc would double peak memory on a large mesh or splat.
-  const part = file.bytes as unknown as BlobPart
+  const part = file.bytes as unknown as NodeJS.BufferSource
   form.append('files', new File([part], file.name, { type: file.mime }))
   // Binary geometry has no text for the vision model to describe; skip that work.
   form.append('skipDescription', 'true')
@@ -866,9 +868,9 @@ export async function pushScanToMemory(
   const doFetch: typeof fetch = signal
     ? (input, init) => baseFetch(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal })
     : baseFetch
-  const readFile = deps.readFile ?? Deno.readFile
-  const readTextFile = deps.readTextFile ?? Deno.readTextFile
-  const statFile = deps.statFile ?? Deno.stat
+  const readFile = deps.readFile ?? ((path: string) => readBytes(path))
+  const readTextFile = deps.readTextFile ?? ((path: string) => fs.readFile(path, 'utf8'))
+  const statFile = deps.statFile ?? ((path: string) => fs.stat(path))
   const sourceId = scan.scanId
   const base = scan.filename.replace(/\.glb$/i, '')
 
@@ -887,7 +889,7 @@ export async function pushScanToMemory(
     glbFileId = uploaded.id
     glbSkippedReason = uploaded.skippedReason
   } catch (err) {
-    glbSkippedReason = err instanceof Error && err.name === 'NotFound'
+    glbSkippedReason = isNotFound(err)
       ? 'glb not found on disk'
       : `upload error: ${redact(String(err), cfg).slice(0, 200)}`
     console.warn(`[memory-push] ${glbSkippedReason} (${glbPath})`)

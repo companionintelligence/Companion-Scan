@@ -2,11 +2,11 @@
  * Server-side take vocabulary.
  *
  * The id *vocabulary* lives in `src/shared/take-id.ts` so both runtimes share
- * one regex (ADR 0002 — that file must stay Deno-API-free). This module is the
+ * one regex (ADR 0002 — that file must stay Node-API-free). This module is the
  * server half, and it exists separately from `main.ts` for the same reason
  * `session_id.ts`, `scan_index.ts` and `world_lock.ts` do: `main.ts` cannot be
  * imported by a test without running its unconditional top-level side effects
- * (hostname resolution, VLM engine load, `Deno.serve`).
+ * (hostname resolution, VLM engine load, `serve(...)`).
  *
  * Note the asymmetry with `session_id.ts`: that module has a filesystem half
  * because a session id names a directory. A take id never does — a take is the

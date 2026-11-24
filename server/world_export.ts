@@ -39,7 +39,7 @@
  *
  * This module does no file I/O. The job runner in server/main.ts reads each
  * scan GLB the way the viewer does and writes the returned bytes, so the
- * composer is testable on its own (tests/unit/deno/world_export.test.ts).
+ * composer is testable on its own (tests/unit/server/world_export.test.ts).
  *
  * Merging uses `mergeDocuments` from @gltf-transform/functions. Core only has
  * per-property `copy`/`clone`, which keep references into the source document;

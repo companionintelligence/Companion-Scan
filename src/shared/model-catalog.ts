@@ -7,7 +7,7 @@
  * silent-fallback list and bench-models.mjs's bench candidate list), which
  * is the ADR 0001 reuse violation this module fixes.
  *
- * Runtime-agnostic (no `Deno.*` / `node:*` imports): imported by Deno server code
+ * Runtime-agnostic (no `node:*` imports, no `process`): imported by server code
  * (inference.ts, main.ts) and by Node scripts (scripts/setup-models.mjs,
  * scripts/bench-models.mjs, scripts/postinstall-hint.mjs) alike, following
  * the src/shared/ precedent (events.ts, cv-palette.ts, test-homes.ts).
@@ -152,7 +152,7 @@ export function formatCatalogTable(opts: {
  * docs it replaces did.
  *
  * `configuredTag` is caller-supplied (a live env read) so this module itself
- * never needs `Deno.env`/`process.env` access — same rule `formatCatalogTable`'s
+ * never needs `process.env` access — same rule `formatCatalogTable`'s
  * `installed` param already follows. Omitting it (or passing null) describes
  * the unset case; passing the actual value avoids claiming OLLAMA_MODEL is
  * unset when the caller already knows it isn't.

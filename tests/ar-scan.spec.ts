@@ -2,7 +2,7 @@
  * AR scan integration tests.
  *
  * These tests use simulated camera input (no real AR hardware needed on desktop),
- * and connect to the live running Vite + Deno servers.
+ * and connect to the live running Vite + servers.
  *
  * Re the real iPhone path: camera and motion permissions cannot be
  * programmatically granted in WebKit — the user must grant them manually once.

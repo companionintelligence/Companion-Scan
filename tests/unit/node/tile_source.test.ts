@@ -422,7 +422,7 @@ test('the reason a setting was refused never repeats the setting, which may hold
 })
 
 test('ADR 0002: the module the server and the browser both import holds no server-runtime reference', () => {
-  assert.doesNotMatch(read('src/geo/tile-source.ts'), /\bDeno\b|\bdocument\.|\bwindow\.|\blocalStorage\b|\bHTMLElement\b/, 'no Deno, no DOM: grep Deno. finds nothing, as ADR 0002 asks')
+  assert.doesNotMatch(read('src/geo/tile-source.ts'), /\bfrom\s+['"]node:|\bprocess\.(?:env|argv|exit|cwd|platform)\b|\bBuffer\.|\bdocument\.|\bwindow\.|\blocalStorage\b|\bHTMLElement\b/, 'no Node API, no DOM, as ADR 0002 asks')
 })
 
 test('the check can start from a tile\'s bytes, and the same bytes give the same verdict as the sample the page builds', async () => {
@@ -1513,14 +1513,14 @@ test('source shape: only the basemap layer makes a tile layer, across the whole 
 test('source shape: GET /capabilities carries the basemap the environment names, and the server says when it cannot use the value', () => {
   const server = read('server/main.ts')
   assert.match(server, /import \{[^}]*basemapFromEnv[^}]*\} from '\.\.\/src\/geo\/tile-source\.ts'/)
-  assert.match(server, /const BASEMAP = basemapFromEnv\(\(name\) => Deno\.env\.get\(name\)\)/)
+  assert.match(server, /const BASEMAP = basemapFromEnv\(\(name\) => process\.env\[name\]\)/)
   assert.match(server, /app\.get\('\/capabilities'[\s\S]*?return c\.json\(\{ \.\.\.report, basemap: BASEMAP \}\)/)
   assert.match(server, /if \(BASEMAP\.problem\) \{\s*console\.warn\(/)
-  assert.doesNotMatch(server.match(/if \(BASEMAP\.problem\) \{[\s\S]*?\n\}/)![0], /Deno\.env|\$\{BASEMAP\.urlTemplate/, 'the warning never prints the value')
+  assert.doesNotMatch(server.match(/if \(BASEMAP\.problem\) \{[\s\S]*?\n\}/)![0], /process\.env|\$\{BASEMAP\.urlTemplate/, 'the warning never prints the value')
 })
 
 test('source shape: the pages can reach the route, and the service worker does not keep a copy of it', () => {
-  assert.match(read('vite.config.ts'), /PROXIED_ROUTES = \[[\s\S]*?'\/capabilities'[\s\S]*?\]/, 'the dev proxy forwards /capabilities to the Deno server')
+  assert.match(read('vite.config.ts'), /PROXIED_ROUTES = \[[\s\S]*?'\/capabilities'[\s\S]*?\]/, 'the dev proxy forwards /capabilities to the server')
   assert.match(read('public/sw.js'), /const API_PREFIXES = \[[\s\S]*?'\/capabilities'[\s\S]*?\]/, 'the service worker leaves /capabilities to the network: a stale copy would outlive a change of provider')
 })
 

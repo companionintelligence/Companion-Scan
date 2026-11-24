@@ -5,7 +5,7 @@
  * empty sidecar. `readScanMeta` reads an unparseable sidecar as `{}`, so the scan reads as filed under no Place, the world
  * refresh evicts it, and the eviction takes its patches, comments and jobs with it. The verifier of the frame-identity
  * package reproduced exactly that with a 15 ms gap, and showed the same gap passes with a temporary file and a rename.
- * The behaviour itself is run by tests/unit/deno/frame_generations_route.test.ts (the scan sent back and forth between two
+ * The behaviour itself is run by tests/unit/server/frame_generations_route.test.ts (the scan sent back and forth between two
  * Places while their worlds are read); this file keeps the writers from going back to the shape that loses records.
  *
  * Run: node --experimental-strip-types --no-warnings --test tests/unit/node/wp-08s-sidecar-atomic.test.ts
@@ -22,17 +22,17 @@ test('the atomic writer writes a temporary file beside the target and renames it
   assert.ok(start > 0, 'server/main.ts has writeJsonAtomic')
   const body = main.slice(start, main.indexOf('\n}\n', start))
   assert.match(body, /const tmp = `\$\{path\}\.\$\{crypto\.randomUUID\(\)\}\.tmp`/, 'a temporary name beside the target, unique per write, not ending in .json')
-  assert.match(body, /await Deno\.writeTextFile\(tmp, /)
-  assert.match(body, /await Deno\.rename\(tmp, path\)/, 'the rename is the one step a reader can see')
-  assert.match(body, /await Deno\.remove\(tmp\)\.catch\(\(\) => \{\}\)/, 'a failed write leaves no temporary file behind')
+  assert.match(body, /await fs\.writeFile\(tmp, /)
+  assert.match(body, /await fs\.rename\(tmp, path\)/, 'the rename is the one step a reader can see')
+  assert.match(body, /await fs\.rm\(tmp\)\.catch\(\(\) => \{\}\)/, 'a failed write leaves no temporary file behind')
   assert.match(body, /throw err/, 'and the failure is still the caller\'s')
 })
 
 test('every place that rewrites a scan sidecar goes through it', () => {
   // The four writers: the ingest metadata, the splat alignment's calibration, a scan reassigned to another Place, and a merge.
   assert.equal(main.split('writeJsonAtomic(').length - 1, 5, 'the definition and four uses')
-  assert.doesNotMatch(main, /Deno\.writeTextFile\(scanMetaPath\(/, 'no sidecar is written in place through scanMetaPath')
-  assert.doesNotMatch(main, /Deno\.writeTextFile\((metaPath|path), JSON\.stringify\(meta/, 'nor through a path read from the scan directory')
+  assert.doesNotMatch(main, /fs\.writeFile\(scanMetaPath\(/, 'no sidecar is written in place through scanMetaPath')
+  assert.doesNotMatch(main, /fs\.writeFile\((metaPath|path), JSON\.stringify\(meta/, 'nor through a path read from the scan directory')
 })
 
 test('a merge takes the frames\' photos before it removes the merged Place\'s folder, and a refused merge removes nothing', () => {

@@ -12,7 +12,7 @@
  *  3. THE GHOSTS. A ghost sits where the stored point lands in this session, and the line from the marker to it is exactly the
  *     point's residual, which is the figure the card prints.
  *  4. THE STAGE LIST AND THE BUTTON. What each progress dot and the one check-point button show, for every stage.
- *  5. PURITY. The module reads no DOM, no Deno API, no clock, no randomness and no scene, and imports only the world modules
+ *  5. PURITY. The module reads no DOM, no Node API, no clock, no randomness and no scene, and imports only the world modules
  *     and the flow's own copy (ADR 0002).
  *
  * The sentences themselves are held in tests/unit/node/wp-constellation-copy.test.ts.
@@ -550,11 +550,11 @@ test('adding a check point is not offered while the pair is under the minimum, t
 
 const stripComments = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
 
-test('the flow and its copy read no DOM, no Deno API, no clock, no randomness and no scene, and import only the world modules and each other (ADR 0002)', () => {
+test('the flow and its copy read no DOM, no Node API, no clock, no randomness and no scene, and import only the world modules and each other (ADR 0002)', () => {
   for (const file of ['src/ar/constellation-flow.ts', 'src/ar/constellation-copy.ts']) {
     const source = stripComments(readFileSync(join(ROOT, file), 'utf8'))
     for (const [what, pattern] of [
-      ['a Deno API', /\bDeno\b/],
+      ['a Node API', /\bfrom\s+['"]node:|\bprocess\.|\bBuffer\./],
       ['the document or window', /\b(document|window|navigator|location|localStorage|sessionStorage|indexedDB)\b/],
       ['a DOM type', /\b(HTML\w*Element|TouchEvent|PointerEvent)\b/],
       ['the clock', /\b(Date\.now|new Date|performance\.now|setTimeout|setInterval|requestAnimationFrame)\b/],

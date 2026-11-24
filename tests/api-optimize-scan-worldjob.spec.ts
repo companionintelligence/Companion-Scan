@@ -8,7 +8,7 @@
  * for it (Acceptance Criteria, ticket 0003).
  *
  * Browser-free (request fixture only). Run under the `api` project against a
- * directly reachable Deno server:
+ * directly reachable server:
  *
  *   INFERENCE_MODE=mock npm run server
  *   API_URL=http://localhost:8000 npx playwright test --project=api optimize-scan-worldjob

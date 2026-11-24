@@ -25,10 +25,12 @@ import {
   runWithDeadline,
   writeRunnerManifest,
 } from '../run_with_deadline.ts'
+import * as fs from 'node:fs/promises'
+import { readBytes } from '../fs_util.ts'
 
-// Lazy-imported inside runLingBotMapReconstruction so the Deno-only unit
-// test (lingbot_map.test.ts) doesn't pull in @gltf-transform/functions,
-// which eagerly loads `sharp` and breaks under Deno without npm scripts.
+// Lazy-imported inside runLingBotMapReconstruction so the unit test
+// (lingbot_map.test.ts) doesn't pull in @gltf-transform/functions, which
+// eagerly loads `sharp` and its native library at import.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _glbModule: any | null = null
 async function _getGlbBuilder() {
@@ -280,7 +282,7 @@ function boxDiagonal(xyz: ArrayLike<number>): number {
 /** Point count and extent of the worker's cloud, or null when the PLY cannot be read. */
 async function readCloudSummary(path: string): Promise<{ count: number; extent: number } | null> {
   try {
-    const cloud = parseLingBotMapPLY(await Deno.readFile(path))
+    const cloud = parseLingBotMapPLY(await readBytes(path))
     return { count: cloud.count, extent: boxDiagonal(cloud.xyz) }
   } catch {
     return null
@@ -298,7 +300,7 @@ async function readCloudSummary(path: string): Promise<{ count: number; extent: 
 async function measureCameraBaseline(sessionDir: string): Promise<number | null> {
   let frames: unknown
   try {
-    const parsed = JSON.parse(await Deno.readTextFile(`${sessionDir}/lingbot-map.poses.json`)) as { frames?: unknown }
+    const parsed = JSON.parse(await fs.readFile(`${sessionDir}/lingbot-map.poses.json`, 'utf8')) as { frames?: unknown }
     frames = parsed.frames
   } catch {
     return null
@@ -352,7 +354,7 @@ async function recordLingBotVerdict(
     next.remediation = report.remediation
   }
   try {
-    await Deno.writeTextFile(manifestFile, JSON.stringify(next, null, 2))
+    await fs.writeFile(manifestFile, JSON.stringify(next, null, 2))
   } catch (e) {
     // The in-memory result still carries the verdict, and the job reports it.
     console.warn('[lingbot-map] could not record the quality verdict in the manifest:', e)
@@ -368,7 +370,7 @@ async function readDegenerateVerdict(
   manifestFile: string,
 ): Promise<{ quality: unknown; remediation: unknown } | null> {
   try {
-    const manifest = JSON.parse(await Deno.readTextFile(manifestFile)) as {
+    const manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8')) as {
       quality?: { degenerate?: unknown } | null
       remediation?: unknown
     }
@@ -403,7 +405,7 @@ async function recordLingBotTimeout(manifestFile: string, error: string): Promis
     if (verdict.remediation !== undefined) manifest.remediation = verdict.remediation
   }
   try {
-    await Deno.writeTextFile(manifestFile, JSON.stringify(manifest, null, 2))
+    await fs.writeFile(manifestFile, JSON.stringify(manifest, null, 2))
   } catch (e) {
     console.warn('[lingbot-map] could not record the timeout in the manifest:', e)
   }
@@ -448,11 +450,11 @@ export async function runLingBotMapReconstruction(
     return _failure(opts.sessionDir, 'invalid session directory', 2)
   }
 
-  const pythonName = opts.python ?? Deno.env.get('LINGBOT_MAP_PYTHON') ?? 'python3'
-  const modelPath = opts.modelPath ?? Deno.env.get('LINGBOT_MAP_MODEL_PATH') ?? ''
+  const pythonName = opts.python ?? process.env.LINGBOT_MAP_PYTHON ?? 'python3'
+  const modelPath = opts.modelPath ?? process.env.LINGBOT_MAP_MODEL_PATH ?? ''
   // Named for the LINGBOT_MAP_* family it joins, and matching BRUSH_DEVICE's
   // <tool>_DEVICE shape rather than inventing a new one (ADR 0001).
-  const device = opts.device ?? Deno.env.get('LINGBOT_MAP_DEVICE') ?? 'auto'
+  const device = opts.device ?? process.env.LINGBOT_MAP_DEVICE ?? 'auto'
   if (!isComputeDevice(device)) {
     // Gated before the spawn, like isValidSessionDir above: the worker's
     // argparse would reject it too, but as an exit-2 with no manifest, which
@@ -473,7 +475,7 @@ export async function runLingBotMapReconstruction(
   // by the scale phase and the window, not by session length.
   const frameCap = opts.maxFrames && opts.maxFrames > 0
     ? opts.maxFrames
-    : Number(Deno.env.get('LINGBOT_MAP_MAX_FRAMES') ?? '16')
+    : Number(process.env.LINGBOT_MAP_MAX_FRAMES ?? '16')
 
   // The interpreter resolves through the table GET /capabilities reports
   // (option or LINGBOT_MAP_PYTHON, else python3 on PATH). A missing one is a
@@ -497,8 +499,8 @@ export async function runLingBotMapReconstruction(
       // and upstream's limited-VRAM section uses it too. Measured: without it the
       // allocator fragments and a run that fits still fails.
       env: {
-        ...Deno.env.toObject(),
-        PYTORCH_CUDA_ALLOC_CONF: Deno.env.get('PYTORCH_CUDA_ALLOC_CONF') ??
+        ...process.env,
+        PYTORCH_CUDA_ALLOC_CONF: process.env.PYTORCH_CUDA_ALLOC_CONF ??
           'expandable_segments:True',
       },
       stdout: 'piped',
@@ -534,7 +536,7 @@ export async function runLingBotMapReconstruction(
   let deviceVendor: string | undefined
   let manifestBody: Record<string, unknown> | null = null
   try {
-    const manifest = JSON.parse(await Deno.readTextFile(manifestFile)) as Record<string, unknown>
+    const manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8')) as Record<string, unknown>
     manifestBody = manifest
     const status = manifest.status
     if (status === 'ok' || status === 'skipped' || status === 'error') {
@@ -580,7 +582,7 @@ export async function runLingBotMapReconstruction(
   if (manifestStatus === 'ok' && opts.glbSidecarPath) {
     try {
       const buildLingBotMapGlb = await _getGlbBuilder()
-      const ply = await Deno.readFile(`${opts.sessionDir}/lingbot-map.point-cloud.ply`)
+      const ply = await readBytes(`${opts.sessionDir}/lingbot-map.point-cloud.ply`)
       const glb = await buildLingBotMapGlb(ply, {
         source: 'lingbot-map',
         pointCount: 0,
@@ -588,7 +590,7 @@ export async function runLingBotMapReconstruction(
         sessionId: opts.glbExtras?.sessionId ?? '',
         manifestPath: `${opts.sessionDir}/lingbot-map.manifest.json`,
       })
-      await Deno.writeFile(opts.glbSidecarPath, glb.bytes)
+      await fs.writeFile(opts.glbSidecarPath, glb.bytes)
       glbSidecarPath = opts.glbSidecarPath
       glbPointCount = glb.pointCount
     } catch (e) {

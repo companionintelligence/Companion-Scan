@@ -1,7 +1,7 @@
 /**
  * The app's own URL rules for main.ts's static handler (production, the Hub install). vite.config.ts's dev middleware
  * keeps a copy of `rewriteEditorPath` (the Docker image builds the bundle in a stage without server/), and
- * tests/unit/deno/server_core_editor_route.test.ts holds the two bodies equal, so `/editor` cannot work on one server and
+ * tests/unit/server/server_core_editor_route.test.ts holds the two bodies equal, so `/editor` cannot work on one server and
  * not the other: `/editor/?world=…` used to reach the scanner start screen on `vite dev` (FN-070).
  */
 

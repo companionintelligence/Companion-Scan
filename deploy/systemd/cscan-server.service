@@ -1,8 +1,8 @@
-# Companion Scan — Deno API server (inference, scan storage, worlds, jobs).
+# Companion Scan — the API server on Node (inference, scan storage, worlds, jobs).
 # Installed by scripts/install-services.sh, which substitutes __REPO__ and
-# __DENO__ with absolute paths (systemd user units do not get your login PATH).
+# __NODE__ with absolute paths (systemd user units do not get your login PATH).
 [Unit]
-Description=Companion Scan API server (Deno, :8000)
+Description=Companion Scan API server (Node, :8000)
 After=network-online.target
 
 [Service]
@@ -11,7 +11,7 @@ EnvironmentFile=%h/.config/cscan/env
 # Soft gate: warn if Ollama isn't up yet, but start anyway — the engine
 # degrades gracefully and /health reports engineLoadState.
 ExecStartPre=-__REPO__/scripts/wait-for-url.sh ${OLLAMA_HOST}/api/tags 60 soft
-ExecStart=__DENO__ run --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run server/main.ts
+ExecStart=__NODE__ server/main.ts
 Restart=on-failure
 RestartSec=3
 SyslogIdentifier=cscan-server

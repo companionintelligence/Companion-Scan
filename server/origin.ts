@@ -92,7 +92,7 @@ export const FALLBACK_HOSTNAME = 'localhost'
 /** Where the host name came from, in the words the boot log prints. */
 export type HostnameSource = 'env' | 'tailscale cli' | 'cert file' | 'default'
 
-/** What the resolver may look at. main.ts passes Deno's environment, `tailscale status --json` and the working folder. */
+/** What the resolver may look at. main.ts passes the process environment, `tailscale status --json` and the working folder. */
 export interface HostnameProbes {
   env: (name: string) => string | undefined
   /** `Self.DNSName` from `tailscale status --json`, or null when tailscale is absent, stopped or slow. */

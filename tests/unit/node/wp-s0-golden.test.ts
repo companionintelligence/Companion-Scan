@@ -20,8 +20,8 @@
  *     is already on disk, in IndexedDB and in a service worker's queue, so they stay as they are and are
  *     compared with literal expectations.
  *
- * It needs no `deno` binary: the server modules it imports (`server/calibration_fields.ts`,
- * `server/wp-a-projects.ts`) reach `Deno` only inside functions this file does not call.
+ * It starts no server: the server modules it imports (`server/calibration_fields.ts`,
+ * `server/wp-a-projects.ts`) touch the file system only inside functions this file does not call.
  *
  * Run: npm run test:wave (the `wp-` prefix is what that script globs, and `npm run verify` runs it), or
  *      node --experimental-strip-types --no-warnings --test tests/unit/node/wp-s0-golden.test.ts

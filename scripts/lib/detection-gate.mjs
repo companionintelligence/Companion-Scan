@@ -25,7 +25,7 @@
  */
 export const TRIGGER_FILES = [
   'server/inference.ts', // default model resolution, Ollama request options (num_ctx, temperature)
-  'server/prompt.ts', // detection prompt + parser — the Deno server's copy
+  'server/prompt.ts', // detection prompt + parser — the server's copy
   'src/inference/prompt.ts', // detection prompt + parser — the browser copy; sync.test.ts keeps the two identical
   'src/shared/model-catalog.ts', // DEFAULT_MODEL_TAG — the production default model
   'src/shared/ollama-model.ts', // KNOWN_VISION_MODELS — the silent-fallback list a missing model resolves through

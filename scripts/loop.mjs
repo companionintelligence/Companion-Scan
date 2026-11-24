@@ -68,7 +68,7 @@ const TIERS = [
     steps: [
       ['npx', ['tsc', '--noEmit']],
       ['npm', ['run', '--silent', 'typecheck:tests']],
-      ['deno', ['task', 'check']],
+      ['npm', ['run', '--silent', 'typecheck:server']],
     ],
   },
   {
@@ -81,7 +81,7 @@ const TIERS = [
     // page, so it answers in a second and without a Vite server. T3 still
     // measures the DOM and holds the model to it.
     steps: [
-      ['deno', ['task', 'test']],
+      ['npm', ['run', '--silent', 'test:server']],
       ['npm', ['run', '--silent', 'test:startup:budget']],
     ],
   },

@@ -8,7 +8,7 @@
  *
  * Requirements:
  *   - Vite dev server (VITE_URL)
- *   - Deno server with INFERENCE_MODE=mock behind the Vite proxy
+ *   - server with INFERENCE_MODE=mock behind the Vite proxy
  *
  * Run: npx playwright test --project=chromium-mock mock-xr8-scan
  */

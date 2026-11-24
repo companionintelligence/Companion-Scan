@@ -40,7 +40,7 @@
  * **Validated range.** Against 600 simulated pairs of fits per cell (a ring of cameras, radius 0.3 to 2 m, 8 to 36 frames, 1 to 5 cm
  * of noise per axis on both the recorded and the solved positions, nothing left out) the scatter of the ratio of two fits' sizes and
  * of the difference of their turns was within 8% of what these give for the two, in every one of seven cells (the worst is the turn at
- * a radius of 0.35 m, 2.13 degrees against 1.98); tests/unit/deno/sfm_fit.test.ts runs a seeded version and holds it to 15%.
+ * a radius of 0.35 m, 2.13 degrees against 1.98); tests/unit/server/sfm_fit.test.ts runs a seeded version and holds it to 15%.
  * Through {@link fitWithTrim}, with `rho` as it gives it, 300 pairs a cell on rings of radius 0.8 and 1.2 m: within 11% up to 4 cm of
  * noise per axis (5 to 6% of the frames left out), within 14% at 5 cm (16 to 18% left out), and 20 to 30% low at 6 cm (27 to 30%
  * left out), where a registration is near the edge of being refused for too few agreeing frames anyway (at 7 cm 25 of 300 pairs
@@ -56,7 +56,7 @@
  * bends) is in the residual and so in the estimate, but the formula treats it as independent and under-counts what a bend does
  * to the turn. It is a measure of how well the path can fix these, not a promise about the proposal.
  *
- * Pure: no Deno API, no file access.
+ * Pure: no Node API, no file access.
  */
 import type { Vec3Tuple } from '../splat/splat_align.ts'
 import {

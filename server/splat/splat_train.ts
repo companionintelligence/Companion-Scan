@@ -21,7 +21,7 @@
  *   Brush does not emit a manifest — this driver writes it.
  */
 
-import { resolve } from '@std/path'
+import { resolve } from 'node:path'
 import { locateTool, runnerToolLookup, toolSkip } from '../exec_probe.ts'
 import {
   budgetFromEnv,
@@ -34,14 +34,16 @@ import {
 } from '../run_with_deadline.ts'
 import { buildDatasetWithAutoPoses } from './auto_poses.ts'
 // The manifest type lives in src/world/manifests.ts, not here — see that
-// file's header (it's the canonical, Deno-API-free home so the browser
-// viewer can type-import it without dragging this file's `Deno.*` calls into
+// file's header (it's the canonical, Node-API-free home so the browser
+// viewer can type-import it without dragging this file's `node:*` imports into
 // its DOM-lib type-check program). Re-exported below so
 // `import type { SplatTrainManifest } from './splat_train.ts'` still works.
 import type { SplatTrainManifest } from '../../src/world/types.ts'
 export type { SplatTrainManifest }
 import { degenerateSplatRemediation, measureSplatQuality, scaleFrameOf } from './splat_quality.ts'
 import type { SplatQuality } from './splat_quality.ts'
+import * as fs from 'node:fs/promises'
+import { readBytes } from '../fs_util.ts'
 
 /**
  * `SplatTrainManifest` plus the two fields this stage learned to write after
@@ -183,8 +185,8 @@ export { isValidSessionDir }
  * without it this names the candidate without probing, as it always did.
  */
 export function resolveParams(opts: SplatTrainRunOptions, resolvedBrushBin?: string) {
-  const brushBin = resolvedBrushBin ?? opts.brushBin ?? Deno.env.get('BRUSH_BIN') ?? DEFAULT_BRUSH_BIN
-  const device = opts.device ?? Deno.env.get('BRUSH_DEVICE') ?? ''
+  const brushBin = resolvedBrushBin ?? opts.brushBin ?? process.env.BRUSH_BIN ?? DEFAULT_BRUSH_BIN
+  const device = opts.device ?? process.env.BRUSH_DEVICE ?? ''
   const trainIters = opts.trainIters ?? intFromEnv('BRUSH_TRAIN_ITERS', 15000)
   const shDegree = opts.shDegree ?? intFromEnv('BRUSH_SH_DEGREE', 2)
   const maxResolution = opts.maxResolution ?? intFromEnv('BRUSH_MAX_RES', 1280)
@@ -285,7 +287,7 @@ export async function runSplatTrain(opts: SplatTrainRunOptions): Promise<SplatTr
   // absolute by construction; do not reintroduce a relative one.
   const exportDir = `${dataset.datasetDir}/exports`
   try {
-    await Deno.mkdir(exportDir, { recursive: true })
+    await fs.mkdir(exportDir, { recursive: true })
   } catch {
     // already exists
   }
@@ -356,7 +358,7 @@ export async function runSplatTrain(opts: SplatTrainRunOptions): Promise<SplatTr
   // 5. Land the .ply into SCANS_DIR and count gaussians.
   let plyBytes: Uint8Array
   try {
-    plyBytes = await Deno.readFile(exported.path)
+    plyBytes = await readBytes(exported.path)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return _finish(manifestPath, {
@@ -390,7 +392,7 @@ export async function runSplatTrain(opts: SplatTrainRunOptions): Promise<SplatTr
     }, spawnResult.code, spawnResult.stderr)
   }
   const gaussianCount = countedGaussians
-  await Deno.writeFile(opts.outputPlyPath, plyBytes)
+  await fs.writeFile(opts.outputPlyPath, plyBytes)
 
   // Best-effort compressed variant: Brush does not emit one by default, but if
   // a *.compressed.ply landed in the export dir, carry it alongside.
@@ -399,7 +401,7 @@ export async function runSplatTrain(opts: SplatTrainRunOptions): Promise<SplatTr
     const compressed = await findExportedPly(exportDir, /\.compressed\.ply$/)
     if (compressed) {
       try {
-        await Deno.writeFile(opts.outputCompressedPlyPath, await Deno.readFile(compressed.path))
+        await fs.writeFile(opts.outputCompressedPlyPath, await readBytes(compressed.path))
         compressedPlyPath = opts.outputCompressedPlyPath
       } catch {
         // non-fatal
@@ -481,8 +483,8 @@ async function findExportedPly(
 ): Promise<{ path: string; iter: number } | null> {
   let best: { path: string; iter: number } | null = null
   try {
-    for await (const entry of Deno.readDir(exportDir)) {
-      if (!entry.isFile || !pattern.test(entry.name)) continue
+    for (const entry of await fs.readdir(exportDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !pattern.test(entry.name)) continue
       // For the primary lookup, ignore compressed variants.
       if (pattern.source === /\.ply$/.source && /\.compressed\.ply$/.test(entry.name)) continue
       const iterMatch = entry.name.match(/(\d+)/)

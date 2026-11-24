@@ -7,7 +7,7 @@
  * estimate far enough to smear a per-timestep reconstruction. These assert that
  * the low-RTT median does not move.
  *
- * Lives in the node suite rather than the Deno one only because the module sits
+ * Lives in the node suite rather than the server one only because the module sits
  * under src/ with the browser code it ships alongside.
  *
  * Run: npm run test:clock-sync

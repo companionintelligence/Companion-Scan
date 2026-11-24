@@ -61,7 +61,7 @@ const read = (path: string) => readFileSync(join(ROOT, path), 'utf8')
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────────────────────
 
-/** The pair tests/unit/deno/anchor_calibration.test.ts uses, in the first session's own frame. */
+/** The pair tests/unit/server/anchor_calibration.test.ts uses, in the first session's own frame. */
 const LANDMARK = { x: 1.5, y: -1.2, z: -0.4 }
 const HEADING_MARKER = { x: 3.1, y: -1.2, z: 1.9 }
 const SEPARATION_M = twoPointSeparationM(LANDMARK, HEADING_MARKER)

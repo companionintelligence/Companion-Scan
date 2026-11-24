@@ -47,6 +47,8 @@ import {
   UNPUBLISHED_UPLOAD_MAX_AGE_MS,
 } from './session_deletion.ts'
 import { PART_SUFFIX } from './world/scan_store.ts'
+import * as fs from 'node:fs/promises'
+import { errorKind, isNotFound } from './fs_util.ts'
 
 /**
  * How long a delete waits for the upload's own optimize-scan job to finish before it answers 409. Adopted, not
@@ -125,14 +127,14 @@ type Outcome = 'removed' | 'absent' | 'failed'
 /** Removes one path. A path that is already gone is `absent`, which is as good as removed. A link is removed as a link. */
 async function removeEntry(path: string, recursive: boolean): Promise<Outcome> {
   try {
-    await Deno.remove(path, { recursive })
+    await fs.rm(path, { recursive })
     return 'removed'
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return 'absent'
+    if (isNotFound(error)) return 'absent'
     // A name the file system cannot hold names no file: the derived names are longer than the GLB's (".splat-finish.manifest.json"),
     // so a scan with a very long file name asks for one that cannot exist, and that is as good as absent, not a failure to remove.
     if ((error as { code?: string }).code === 'ENAMETOOLONG') return 'absent'
-    console.error(`[scan delete] could not remove a file (${error instanceof Error ? error.name : 'Error'})`)
+    console.error(`[scan delete] could not remove a file (${errorKind(error)})`)
     return 'failed'
   }
 }
@@ -272,7 +274,7 @@ export async function deleteScan(filename: string, deps: ScanDeletionDeps): Prom
       },
     }
   } catch (error) {
-    console.error(`[scan delete] stopped on an error (${error instanceof Error ? error.name : 'Error'})`)
+    console.error(`[scan delete] stopped on an error (${errorKind(error)})`)
     return { status: 500, body: { error: 'Could not delete the scan. Nothing was reported as removed that was not.' } }
   } finally {
     lift()
@@ -310,7 +312,7 @@ export interface DeleteAllDeps {
 /** Names directly under `scansDir`, read once, so that removing them does not disturb the listing. */
 async function topLevelEntries(scansDir: string): Promise<Array<{ name: string; isFile: boolean; isDirectory: boolean }>> {
   const entries: Array<{ name: string; isFile: boolean; isDirectory: boolean }> = []
-  for await (const entry of Deno.readDir(scansDir)) entries.push({ name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory })
+  for (const entry of await fs.readdir(scansDir, { withFileTypes: true })) entries.push({ name: entry.name, isFile: entry.isFile(), isDirectory: entry.isDirectory() })
   return entries
 }
 
@@ -364,7 +366,7 @@ export async function deleteAllScans(deps: DeleteAllDeps, now: number = Date.now
         outcome = await removeEntry(`${deps.scansDir}/${entry.name}`, true)
       } else if (entry.isFile && entry.name.endsWith(`.glb${PART_SUFFIX}`)) {
         // An upload that is still arriving keeps its file. One that was cut short will never be published, and is camera data.
-        const info = await Deno.stat(`${deps.scansDir}/${entry.name}`).catch(() => null)
+        const info = await fs.stat(`${deps.scansDir}/${entry.name}`).catch(() => null)
         if (info?.mtime && now - info.mtime.getTime() > UNPUBLISHED_UPLOAD_MAX_AGE_MS) {
           outcome = await removeEntry(`${deps.scansDir}/${entry.name}`, false)
         }
@@ -390,7 +392,7 @@ export async function deleteAllScans(deps: DeleteAllDeps, now: number = Date.now
     await deps.removeAllFromWorlds()
     return { status: 200, body: { ok: true, deleted, keyframeSessions: sessions.deleted.length, summaries: summaries.removed } }
   } catch (error) {
-    console.error(`[scans clear] stopped on an error (${error instanceof Error ? error.name : 'Error'})`)
+    console.error(`[scans clear] stopped on an error (${errorKind(error)})`)
     return { status: 500, body: { error: 'Could not clear the scans. Nothing was reported as removed that was not.' } }
   } finally {
     lift()

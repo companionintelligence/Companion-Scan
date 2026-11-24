@@ -10,7 +10,7 @@
  * one and listed as such instead of standing in the Place as if nothing had changed.
  *
  * This file is imported by the server (`server/place_frames.ts`, `server/wp-a-projects.ts`) and is meant for the
- * browser's replace flow as well, so it has no Deno or DOM reference (ADR 0002). It holds the rules that must be
+ * browser's replace flow as well, so it has no Node or DOM reference (ADR 0002). It holds the rules that must be
  * the same on both sides: which writes are a new generation, what a replacing write has to say about itself, how
  * the history is kept, which scans are in a Place frame at all, and the shape of the answers the routes give.
  *

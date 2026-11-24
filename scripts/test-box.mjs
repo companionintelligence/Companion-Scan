@@ -4,7 +4,7 @@
  *
  *   npm run test:box
  *
- * Boots an isolated Deno API (mock inference, :8100, data under .test-run/)
+ * Boots an isolated API server (node server/main.ts: mock inference, :8100, data under .test-run/)
  * plus a Vite dev server (:5273) proxying to it, generates the test corpus if
  * missing, seeds the world, runs the `api` + `chromium-mock` Playwright
  * projects against them, and tears everything down. Never touches the
@@ -18,7 +18,6 @@
  */
 import { spawn, execSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, openSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -45,19 +44,6 @@ const API_URL = `http://localhost:${API_PORT}`
 const VITE_URL = `https://localhost:${VITE_PORT}`
 const RUN_DIR = join(root, '.test-run')
 
-const denoBin = (() => {
-  try {
-    // `command -v` is POSIX-only; Windows has `where`, which can return several
-    // matches (one per line) — take the first.
-    const out = isWindows
-      ? execSync('where deno').toString()
-      : execSync('command -v deno', { shell: '/bin/sh' }).toString()
-    const first = out.split(/\r?\n/).map((l) => l.trim()).find(Boolean)
-    if (first) return first
-  } catch { /* not on PATH */ }
-  return join(homedir(), '.deno', 'bin', isWindows ? 'deno.exe' : 'deno')
-})()
-
 const children = []
 function shutdown(code) {
   for (const child of children) {
@@ -80,8 +66,8 @@ process.on('SIGTERM', () => shutdown(143))
 function launch(name, cmd, args, env) {
   // Redirect stdout+stderr to a log file rather than a pipe: draining a child's
   // stdout through the parent event loop stalls under the chromium-mock request
-  // burst, and once the pipe buffer fills Deno's blocking console.log wedges the
-  // API server mid-request. A file fd never backpressures the child.
+  // burst, and once the pipe buffer fills the server's console.log (a blocking
+  // write to a pipe on Linux) wedges it mid-request. A file fd never backpressures the child.
   const logPath = join(RUN_DIR, `${name}.log`)
   const logFd = openSync(logPath, 'a')
   console.log(`[test-box] ${name} logs → ${logPath}`)
@@ -153,13 +139,14 @@ if (!existsSync(join(root, 'test-data', 'cv', 'expected.json'))) {
 }
 
 // 2. Servers
-launch('deno', denoBin, ['run', '--allow-net', '--allow-read', '--allow-write', '--allow-env', '--allow-ffi', '--allow-run', 'server/main.ts'], {
+// The same Node that runs this script: the repo's engines field already holds it to Node 26.
+launch('server', process.execPath, ['server/main.ts'], {
   INFERENCE_MODE: 'mock',
   PORT: String(API_PORT),
   SCANS_DIR: join(RUN_DIR, 'scans'),
   WORLDS_DIR: join(RUN_DIR, 'worlds'),
   SUMMARIES_DIR: join(RUN_DIR, 'summaries'),
-  // Without this, the isolated Deno's viteBaseUrlFromEnv() defaults to 5173 even
+  // Without this, the isolated server's viteBaseUrlFromEnv() defaults to 5173 even
   // though this run's real Vite is on TEST_BOX_VITE_PORT — its share links/QR
   // output would then leak the wrong port instead of this instance's own.
   VITE_PORT: String(VITE_PORT),
@@ -190,14 +177,14 @@ launch('vite', 'npx', ['vite', '--config', NOWATCH_CONFIG, '--host', '--port', S
 
 // TLS probe against the dev cert (hostname mismatch on localhost is expected)
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
-await waitFor(`${API_URL}/health`, 'deno api')
+await waitFor(`${API_URL}/health`, 'api server')
 await waitFor(`${VITE_URL}/health`, 'vite proxy')
 
 try {
   // 3. Seed the world (api specs also upload their own; editor specs want a populated world).
   // Async spawn, not execSync: a blocked parent loop stops draining the servers'
-  // stdout pipes, and once the 64KB pipe buffer fills, Deno's blocking console.log
-  // wedges the API server mid-request.
+  // stdout pipes, and once the 64KB pipe buffer fills, the server's blocking console.log
+  // wedges it mid-request.
   await new Promise((resolve, reject) => {
     const seed = spawnCompat('node', ['scripts/seed-test-homes.mjs'], {
       cwd: root,

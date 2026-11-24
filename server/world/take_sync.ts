@@ -18,7 +18,7 @@
  * ADR 0005 rule 3 is explicit that a value naming a verification must be backed
  * by one.
  *
- * Lives outside `main.ts` so it is unit-testable without `Deno.serve`.
+ * Lives outside `main.ts` so it is unit-testable without `serve(...)`.
  */
 import { DEFAULT_SYNC_TOLERANCE_MS, type TakeSync } from '../../src/world/types.ts'
 

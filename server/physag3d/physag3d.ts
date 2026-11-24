@@ -48,13 +48,17 @@
  * start with the glTF magic. The child gets an allowlisted environment (`CHILD_ENV_NAMES`), so none of the server's
  * tokens reach the worker, which has a shell.
  */
-import { isAbsolute, join, relative, resolve, SEPARATOR } from '@std/path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { locateTool, runnerToolLookup } from '../exec_probe.ts'
 import { describeBudget, KILL_GRACE_MS, MAX_TIMER_MS, runWithDeadline } from '../run_with_deadline.ts'
 import { isServerSessionId, sessionDirPath } from '../session_id.ts'
 import { stderrTail } from '../splat/splat_train.ts'
 import { KEYFRAME_FILE_RE, queueKeyframeWrite } from '../wp-a-keyframes.ts'
 import { CASE_SOURCE_SUFFIX, holdSessionFrames, isAssetId, writeCaseSource } from './asset_files.ts'
+import * as fs from 'node:fs/promises'
+import type { Stats } from 'node:fs'
+import { isNotFound } from '../fs_util.ts'
+import type { FileHandle } from 'node:fs/promises'
 
 // ── The request ─────────────────────────────────────────────────────────────
 
@@ -103,7 +107,7 @@ export type EnvReader = (name: string) => string | undefined
 /** The process environment, with a read the process may not make taken as unset, as `budgetFromEnv` takes it. */
 const processEnv: EnvReader = (name) => {
   try {
-    return Deno.env.get(name)
+    return process.env[name]
   } catch {
     return undefined
   }
@@ -228,15 +232,15 @@ export function runDeadlineMs(budgetSeconds: number): number {
 export type CaseState = 'new' | 'prepared' | 'attempted' | 'unknown'
 
 export async function inspectCase(caseDir: string): Promise<CaseState> {
-  let info: Deno.FileInfo
+  let info: Stats
   try {
-    info = await Deno.lstat(caseDir)
+    info = await fs.lstat(caseDir)
   } catch (err) {
-    return err instanceof Deno.errors.NotFound ? 'new' : 'unknown'
+    return isNotFound(err) ? 'new' : 'unknown'
   }
-  if (!info.isDirectory) return 'unknown'
+  if (!info.isDirectory()) return 'unknown'
   const names = new Set<string>()
-  for await (const entry of Deno.readDir(caseDir)) names.add(entry.name)
+  for (const entry of await fs.readdir(caseDir, { withFileTypes: true })) names.add(entry.name)
   if (names.size === 0) return 'new'
   if (names.has('execution.json')) return 'attempted'
   if (names.has('identity.json')) return 'prepared'
@@ -260,17 +264,17 @@ export async function resolveCaseFile(
   let root: string
   let real: string
   try {
-    root = await Deno.realPath(caseDir)
-    real = await Deno.realPath(isAbsolute(listed) ? listed : join(root, listed))
+    root = await fs.realpath(caseDir)
+    real = await fs.realpath(isAbsolute(listed) ? listed : join(root, listed))
   } catch {
     return { ok: false, problem: 'absent' }
   }
   const rel = relative(root, real)
-  if (rel === '' || rel === '..' || rel.startsWith(`..${SEPARATOR}`) || isAbsolute(rel)) {
+  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     return { ok: false, problem: 'outside the case folder' }
   }
-  const info = await Deno.stat(real).catch(() => null)
-  if (!info?.isFile) return { ok: false, problem: 'not a file' }
+  const info = await fs.stat(real).catch(() => null)
+  if (!info?.isFile()) return { ok: false, problem: 'not a file' }
   return { ok: true, path: real }
 }
 
@@ -322,7 +326,6 @@ const MAX_PATH = 1024
 
 function text(value: unknown, max: number): string | null {
   if (typeof value !== 'string') return null
-  // deno-lint-ignore no-control-regex
   const clean = value.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim()
   if (!clean) return null
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean
@@ -569,8 +572,8 @@ async function runSteps(opts: PhysAg3DRunOptions, progress: { runAttempted: bool
       // has taken the keyframe (so nothing is copied), and one that comes after finds this run holding the session.
       const prepared = await queueKeyframeWrite(sessionDir, async () => {
         // The keyframe can be gone since the request: the retention purge, or a deleted session.
-        const image = await Deno.lstat(imagePath).catch(() => null)
-        if (!image?.isFile || image.isSymlink) return null
+        const image = await fs.lstat(imagePath).catch(() => null)
+        if (!image?.isFile() || image.isSymbolicLink()) return null
         await writeCaseSource(caseParent, opts.assetId, { sessionId, keyframe: file })
         return await run(buildPrepareArgs(script, imagePath, configPath, caseDir), STEP_DEADLINE_MS)
       })
@@ -616,7 +619,7 @@ async function runSteps(opts: PhysAg3DRunOptions, progress: { runAttempted: bool
     exitCode: typeof said['exit_code'] === 'number' ? said['exit_code'] : null,
   }
 
-  const deliveryRaw = await Deno.readTextFile(join(caseDir, 'delivery.json')).catch(() => null)
+  const deliveryRaw = await fs.readFile(join(caseDir, 'delivery.json'), 'utf8').catch(() => null)
   const parsed = deliveryRaw === null ? null : parseDelivery(deliveryRaw)
   if (!parsed?.ok) {
     const why = parsed
@@ -731,12 +734,12 @@ export function planCommand(stdout: string): string[] | null {
 }
 
 async function isFile(path: string): Promise<boolean> {
-  return (await Deno.stat(path).catch(() => null))?.isFile === true
+  return (await fs.stat(path).catch(() => null))?.isFile() === true
 }
 
 async function readJson(path: string): Promise<unknown> {
   try {
-    return JSON.parse(await Deno.readTextFile(path))
+    return JSON.parse(await fs.readFile(path, 'utf8'))
   } catch {
     return null
   }
@@ -746,21 +749,21 @@ async function readJson(path: string): Promise<unknown> {
 const GLB_MAGIC = [0x67, 0x6c, 0x54, 0x46]
 
 async function startsWithGlbMagic(path: string): Promise<boolean> {
-  let file: Deno.FsFile | undefined
+  let file: FileHandle | undefined
   try {
-    file = await Deno.open(path, { read: true })
+    file = await fs.open(path, 'r')
     const head = new Uint8Array(GLB_MAGIC.length)
     let got = 0
     while (got < head.length) {
-      const n = await file.read(head.subarray(got))
-      if (n === null) break
-      got += n
+      const { bytesRead } = await file.read(head, got, head.length - got)
+      if (bytesRead === 0) break
+      got += bytesRead
     }
     return got === head.length && GLB_MAGIC.every((byte, i) => head[i] === byte)
   } catch {
     return false
   } finally {
-    file?.close()
+    await file?.close()
   }
 }
 
@@ -774,18 +777,18 @@ async function landGlb(
   maxBytes: number,
 ): Promise<{ ok: true; bytes: number } | { ok: false; reason: string }> {
   if (!/\.glb$/i.test(source)) return { ok: false, reason: 'its model is not a .glb file' }
-  const size = (await Deno.stat(source)).size
+  const size = (await fs.stat(source)).size
   if (size > maxBytes) return { ok: false, reason: `its model is ${size} bytes, over the ${maxBytes}-byte cap` }
-  await Deno.mkdir(dirOf(dest), { recursive: true })
+  await fs.mkdir(dirOf(dest), { recursive: true })
   const partial = `${dest}.part`
-  await Deno.copyFile(source, partial)
-  const copied = (await Deno.stat(partial)).size
+  await fs.copyFile(source, partial)
+  const copied = (await fs.stat(partial)).size
   const magic = await startsWithGlbMagic(partial)
   if (copied > maxBytes || !magic) {
-    await Deno.remove(partial).catch(() => undefined)
+    await fs.rm(partial).catch(() => undefined)
     return { ok: false, reason: magic ? `its model is over the ${maxBytes}-byte cap` : 'its model is not a binary glTF file' }
   }
-  await Deno.rename(partial, dest)
+  await fs.rename(partial, dest)
   return { ok: true, bytes: copied }
 }
 
@@ -796,9 +799,9 @@ async function writeReport(
 ): Promise<string> {
   const report: PhysAg3DReport = { schemaVersion: 1, tool: 'physag3d', assetId, writtenAt: new Date().toISOString(), ...body }
   const path = join(assetDir, `${assetId}.delivery.json`)
-  await Deno.mkdir(assetDir, { recursive: true })
-  await Deno.writeTextFile(`${path}.part`, JSON.stringify(report, null, 2))
-  await Deno.rename(`${path}.part`, path)
+  await fs.mkdir(assetDir, { recursive: true })
+  await fs.writeFile(`${path}.part`, JSON.stringify(report, null, 2))
+  await fs.rename(`${path}.part`, path)
   return path
 }
 

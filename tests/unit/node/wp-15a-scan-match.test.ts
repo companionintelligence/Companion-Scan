@@ -1,10 +1,10 @@
 /**
- * The place-register matcher runs under Node as well as Deno.
+ * The place-register matcher runs in the server and in plain Node scripts alike.
  *
  * server/register/scan_match.ts is pure computation: points in, a proposal out. It
- * is kept free of Deno APIs on purpose, so the same code can be exercised wherever
+ * is kept free of Node APIs on purpose, so the same code can be exercised wherever
  * a test or a script wants it, and so a future worker thread or CLI can reuse it
- * without a runtime port. The full behavioural suite is tests/unit/deno/scan_match.test.ts;
+ * without a runtime port. The full behavioural suite is tests/unit/server/scan_match.test.ts;
  * this file is the proof that the module loads and answers correctly under Node, and
  * the guard that keeps it that way.
  *
@@ -67,12 +67,12 @@ test('under Node: a corridor is ambiguous, and the answer is the same twice', ()
   assert.deepEqual(matchScans({ positions: reference }, { positions: moving }), first)
 })
 
-test('the matcher source names no Deno API and imports nothing but the shared proposal types', () => {
+test('the matcher source names no Node API and imports nothing but the shared proposal types', () => {
   const source = readFileSync(join(ROOT, 'server/register/scan_match.ts'), 'utf8')
-  // Comments may talk about Deno; code may not touch it.
+  // Comments may talk about Node; code may not touch it.
   const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
-  assert.doesNotMatch(code, /\bDeno\b/)
   assert.doesNotMatch(code, /\bprocess\./)
+  assert.doesNotMatch(code, /\bBuffer\./)
   assert.doesNotMatch(code, /from 'node:/)
   const imports = [...code.matchAll(/^import\b[^;]*?from\s+'([^']+)'/gm)].map((match) => match[1])
   assert.deepEqual(imports, ['../../src/world/register-proposal.ts'])

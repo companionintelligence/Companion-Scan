@@ -4,7 +4,7 @@
  * The plane itself (meshes, textures, requests: `src/viewer/map-plane.ts`) is not here. This is the part that can
  * be checked on its own, against numbers that do not come from it: which tile holds a point, where a tile's corners
  * are in the scene, how wide a tile is on the ground, which tiles a camera can see and how many of them to ask for.
- * No DOM, no three.js, no Deno API (ADR 0002): plain numbers in, plain numbers out.
+ * No DOM, no three.js, no Node API (ADR 0002): plain numbers in, plain numbers out.
  *
  * ## Tile addressing
  *

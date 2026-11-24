@@ -11,7 +11,7 @@
 // show how much to trust it rather than presenting a bare number.
 //
 // Deliberately plain-JSON and dependency-free: it crosses a WebSocket between a browser page on
-// the phone and a Node backend, so it cannot carry class instances or reach for Deno/DOM APIs.
+// the phone and a Node backend, so it cannot carry class instances or reach for Node or DOM APIs.
 
 /** Discriminator for phone telemetry frames on the backend's existing /ws broadcast. */
 export const PHONE_TELEMETRY = 'phone-telemetry';

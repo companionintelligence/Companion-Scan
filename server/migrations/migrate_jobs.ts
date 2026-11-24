@@ -16,8 +16,8 @@
  * 0005's Schema required: None new).
  *
  * Usage:
- *   deno run --allow-read --allow-write --allow-env migrate_jobs.ts
- *   deno task migrate-jobs
+ *   node server/migrations/migrate_jobs.ts
+ *   npm run migrate:jobs
  *
  * Env (same names/defaults as main.ts's own knobs):
  *   SCANS_DIR   default ./scans   — where jobs.json and the .glb files live
@@ -44,6 +44,8 @@
 import type { Job, JobStatus } from '../jobs.ts'
 import type { WorldJob, WorldJobStatus, WorldProject } from '../../src/world/types.ts'
 import { trimWorldJobHistory } from '../world/world_job_pump.ts'
+import * as fs from 'node:fs/promises'
+import { isNotFound } from '../fs_util.ts'
 
 /** Reverse of main.ts's WORLD_JOB_STATUS_TO_LEGACY — ADR 0003's status-vocabulary table. */
 export const LEGACY_STATUS_TO_WORLD: Record<JobStatus, WorldJobStatus> = {
@@ -61,7 +63,7 @@ export const LEGACY_STATUS_TO_WORLD: Record<JobStatus, WorldJobStatus> = {
  * no job runs (wave 14 lists that for the owner). Duplicated rather than
  * imported because main.ts cannot be imported without running its
  * unconditional top-level side effects (hostname resolution, VLM engine load,
- * `Deno.serve`). Same constraint, same precedent as world_job_pump.ts
+ * `serve(...)`). Same constraint, same precedent as world_job_pump.ts
  * duplicating `MAX_JOB_HISTORY` as `MAX_WORLD_JOB_HISTORY` for the identical
  * reason (see that file's header).
  */
@@ -163,9 +165,9 @@ export async function migrateJobsToWorldJob(opts: MigrateJobsOptions): Promise<M
   // that was never actually read.
   let raw: string
   try {
-    raw = await Deno.readTextFile(jobsPath)
+    raw = await fs.readFile(jobsPath, 'utf8')
   } catch (err) {
-    if (err instanceof Deno.errors.NotFound) {
+    if (isNotFound(err)) {
       log(`[migrate-jobs] no legacy jobs.json found at ${jobsPath} — nothing to migrate.`)
       return summary
     }
@@ -189,7 +191,7 @@ export async function migrateJobsToWorldJob(opts: MigrateJobsOptions): Promise<M
 
   let world: WorldProject
   try {
-    world = JSON.parse(await Deno.readTextFile(worldPath)) as WorldProject
+    world = JSON.parse(await fs.readFile(worldPath, 'utf8')) as WorldProject
   } catch {
     throw new Error(
       `[migrate-jobs] '${worldSlug}' world not found at ${worldPath}. Start the server at least ` +
@@ -206,7 +208,7 @@ export async function migrateJobsToWorldJob(opts: MigrateJobsOptions): Promise<M
       continue
     }
     try {
-      await Deno.stat(`${scansDir}/${legacy.target}`)
+      await fs.stat(`${scansDir}/${legacy.target}`)
     } catch {
       summary.skippedMissingScan.push({ legacyId: legacy.id, target: legacy.target })
       log(`[migrate-jobs] skip (target scan no longer exists on disk): ${legacy.id} (${legacy.target})`)
@@ -222,8 +224,8 @@ export async function migrateJobsToWorldJob(opts: MigrateJobsOptions): Promise<M
     world.jobs = trimWorldJobHistory(world.jobs)
     world.updatedAt = new Date().toISOString()
     const tmp = `${worldPath}.${crypto.randomUUID()}.tmp`
-    await Deno.writeTextFile(tmp, JSON.stringify(world, null, 2))
-    await Deno.rename(tmp, worldPath)
+    await fs.writeFile(tmp, JSON.stringify(world, null, 2))
+    await fs.rename(tmp, worldPath)
     log(`[migrate-jobs] wrote ${summary.migrated.length} migrated job(s) to ${worldPath}`)
   } else {
     log(`[migrate-jobs] nothing new to migrate; ${worldPath} left untouched.`)
@@ -233,8 +235,8 @@ export async function migrateJobsToWorldJob(opts: MigrateJobsOptions): Promise<M
 }
 
 if (import.meta.main) {
-  const scansDir = Deno.env.get('SCANS_DIR') ?? './scans'
-  const worldsDir = Deno.env.get('WORLDS_DIR') ?? './worlds'
+  const scansDir = process.env.SCANS_DIR ?? './scans'
+  const worldsDir = process.env.WORLDS_DIR ?? './worlds'
   try {
     const summary = await migrateJobsToWorldJob({ scansDir, worldsDir })
     console.log(
@@ -244,6 +246,6 @@ if (import.meta.main) {
     )
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err))
-    Deno.exit(1)
+    process.exit(1)
   }
 }

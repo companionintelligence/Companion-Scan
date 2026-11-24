@@ -34,11 +34,13 @@
  *   - `fl_x`/`fl_y` are derived per-frame from the recorded `fovYDeg`
  *     (or `fx`/`fy` when the client supplied them) scaled to the real pixels.
  *
- * The module is pure + Deno-runnable so it can be unit-tested without spawning
+ * The module is pure and Node-runnable so it can be unit-tested without spawning
  * Brush. It does no network I/O.
  */
 
-import { resolve } from '@std/path'
+import { resolve } from 'node:path'
+import * as fs from 'node:fs/promises'
+import { readBytes } from '../fs_util.ts'
 
 export interface KeyframeRecord {
   index?: number
@@ -210,7 +212,7 @@ export async function buildBrushDataset(opts: BuildDatasetOptions): Promise<Buil
     throw new Error('no keyframes found in session (keyframes.jsonl empty or missing)')
   }
 
-  await Deno.mkdir(imagesDir, { recursive: true })
+  await fs.mkdir(imagesDir, { recursive: true })
 
   // Pose fallback for pose-less sessions (photo/video ingest): a solved
   // per-frame pose set, loaded lazily on the first record without one.
@@ -252,7 +254,7 @@ export async function buildBrushDataset(opts: BuildDatasetOptions): Promise<Buil
     const srcPath = `${sessionDir}/${file}`
     let bytes: Uint8Array
     try {
-      bytes = await Deno.readFile(srcPath)
+      bytes = await readBytes(srcPath)
     } catch {
       dropped++
       continue
@@ -317,9 +319,9 @@ export async function buildBrushDataset(opts: BuildDatasetOptions): Promise<Buil
     // file is still on disk, so the verdict has to be honoured here.
     if (cloud === 'lingbot-map.point-cloud.ply' && (await lingBotCloudCollapsed(sessionDir))) continue
     try {
-      const plyBytes = await Deno.readFile(`${sessionDir}/${cloud}`)
+      const plyBytes = await readBytes(`${sessionDir}/${cloud}`)
       seedPlyPath = `${datasetDir}/sparse_pc.ply`
-      await Deno.writeFile(seedPlyPath, plyBytes)
+      await fs.writeFile(seedPlyPath, plyBytes)
       break
     } catch {
       // try the next producer; none present means Brush random-inits
@@ -340,7 +342,7 @@ export async function buildBrushDataset(opts: BuildDatasetOptions): Promise<Buil
   }
 
   const transformsPath = `${datasetDir}/transforms.json`
-  await Deno.writeTextFile(transformsPath, JSON.stringify(transforms, null, 2))
+  await fs.writeFile(transformsPath, JSON.stringify(transforms, null, 2))
 
   return {
     datasetDir,
@@ -357,7 +359,7 @@ export async function buildBrushDataset(opts: BuildDatasetOptions): Promise<Buil
 export async function readKeyframes(sessionDir: string): Promise<KeyframeRecord[]> {
   let raw: string
   try {
-    raw = await Deno.readTextFile(`${sessionDir}/keyframes.jsonl`)
+    raw = await fs.readFile(`${sessionDir}/keyframes.jsonl`, 'utf8')
   } catch {
     return []
   }
@@ -497,7 +499,7 @@ export const SEED_CLOUDS = ['colmap.point-cloud.ply', 'lingbot-map.point-cloud.p
  */
 export async function lingBotCloudCollapsed(sessionDir: string): Promise<boolean> {
   try {
-    const manifest = JSON.parse(await Deno.readTextFile(`${sessionDir}/lingbot-map.manifest.json`)) as {
+    const manifest = JSON.parse(await fs.readFile(`${sessionDir}/lingbot-map.manifest.json`, 'utf8')) as {
       quality?: { degenerate?: unknown }
     }
     return manifest.quality?.degenerate === true
@@ -542,7 +544,7 @@ export async function readSolvedCamera(
   for (const name of POSE_SOURCES) {
     let raw: string
     try {
-      raw = await Deno.readTextFile(`${sessionDir}/${name}`)
+      raw = await fs.readFile(`${sessionDir}/${name}`, 'utf8')
     } catch {
       continue
     }
@@ -574,7 +576,7 @@ export async function readLingbotPoses(sessionDir: string): Promise<Map<string, 
 async function readPoseFile(path: string): Promise<Map<string, number[][]> | null> {
   let raw: string
   try {
-    raw = await Deno.readTextFile(path)
+    raw = await fs.readFile(path, 'utf8')
   } catch {
     return null
   }
@@ -716,13 +718,13 @@ async function materialiseImage(
 ): Promise<void> {
   // Idempotent: remove a stale dest first so re-runs don't fail on EEXIST.
   try {
-    await Deno.remove(destPath)
+    await fs.rm(destPath)
   } catch {
     // not present
   }
   if (mode === 'symlink') {
     try {
-      await Deno.symlink(srcPath, destPath)
+      await fs.symlink(srcPath, destPath)
       // Verify the link RESOLVES, not just that symlink() succeeded. Creating a
       // dangling link is not an error on any POSIX filesystem, so this is the
       // only way to tell a usable dataset from one Brush will reject as "no
@@ -731,18 +733,18 @@ async function materialiseImage(
       // this stat is what keeps ANY future dangling-target bug from reaching
       // the trainer, at the cost of one stat per frame. We already hold the
       // bytes, so the fallback copy costs nothing extra to reach.
-      await Deno.stat(destPath)
+      await fs.stat(destPath)
       return
     } catch {
       // fall through to copy (cross-device, no symlink perms, dangling target)
       try {
-        await Deno.remove(destPath)
+        await fs.rm(destPath)
       } catch {
         // never created
       }
     }
   }
-  await Deno.writeFile(destPath, bytes)
+  await fs.writeFile(destPath, bytes)
 }
 
 function numberOr(value: unknown, fallback: number): number {

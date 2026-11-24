@@ -33,7 +33,7 @@ const SCREENSHOT_DIR = join(process.cwd(), 'docs', 'lingbot-map', 'screenshots')
 /**
  * The chromium-mock Playwright project sets baseURL to the Vite dev server
  * (so the viewer can fetch its source modules), but artifact endpoints live
- * on the Deno API. When API_URL is set, hit it directly so the test doesn't
+ * on the API server. When API_URL is set, hit it directly so the test doesn't
  * depend on Vite's hardcoded :8000 proxy.
  */
 const API_URL = process.env['API_URL'] ?? ''

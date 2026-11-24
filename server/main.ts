@@ -1,5 +1,5 @@
 /**
- * Deno inference server — Hono HTTP server on :8000
+ * Companion Scan's API server — Hono on Node 26 (@hono/node-server), on :8000
  *
  * POST /infer              multipart { image: File }   → RawDetection[]
  * POST /upload-scan        multipart { file: File(.glb), metadata?: JSON } → { filename, job }
@@ -69,11 +69,12 @@
  *   - `measurements`, accepted as the legacy name of `knownDistances`.
  *
  * Run:
- *   deno run --allow-net --allow-read --allow-write --allow-env --allow-ffi main.ts
+ *   node server/main.ts      (npm run server: the same, with .env and --watch)
  */
+import { serve } from '@hono/node-server'
+import { createNodeWebSocket } from '@hono/node-ws'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { fromFileUrl } from '@std/path'
 import { REPO_ROOT } from './repo-root.ts'
 import { InferenceEngine } from './inference.ts'
 import { type CapabilityReport, formatCapabilityReport, probeCapabilities } from './capabilities.ts'
@@ -164,7 +165,9 @@ import {
   leaveRoom,
   previewPairReady,
   relayTargets,
+  type RoomSocket,
   roster,
+  type RtcPeer,
   type RtcRole,
   type RtcRoom,
   sendAll,
@@ -297,16 +300,21 @@ import type {
   WorldProject,
   ReviewComment,
 } from '../src/world/types.ts'
+import * as fs from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { runCommand } from './subprocess.ts'
+import { errorKind, isNotFound, readBytes } from './fs_util.ts'
+import { type Stats, statSync } from 'node:fs'
 
 // An unguarded async callback anywhere below (there is no lint/type check that
-// catches this) throws an unhandled rejection, and Deno's default is to
+// catches this) throws an unhandled rejection, and Node's default is to
 // terminate the whole process on that — silently as far as this server is
 // concerned, since nothing here was logging it. Every client this server
 // serves loses their connection to fix one caller's edge case. Log loudly and
 // keep running instead; a caller-scoped failure should stay caller-scoped.
-globalThis.addEventListener('unhandledrejection', (event) => {
-  console.error('[fatal] unhandled rejection — server would otherwise have exited on this:', event.reason)
-  event.preventDefault()
+// With a listener registered, Node reports the rejection here instead of exiting.
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal] unhandled rejection — server would otherwise have exited on this:', reason)
 })
 
 // Sign-in switched on with no issuer would install the session guard and strict world auth below, and register no
@@ -314,33 +322,33 @@ globalThis.addEventListener('unhandledrejection', (event) => {
 const SIGN_IN_PROBLEM = portalConfigProblem(portalAuthConfig())
 if (SIGN_IN_PROBLEM) {
   console.error(`[server] ${SIGN_IN_PROBLEM}`)
-  Deno.exit(1)
+  process.exit(1)
 }
 
-const PORT = Number(Deno.env.get('PORT') ?? 8000)
+const PORT = Number(process.env.PORT ?? 8000)
 // Vite dev-server port. Same variable name and default as vite.config.ts's read of
 // process.env.VITE_PORT — deliberately parallel one-liners (see docs/foundation-updates/0002
 // for the hostname precedent this follows), not a shared module.
-const VITE_PORT = Deno.env.get('VITE_PORT') ?? '5173'
+const VITE_PORT = process.env.VITE_PORT ?? '5173'
 const SERVER_STARTED_AT = Date.now()
 
 // Hostname phones use to reach this box. The precedence order (env var → `tailscale status --json` → a
 // *.ts.net.crt file in cwd → FALLBACK_HOSTNAME, `localhost`) is resolveHostnameWith in server/origin.ts, which
 // also says why: vite.config.ts's resolveHostname() is the same algorithm for Node, kept parallel on purpose
-// (docs/foundation-updates/0002). The probes below are the Deno half: the environment, the tailscale CLI and
+// (docs/foundation-updates/0002). The probes below are the server half: the environment, the tailscale CLI and
 // the working folder.
 async function tailscaleDnsName(): Promise<string | null> {
   for (const bin of ['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale']) {
     try {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), 3000)
-      const { success, stdout } = await new Deno.Command(bin, {
+      const { success, stdout } = await runCommand(bin, {
         args: ['status', '--json'],
         stdout: 'piped',
         stderr: 'null',
         stdin: 'null',
         signal: controller.signal,
-      }).output()
+      })
       clearTimeout(timer)
       if (!success) continue
       const dns = JSON.parse(new TextDecoder().decode(stdout))?.Self?.DNSName
@@ -353,13 +361,13 @@ async function tailscaleDnsName(): Promise<string | null> {
 async function workingFolderFiles(): Promise<string[]> {
   const names: string[] = []
   try {
-    for await (const entry of Deno.readDir(Deno.cwd())) if (entry.isFile) names.push(entry.name)
+    for (const entry of await fs.readdir(process.cwd(), { withFileTypes: true })) if (entry.isFile()) names.push(entry.name)
   } catch { /* unreadable cwd — nothing to find */ }
   return names
 }
 
 const { hostname: TAILSCALE_HOSTNAME, source: HOSTNAME_SOURCE } = await resolveHostnameWith({
-  env: (name) => Deno.env.get(name),
+  env: (name) => process.env[name],
   tailscaleDnsName,
   workingFolderFiles,
 })
@@ -367,40 +375,40 @@ const { hostname: TAILSCALE_HOSTNAME, source: HOSTNAME_SOURCE } = await resolveH
 const HOSTNAME_FOUND = HOSTNAME_SOURCE !== 'default'
 console.log(`[server] Hostname: ${TAILSCALE_HOSTNAME} (via ${HOSTNAME_SOURCE})`)
 if (!HOSTNAME_FOUND) console.warn(`[server] ${HOSTNAME_FALLBACK_WARNING}`)
-const ALLOWED_ORIGIN_PREFIX = Deno.env.get('ALLOWED_ORIGIN_PREFIX') ?? `https://${TAILSCALE_HOSTNAME}`
+const ALLOWED_ORIGIN_PREFIX = process.env.ALLOWED_ORIGIN_PREFIX ?? `https://${TAILSCALE_HOSTNAME}`
 
-const SCANS_DIR    = Deno.env.get('SCANS_DIR')    ?? './scans'
+const SCANS_DIR    = process.env.SCANS_DIR    ?? './scans'
 // Companion Memory (CI-Server) target. Read once at boot so the memory-push job and
 // the status route agree on whether the integration is wired.
 const memoryPushCfg = memoryPushConfig()
 /** What a memory-push on an install with no Companion Memory says to do. */
 const MEMORY_PUSH_REMEDIATION = 'Companion Memory is not connected. Connect it from the Hub, or set CI_SERVER_URL and CI_SERVER_TOKEN.'
-const SUMMARIES_DIR = Deno.env.get('SUMMARIES_DIR') ?? './summaries'
-const SESSIONS_DIR = Deno.env.get('SESSIONS_DIR') ?? `${SCANS_DIR}/sessions`
-const WORLDS_DIR = Deno.env.get('WORLDS_DIR') ?? './worlds'
+const SUMMARIES_DIR = process.env.SUMMARIES_DIR ?? './summaries'
+const SESSIONS_DIR = process.env.SESSIONS_DIR ?? `${SCANS_DIR}/sessions`
+const WORLDS_DIR = process.env.WORLDS_DIR ?? './worlds'
 const MAX_KEYFRAMES_PER_SESSION = 2000
 // Byte budget for one session's keyframe files (2 GiB by default). Checked before each write, from the
 // frame files already on disk, so a session cannot grow past it however large each frame is.
-const KEYFRAME_SESSION_MAX_BYTES = Number(Deno.env.get('KEYFRAME_SESSION_MAX_BYTES') ?? '') || KEYFRAME_SESSION_DEFAULT_MAX_BYTES
+const KEYFRAME_SESSION_MAX_BYTES = Number(process.env.KEYFRAME_SESSION_MAX_BYTES ?? '') || KEYFRAME_SESSION_DEFAULT_MAX_BYTES
 // Strict world auth is on once sign-in is on, or when WORLD_STRICT_AUTH=1 or SCAN_REQUIRE_AUTH=1 asks
 // for it: a world write needs that world's token.
-const WORLD_STRICT_AUTH = worldStrictAuthOn((name) => Deno.env.get(name), portalAuthConfig().enabled)
+const WORLD_STRICT_AUTH = worldStrictAuthOn((name) => process.env[name], portalAuthConfig().enabled)
 // /infer hardening knobs
-const INFER_MAX_IMAGE_BYTES = Number(Deno.env.get('INFER_MAX_IMAGE_BYTES') ?? '') || 12_000_000
+const INFER_MAX_IMAGE_BYTES = Number(process.env.INFER_MAX_IMAGE_BYTES ?? '') || 12_000_000
 // Thumbnail sample rate for a person clip. Low because the clip itself is the
 // artifact — these frames exist only for the editor's preview, not to feed a
 // reconstruction.
 const PERSON_THUMBNAIL_FPS = 1
 // /ingest-video guard: reject an upload over this many bytes, judged by Content-Length or, when that
 // header is absent, by the bytes as they arrive.
-const INGEST_MAX_VIDEO_BYTES = Number(Deno.env.get('INGEST_MAX_VIDEO_BYTES') ?? '') || 1_500_000_000
+const INGEST_MAX_VIDEO_BYTES = Number(process.env.INGEST_MAX_VIDEO_BYTES ?? '') || 1_500_000_000
 // /ingest-photos guard: the whole photo upload, in bytes. The default is the count cap (1000) at 1.5 MB a
 // photo, so a full 512-photo tripod capture at about 1 MB a photo is admitted. Refused before any photo is written.
-const INGEST_MAX_PHOTOS_BYTES = Number(Deno.env.get('INGEST_MAX_PHOTOS_BYTES') ?? '') || 1_500_000_000
+const INGEST_MAX_PHOTOS_BYTES = Number(process.env.INGEST_MAX_PHOTOS_BYTES ?? '') || 1_500_000_000
 // /ingest-photos: most photos one upload may carry. A tripod capture tops out at 8 spots (STATION_MAX)
 // of 64 photos a sweep (SWEEP_MAX_FRAMES), 512 in all, so 1000 leaves room for a gallery set. Each photo
 // is also capped at UPLOAD_MAX_FRAME_BYTES. Both are checked before any photo is written.
-const INGEST_MAX_PHOTOS_COUNT = Number(Deno.env.get('INGEST_MAX_PHOTOS_COUNT') ?? '') || 1000
+const INGEST_MAX_PHOTOS_COUNT = Number(process.env.INGEST_MAX_PHOTOS_COUNT ?? '') || 1000
 // Deadline for each ingest script (node). When it passes, the node child is sent SIGKILL. A walkthrough
 // video or a photo upload then fails with the reason rather than waiting forever. A person-mode video keeps
 // its clip and continues with zero frames. Each takes an env override. Only that child is signalled:
@@ -410,13 +418,13 @@ const DEFAULT_INGEST_TIMEOUT_MS = 30 * 60 * 1000
 // Caps for the routes with no ingest cap of their own (each takes an env override). A scan GLB is the
 // largest. A keyframe or reference photo is one JPEG frame; the phone sends 1280px at quality 0.8.
 // A summary is a text file.
-const UPLOAD_MAX_SCAN_BYTES = Number(Deno.env.get('UPLOAD_MAX_SCAN_BYTES') ?? '') || 300_000_000
-const UPLOAD_MAX_FRAME_BYTES = Number(Deno.env.get('UPLOAD_MAX_FRAME_BYTES') ?? '') || 12_000_000
-const UPLOAD_MAX_SUMMARY_BYTES = Number(Deno.env.get('UPLOAD_MAX_SUMMARY_BYTES') ?? '') || 2_000_000
+const UPLOAD_MAX_SCAN_BYTES = Number(process.env.UPLOAD_MAX_SCAN_BYTES ?? '') || 300_000_000
+const UPLOAD_MAX_FRAME_BYTES = Number(process.env.UPLOAD_MAX_FRAME_BYTES ?? '') || 12_000_000
+const UPLOAD_MAX_SUMMARY_BYTES = Number(process.env.UPLOAD_MAX_SUMMARY_BYTES ?? '') || 2_000_000
 // A Place record is a few KB, so this bounds a PUT or POST /projects body.
 const PLACE_JSON_MAX_BYTES = 1_000_000
 // Auto-enqueue a splat-finish job when splat-train completes ok (kill switch: SPLAT_FINISH_AUTO=0).
-const SPLAT_FINISH_AUTO = Deno.env.get('SPLAT_FINISH_AUTO') !== '0'
+const SPLAT_FINISH_AUTO = process.env.SPLAT_FINISH_AUTO !== '0'
 /**
  * Which trainer a `splat-train` job spawns. 'brush' (the default, and every
  * deployment that predates this variable) or 'spirula'.
@@ -430,7 +438,7 @@ const SPLAT_FINISH_AUTO = Deno.env.get('SPLAT_FINISH_AUTO') !== '0'
  * Anything unrecognised falls back to Brush rather than failing the job: a
  * typo'd env var must not silently stop a fleet from reconstructing.
  */
-const SPLAT_BACKEND: 'brush' | 'spirula' = Deno.env.get('SPLAT_BACKEND')?.trim().toLowerCase() === 'spirula'
+const SPLAT_BACKEND: 'brush' | 'spirula' = process.env.SPLAT_BACKEND?.trim().toLowerCase() === 'spirula'
   ? 'spirula'
   : 'brush'
 const ENGINE_LOAD_WAIT_MS = 15_000 // max time /infer waits for the model to finish loading
@@ -440,15 +448,15 @@ const INFER_TIMEOUT_MS = 60_000    // hard cap on a single engine.infer() call
  * Path to a repo script (scripts/…), as a native OS path.
  *
  * `new URL(rel, import.meta.url).pathname` is *not* that: on Windows it yields
- * `/C:/devel/…`, which `Deno.Command` then resolves against the drive root as
+ * `/C:/devel/…`, which a child process then resolves against the drive root as
  * `C:\C:\devel\…` and the spawned process fails with "Cannot find module".
- * `fromFileUrl` is the conversion that respects the platform.
+ * `fileURLToPath` is the conversion that respects the platform.
  */
 function localScriptPath(relative: string): string {
-  return fromFileUrl(new URL(relative, REPO_ROOT))
+  return fileURLToPath(new URL(relative, REPO_ROOT))
 }
 
-const LINGBOT_MAP_SCRIPT = Deno.env.get('LINGBOT_MAP_SCRIPT') ??
+const LINGBOT_MAP_SCRIPT = process.env.LINGBOT_MAP_SCRIPT ??
   localScriptPath('./scripts/lingbot_map_worker.py')
 
 // Who may call the Scan from a browser: the shells (iOS, Android, desktop), the tailnet host and prefix, and the
@@ -459,7 +467,7 @@ const ORIGIN_ALLOWLIST: OriginAllowlist = {
   // The fallback names no tailnet machine, so it admits nothing beyond what ALLOWED_ORIGIN_PREFIX already does.
   tailnetOrigin: HOSTNAME_FOUND ? `https://${TAILSCALE_HOSTNAME}` : null,
   publicOrigin: originOf(portalAuthConfig().publicBaseUrl),
-  devOrigins: Deno.env.get('ALLOW_DEV_ORIGINS') === '1',
+  devOrigins: process.env.ALLOW_DEV_ORIGINS === '1',
 }
 
 function isAllowedOrigin(origin: string): boolean {
@@ -467,7 +475,7 @@ function isAllowedOrigin(origin: string): boolean {
 }
 
 for (const dir of [SCANS_DIR, SUMMARIES_DIR, SESSIONS_DIR, WORLDS_DIR]) {
-  try { await Deno.mkdir(dir, { recursive: true }) } catch { /* already exists */ }
+  try { await fs.mkdir(dir, { recursive: true }) } catch { /* already exists */ }
 }
 
 // ── Event broadcast hub (/events WebSocket) ───────────────────────────────────
@@ -496,14 +504,14 @@ function scopeOfSlug(slug: string, projectId: string | null): EventScope {
  * Every open /events socket, and the world it asked for with `/events?world=<slug>`, if it asked. A socket that asked
  * for one world is sent that world's events and the ones that have no scope; one that did not ask is sent all of them.
  */
-const eventSockets = new Map<WebSocket, { world: string | null }>()
+const eventSockets = new Map<RoomSocket, { world: string | null }>()
 
 /**
  * Phone console records (POST /client-logs) are fanned out to every /events socket only with this debug setting on:
  * they are a phone's console, and every connected socket used to receive them (F-09). They are always written to
  * client-logs.jsonl and the server log. `npm run logs:watch` reads them from /events, so it needs the setting.
  */
-const CLIENT_LOGS_BROADCAST = Deno.env.get('CLIENT_LOGS_BROADCAST') === '1'
+const CLIENT_LOGS_BROADCAST = process.env.CLIENT_LOGS_BROADCAST === '1'
 
 function broadcast(event: EventPayload, scope?: EventScope): void {
   if (event.type === EVENT.CLIENT_LOG && !CLIENT_LOGS_BROADCAST) return
@@ -511,7 +519,7 @@ function broadcast(event: EventPayload, scope?: EventScope): void {
   for (const [ws, subscription] of eventSockets) {
     if (scope && subscription.world !== null && subscription.world !== scope.slug) continue
     try {
-      if (ws.readyState === WebSocket.OPEN) ws.send(msg)
+      if (ws.readyState === WS_OPEN) ws.send(msg)
     } catch { /* client gone — close handler will clean up */ }
   }
 }
@@ -532,7 +540,7 @@ const worldJobPump = new WorldJobPump(
 )
 
 // Boot-time crash recovery (ADR 0003 "Crash recovery") runs at the bottom of
-// this file, right before `Deno.serve(...)` — NOT here. Recovery seeds the
+// this file, right before `serve(...)` — NOT here. Recovery seeds the
 // pump synchronously (`worldJobPump.enqueue`), and dispatch for a recovered
 // job can reach the generic placeholder-completion path (`sleep`, defined
 // below) or any `_run*Job` helper's module-level `const` dependencies
@@ -544,14 +552,14 @@ const worldJobPump = new WorldJobPump(
 // recovered job in `processing` (verified with a standalone repro: the
 // first pump dispatch reliably hit the TDZ before the later `const`
 // initializer ran). Running recovery only once every other top-level
-// statement has executed — immediately before `Deno.serve` — removes the
+// statement has executed — immediately before `serve(...)` — removes the
 // race while still satisfying ADR 0003's actual requirement: recovery
 // completes before the server starts accepting requests.
 
 let modelLoaded = false
 let engineLoadSettled = false
 const engine = new InferenceEngine()
-if (engine.mode === 'ollama' && Deno.env.get('OLLAMA_MODEL') === undefined) {
+if (engine.mode === 'ollama' && process.env.OLLAMA_MODEL === undefined) {
   console.log(formatSetupBanner())
 }
 const engineLoadPromise = engine.load().then(() => {
@@ -568,11 +576,14 @@ const engineLoadPromise = engine.load().then(() => {
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 const app = new Hono()
+// /events and /rtc-signal upgrade through @hono/node-ws, which runs the upgrade request through the routes and their
+// middleware first; injectWebSocket, at the end of this file, attaches it to the server.
+const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
 // Gates the phone and viewer roles of /rtc-signal (the experimental live preview). The server reads the client build's
 // own variable on purpose (FN-121): the client bundle reads VITE_ENABLE_WEBRTC_LIVE at build time (src/rtc/feature.ts),
 // and one name in one .env means the page that offers the preview and the server that relays it cannot disagree.
 // Coordinated capture (`role=capture`) is not gated by it.
-const WEBRTC_LIVE_ENABLED = Deno.env.get('VITE_ENABLE_WEBRTC_LIVE') === 'true'
+const WEBRTC_LIVE_ENABLED = process.env.VITE_ENABLE_WEBRTC_LIVE === 'true'
 
 /** Thrown by `jsonBody` for a body over the cap; app.onError answers 413. */
 class JsonBodyTooLargeError extends Error {
@@ -613,7 +624,7 @@ app.use(redactedRequestLogger())
 app.use(
   cors({
     origin: (origin) => {
-      if (Deno.env.get('DEBUG_CORS') === '1') {
+      if (process.env.DEBUG_CORS === '1') {
         console.log(`[server] CORS check: origin=${origin}, prefix=${ALLOWED_ORIGIN_PREFIX}`)
       }
       if (!origin) return ALLOWED_ORIGIN_PREFIX
@@ -641,8 +652,8 @@ const scanAuthCfg = portalAuthConfig()
 // The off-box 4d-capture service has no Companion Account. It fetches a take's clips and pose tracks with this token,
 // and the guard admits it on exactly those two GET routes (portal_auth.ts isPersonClipFetch). server/person4d sends the
 // same token to the service.
-const FDANYONE_TOKEN = Deno.env.get('FDANYONE_TOKEN') ?? ''
-if (scanAuthCfg.enabled || Deno.env.get('SCAN_REQUIRE_AUTH') === '1') {
+const FDANYONE_TOKEN = process.env.FDANYONE_TOKEN ?? ''
+if (scanAuthCfg.enabled || process.env.SCAN_REQUIRE_AUTH === '1') {
   const sessionGuard = requireScanSession(scanAuthCfg, (c) => isPersonClipFetch(c, FDANYONE_TOKEN))
   for (const path of SESSION_GUARDED_PATHS) {
     app.use(path, sessionGuard)
@@ -670,7 +681,7 @@ app.get('/health', (c) => c.json({
  * On an install that is open by design this is the same posture as /health
  * directly above: no sign-in, and covered by the global CORS policy. Deliberately
  * no gate of its own — the report was previously only reachable by SSHing in and
- * running `deno run server/capabilities.ts`, which is precisely why a missing
+ * running `node server/capabilities.ts`, which is precisely why a missing
  * ffmpeg showed up as an HTTP 500 instead of a fact anyone could read, and a gate
  * on the one route that explains a broken box would recreate that. Once sign-in
  * is on, or SCAN_REQUIRE_AUTH=1, it is behind the Companion session guard like
@@ -707,7 +718,7 @@ app.get('/health', (c) => c.json({
  * every browser that loads the map then sees: that is how a browser map works, so use a key
  * the provider lets you restrict to this site.
  */
-const BASEMAP = basemapFromEnv((name) => Deno.env.get(name))
+const BASEMAP = basemapFromEnv((name) => process.env[name])
 if (BASEMAP.problem) {
   console.warn(`[server] ${BASEMAP_ENV_VAR} is set but not used, so the maps show no basemap. ${basemapProblemText(BASEMAP.problem)}`)
 }
@@ -846,8 +857,8 @@ const clientLogLimiter = new HitLimiter(60, 60_000)
 // Most entries one POST may carry (the phone relay buffers 50 per flush), and the size at which
 // client-logs.jsonl rotates to client-logs.jsonl.1. Both take an env override. The fixed limits (a 16 KiB
 // body, a 1000-character msg, a 2000-character stack, a 256-character user agent) are in wp-a-client-logs.ts.
-const CLIENT_LOG_MAX_ENTRIES = Number(Deno.env.get('CLIENT_LOG_MAX_ENTRIES') ?? '') || CLIENT_LOG_DEFAULT_MAX_ENTRIES
-const CLIENT_LOGS_MAX_BYTES = Number(Deno.env.get('CLIENT_LOGS_MAX_BYTES') ?? '') || CLIENT_LOGS_DEFAULT_MAX_BYTES
+const CLIENT_LOG_MAX_ENTRIES = Number(process.env.CLIENT_LOG_MAX_ENTRIES ?? '') || CLIENT_LOG_DEFAULT_MAX_ENTRIES
+const CLIENT_LOGS_MAX_BYTES = Number(process.env.CLIENT_LOGS_MAX_BYTES ?? '') || CLIENT_LOGS_DEFAULT_MAX_BYTES
 
 /**
  * POST /client-logs, rate limited per connection. A body over 16 KiB is refused with 413, and so is a
@@ -997,13 +1008,13 @@ app.get('/scans', async (c) => {
     // outside the loop and translate through worldJobToLegacyJob.
     const jobWorld = await loadWorld('default')
     const optimizeScanJobs = jobWorld.jobs.filter(j => j.type === 'optimize-scan')
-    for await (const entry of Deno.readDir(SCANS_DIR)) {
-      if (!entry.isFile || !entry.name.endsWith('.glb')) continue
+    for (const entry of await fs.readdir(SCANS_DIR, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.glb')) continue
       if (isDerivedScanFile(entry.name)) continue
-      const stat = await Deno.stat(`${SCANS_DIR}/${entry.name}`)
+      const stat = await fs.stat(`${SCANS_DIR}/${entry.name}`)
       let optimized = false
       try {
-        await Deno.stat(`${SCANS_DIR}/${entry.name.replace(/\.glb$/, '.manifest.json')}`)
+        await fs.stat(`${SCANS_DIR}/${entry.name.replace(/\.glb$/, '.manifest.json')}`)
         optimized = true
       } catch { /* not optimized yet */ }
       // world.jobs is newest-first (createWorldJob unshifts), so the first
@@ -1034,7 +1045,7 @@ app.get('/scans/:filename/manifest', async (c) => {
   const filename = safeScanName(c.req.param('filename'))
   if (!filename || !filename.endsWith('.glb')) return c.json({ error: 'Invalid filename' }, 400)
   try {
-    const raw = await Deno.readTextFile(`${SCANS_DIR}/${filename.replace(/\.glb$/, '.manifest.json')}`)
+    const raw = await fs.readFile(`${SCANS_DIR}/${filename.replace(/\.glb$/, '.manifest.json')}`, 'utf8')
     return c.json(JSON.parse(raw))
   } catch {
     return c.json({ error: 'No manifest — scan not optimized yet' }, 404)
@@ -1047,7 +1058,7 @@ app.post('/scans/:filename/optimize', async (c) => {
     return c.json({ error: 'Invalid filename' }, 400)
   }
   try {
-    await Deno.stat(`${SCANS_DIR}/${filename}`)
+    await fs.stat(`${SCANS_DIR}/${filename}`)
   } catch {
     return c.json({ error: 'Scan not found' }, 404)
   }
@@ -1120,7 +1131,7 @@ app.get('/scans/:filename{.+\\.(splat\\.ply|compressed\\.ply|sog|splat-train\\.m
   const entry = SPLAT_ARTIFACT_MIME.find(e => filename.endsWith(e.suffix))
   if (!entry) return c.json({ error: 'Invalid splat artifact path' }, 400)
   try {
-    const data = await Deno.readFile(`${SCANS_DIR}/${filename}`)
+    const data = await readBytes(`${SCANS_DIR}/${filename}`)
     return new Response(entry.mime === 'application/json' ? servedJsonArtifact(data) : data, {
       headers: {
         'Content-Type': entry.mime,
@@ -1145,7 +1156,7 @@ app.get('/scans/:filename', async (c) => {
 
   const filePath = `${SCANS_DIR}/${filename}`
   try {
-    const data = await Deno.readFile(filePath)
+    const data = await readBytes(filePath)
     return new Response(data, {
       headers: {
         'Content-Type': 'model/gltf-binary',
@@ -1165,7 +1176,7 @@ app.get('/scans/:filename', async (c) => {
 
 async function removeIfExists(path: string): Promise<boolean> {
   try {
-    await Deno.remove(path)
+    await fs.rm(path)
     return true
   } catch {
     return false
@@ -1253,7 +1264,7 @@ app.post('/sessions', async (c) => {
   const takeId = isTakeId(body.takeId) ? body.takeId : null
   const clientId = takeId && isClientId(body.clientId) ? body.clientId : null
 
-  await Deno.mkdir(`${SESSIONS_DIR}/${sessionId}`, { recursive: true })
+  await fs.mkdir(`${SESSIONS_DIR}/${sessionId}`, { recursive: true })
   const record = {
     sessionId,
     startedAt: new Date().toISOString(),
@@ -1261,7 +1272,7 @@ app.post('/sessions', async (c) => {
     ...(takeId ? { takeId } : {}),
     ...(clientId ? { clientId } : {}),
   }
-  await Deno.writeTextFile(`${SESSIONS_DIR}/${sessionId}/session.json`, JSON.stringify(record, null, 2))
+  await fs.writeFile(`${SESSIONS_DIR}/${sessionId}/session.json`, JSON.stringify(record, null, 2))
   console.log(`[session] opened ${sessionId}${takeId ? ` (take ${takeId})` : ''}`)
   broadcast({ type: EVENT.SESSION_STARTED, sessionId })
   return c.json(record, 201)
@@ -1271,7 +1282,7 @@ app.post('/sessions/:id/keyframes', async (c) => {
   const dir = sessionDir(c.req.param('id'))
   if (!dir) return c.json({ error: 'Invalid session id' }, 400)
   try {
-    await Deno.stat(dir)
+    await fs.stat(dir)
   } catch {
     return c.json({ error: 'Session not found' }, 404)
   }
@@ -1331,7 +1342,7 @@ app.get('/sessions/:id/keyframes/:file', async (c) => {
   const file = c.req.param('file')
   if (!dir || !KEYFRAME_FILE_RE.test(file)) return c.json({ error: 'Invalid keyframe path' }, 400)
   try {
-    const data = await Deno.readFile(`${dir}/${file}`)
+    const data = await readBytes(`${dir}/${file}`)
     return new Response(data, {
       headers: {
         'Content-Type': 'image/jpeg',
@@ -1429,7 +1440,7 @@ app.get('/scans/:base/:frame', async (c) => {
   if (!contentType) return c.json({ error: 'Invalid asset path' }, 400)
 
   try {
-    const bytes = await Deno.readFile(`${SCANS_DIR}/${base}/${frame}`)
+    const bytes = await readBytes(`${SCANS_DIR}/${base}/${frame}`)
     return new Response(bytes, {
       headers: {
         'Content-Type': contentType,
@@ -1448,7 +1459,7 @@ app.get('/sessions/:id/pose-track.json', async (c) => {
   const dir = sessionDir(c.req.param('id'))
   if (!dir) return c.json({ error: 'Invalid session id' }, 400)
   try {
-    const bytes = await Deno.readFile(`${dir}/pose-track.json`)
+    const bytes = await readBytes(`${dir}/pose-track.json`)
     return new Response(bytes, {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, max-age=300' },
     })
@@ -1469,8 +1480,8 @@ app.get('/sessions/:id/clip/:file', async (c) => {
   const path = `${dir}/${file}`
   let size: number
   try {
-    const stat = await Deno.stat(path)
-    if (!stat.isFile) return c.json({ error: 'Not found' }, 404)
+    const stat = await fs.stat(path)
+    if (!stat.isFile()) return c.json({ error: 'Not found' }, 404)
     size = stat.size
   } catch {
     return c.json({ error: 'Not found' }, 404)
@@ -1482,7 +1493,7 @@ app.get('/sessions/:id/clip/:file', async (c) => {
     contentType: mime,
     cacheControl: 'private, max-age=300',
     readRange: (start, length) => readFileRange(path, start, length),
-    readAll: () => Deno.readFile(path),
+    readAll: () => readBytes(path),
   })
 })
 
@@ -1496,13 +1507,13 @@ app.get('/sessions/:id/:artifact{(?:lingbot-map\\..+|colmap-poses\\.manifest\\.j
   if (artifact === 'lingbot-map.point-cloud.ply') {
     let manifest: unknown = null
     try {
-      manifest = JSON.parse(await Deno.readTextFile(`${dir}/lingbot-map.manifest.json`))
+      manifest = JSON.parse(await fs.readFile(`${dir}/lingbot-map.manifest.json`, 'utf8'))
     } catch { /* no manifest, so there is no verdict to act on */ }
     const refusal = degenerateCloudRefusal(manifest)
     if (refusal) return c.json(refusal, 409)
   }
   try {
-    const data = await Deno.readFile(`${dir}/${artifact}`)
+    const data = await readBytes(`${dir}/${artifact}`)
     // The viewer's panel shows only the manifest's error, so a degenerate run's fix is served inside it (the file is not changed).
     const body = artifact === 'lingbot-map.manifest.json'
       ? lingBotManifestForViewer(new TextDecoder().decode(data))
@@ -1522,7 +1533,7 @@ app.post('/sessions/:id/finalize', async (c) => {
   if (!dir) return c.json({ error: 'Invalid session id' }, 400)
   let record: Record<string, unknown>
   try {
-    record = JSON.parse(await Deno.readTextFile(`${dir}/session.json`)) as Record<string, unknown>
+    record = JSON.parse(await fs.readFile(`${dir}/session.json`, 'utf8')) as Record<string, unknown>
   } catch {
     return c.json({ error: 'Session not found' }, 404)
   }
@@ -1556,16 +1567,16 @@ app.post('/sessions/:id/finalize', async (c) => {
     poseCount: body.poseCount ?? null,
     qualitySummary: body.qualitySummary ?? null,
   }
-  await Deno.writeTextFile(`${dir}/session.json`, JSON.stringify(record, null, 2))
+  await fs.writeFile(`${dir}/session.json`, JSON.stringify(record, null, 2))
   console.log(`[session] finalized ${record['sessionId']} — ${keyframeCount} keyframes` +
     (glbFilename ? ` → ${glbFilename}` : ''))
 
   if (glbFilename?.endsWith('.glb')) {
     try {
-      await Deno.stat(`${SCANS_DIR}/${glbFilename}`)
+      await fs.stat(`${SCANS_DIR}/${glbFilename}`)
       // Skip when upload-scan's job already produced a manifest
       try {
-        await Deno.stat(`${SCANS_DIR}/${glbFilename.replace(/\.glb$/, '.manifest.json')}`)
+        await fs.stat(`${SCANS_DIR}/${glbFilename.replace(/\.glb$/, '.manifest.json')}`)
       } catch {
         await enqueueOptimizeScanJob(glbFilename)
       }
@@ -1619,9 +1630,7 @@ async function finalizeStationCapture(opts: {
   // Written before the job is queued, on purpose: `source` is what tells the
   // job preflight this is a station capture, and the pump can pick the job up
   // as soon as it exists.
-  await Deno.writeTextFile(
-    `${opts.sessionDir}/session.json`,
-    JSON.stringify({
+  await fs.writeFile(`${opts.sessionDir}/session.json`, JSON.stringify({
       ...opts.record,
       source: STATION_DOME_SOURCE,
       keyframeCount: frameCount,
@@ -1630,8 +1639,7 @@ async function finalizeStationCapture(opts: {
       framesWithoutStation: assessment.coverage.framesWithoutStation,
       captureWarnings: assessment.warnings,
       finalizedAt: new Date().toISOString(),
-    }, null, 2),
-  )
+    }, null, 2))
   // Separate write, through the module that owns the field's validation, so
   // there is exactly one writer of a measurement anywhere on the server.
   if (opts.measurements.length > 0) await writeKnownDistances(opts.sessionDir, opts.measurements)
@@ -1696,7 +1704,7 @@ app.post('/sessions/:id/station-capture', async (c) => {
 
   let record: Record<string, unknown>
   try {
-    record = JSON.parse(await Deno.readTextFile(`${dir}/session.json`)) as Record<string, unknown>
+    record = JSON.parse(await fs.readFile(`${dir}/session.json`, 'utf8')) as Record<string, unknown>
   } catch {
     return c.json({ error: 'Session not found' }, 404)
   }
@@ -1894,11 +1902,11 @@ app.post('/ingest-video', async (c) => {
 
   // Save the upload to a temp file the ingest script reads, then delete it.
   const tmpDir = `${SCANS_DIR}/tmp`
-  await Deno.mkdir(tmpDir, { recursive: true })
+  await fs.mkdir(tmpDir, { recursive: true })
   const safeExt = (video.name.match(/\.(mp4|mov|m4v|webm|avi|mkv)$/i)?.[0] ?? '.mp4').toLowerCase()
   const tmpVideo = `${tmpDir}/ingest-${Date.now()}-${crypto.randomUUID().slice(0, 8)}${safeExt}`
   try {
-    await Deno.writeFile(tmpVideo, new Uint8Array(await video.arrayBuffer()))
+    await fs.writeFile(tmpVideo, new Uint8Array(await video.arrayBuffer()))
   } catch (err) {
     console.error('[ingest-video] could not buffer the upload:', err)
     return c.json({ error: 'could not buffer video' }, 500)
@@ -1963,11 +1971,8 @@ app.post('/ingest-video', async (c) => {
       // Mint a session directly. The clip still needs somewhere durable to live,
       // and the id is what everything downstream keys off.
       sessionId = newServerSessionId()
-      await Deno.mkdir(`${SESSIONS_DIR}/${sessionId}`, { recursive: true })
-      await Deno.writeTextFile(
-        `${SESSIONS_DIR}/${sessionId}/session.json`,
-        JSON.stringify({ sessionId, startedAt: new Date().toISOString(), keyframeCount: 0 }, null, 2),
-      )
+      await fs.mkdir(`${SESSIONS_DIR}/${sessionId}`, { recursive: true })
+      await fs.writeFile(`${SESSIONS_DIR}/${sessionId}/session.json`, JSON.stringify({ sessionId, startedAt: new Date().toISOString(), keyframeCount: 0 }, null, 2))
     }
     if (!sessionId || !sessionDir(sessionId)) {
       return c.json({ error: `ingest returned an invalid session id: ${sessionId}` }, 500)
@@ -1985,17 +1990,17 @@ app.post('/ingest-video', async (c) => {
       const clipExt = clipMime?.startsWith('video/webm') ? 'webm' : 'mp4'
       const clipName = `clip.${clipExt}`
       const sessionPath = `${SESSIONS_DIR}/${sessionId}`
-      await Deno.copyFile(tmpVideo, `${sessionPath}/${clipName}`)
+      await fs.copyFile(tmpVideo, `${sessionPath}/${clipName}`)
 
       if (poseTrack instanceof File) {
-        await Deno.writeFile(`${sessionPath}/pose-track.json`, new Uint8Array(await poseTrack.arrayBuffer()))
+        await fs.writeFile(`${sessionPath}/pose-track.json`, new Uint8Array(await poseTrack.arrayBuffer()))
       }
 
       // Record take membership and the real container on the session record, so
       // the processing subsystem never has to guess either.
       try {
         const recordPath = `${sessionPath}/session.json`
-        const record = JSON.parse(await Deno.readTextFile(recordPath)) as Record<string, unknown>
+        const record = JSON.parse(await fs.readFile(recordPath, 'utf8')) as Record<string, unknown>
         record['captureKind'] = 'person'
         // Visible rather than silent: a preview-less clip is still fully
         // reconstructable, but the editor should be able to say why it has no
@@ -2007,7 +2012,7 @@ app.post('/ingest-video', async (c) => {
         if (takeId) record['takeId'] = takeId
         if (clientId) record['clientId'] = clientId
         if (poseTrack instanceof File) record['poseTrackFile'] = 'pose-track.json'
-        await Deno.writeTextFile(recordPath, JSON.stringify(record, null, 2))
+        await fs.writeFile(recordPath, JSON.stringify(record, null, 2))
       } catch (err) {
         console.error('[ingest-video] could not record person clip metadata:', err)
       }
@@ -2197,7 +2202,7 @@ app.post('/ingest-photos', async (c) => {
   // Save the upload to a temp dir the ingest script reads, then delete it.
   // The index prefix keeps upload order stable for photos without EXIF.
   const tmpDir = `${SCANS_DIR}/tmp/ingest-photos-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
-  await Deno.mkdir(tmpDir, { recursive: true })
+  await fs.mkdir(tmpDir, { recursive: true })
   try {
     // The temp basename is the only name the ingest script ever sees, and it is
     // what it writes back as `sourcePhoto` — so it is the key the station
@@ -2213,7 +2218,7 @@ app.post('/ingest-photos', async (c) => {
         .replace(/\.\./g, '__')
         .replace(/^[._-]+/, '') || 'photo'
       const basename = `${String(index).padStart(4, '0')}-${safeStem}${ext}`
-      await Deno.writeFile(`${tmpDir}/${basename}`, new Uint8Array(await file.arrayBuffer()))
+      await fs.writeFile(`${tmpDir}/${basename}`, new Uint8Array(await file.arrayBuffer()))
       const station = stations?.[index]
       if (typeof station === 'number') stationBySourcePhoto.set(basename, station)
       index += 1
@@ -2317,7 +2322,7 @@ app.post('/ingest-photos', async (c) => {
 
       let record: Record<string, unknown> = { sessionId }
       try {
-        record = JSON.parse(await Deno.readTextFile(`${ingestedDir}/session.json`)) as Record<string, unknown>
+        record = JSON.parse(await fs.readFile(`${ingestedDir}/session.json`, 'utf8')) as Record<string, unknown>
       } catch { /* the script just wrote it; a missing one is not worth failing the capture over */ }
 
       const registered = await finalizeStationCapture({
@@ -2376,7 +2381,7 @@ app.post('/ingest-photos', async (c) => {
   } finally {
     // Always drop the temp photos — the keyframe session is the durable artifact.
     try {
-      await Deno.remove(tmpDir, { recursive: true })
+      await fs.rm(tmpDir, { recursive: true })
     } catch { /* already gone */ }
   }
 })
@@ -2385,7 +2390,7 @@ app.get('/sessions/:id', async (c) => {
   const dir = sessionDir(c.req.param('id'))
   if (!dir) return c.json({ error: 'Invalid session id' }, 400)
   try {
-    return c.json(JSON.parse(await Deno.readTextFile(`${dir}/session.json`)))
+    return c.json(JSON.parse(await fs.readFile(`${dir}/session.json`, 'utf8')))
   } catch {
     return c.json({ error: 'Session not found' }, 404)
   }
@@ -2393,7 +2398,7 @@ app.get('/sessions/:id', async (c) => {
 
 app.get('/sessions', async (c) => {
   // Same sweep the scan listing needs, so it exists once (scan_index.ts) rather than
-  // twice. bySessionId preserves Deno.readDir order, so this response is unchanged.
+  // twice. bySessionId preserves the directory's listing order, so this response is unchanged.
   const index = await loadSessionIndex(SESSIONS_DIR)
   return c.json([...index.bySessionId.values()])
 })
@@ -2484,12 +2489,12 @@ app.post('/takes/:takeId/sync', async (c) => {
   for (const [clientId, sessionId] of sessionByClient) {
     const dir = `${SESSIONS_DIR}/${sessionId}`
     try {
-      const record = JSON.parse(await Deno.readTextFile(`${dir}/session.json`)) as Record<string, unknown>
+      const record = JSON.parse(await fs.readFile(`${dir}/session.json`, 'utf8')) as Record<string, unknown>
       const raw = reported.get(clientId)
       if (raw) record['syncOffset'] = raw
       record['sync'] = records.get(clientId)
         ?? (clientId === body.clientId && failed ? exchangeFailed(measuredAt) : record['sync'] ?? exchangeFailed(measuredAt))
-      await Deno.writeTextFile(`${dir}/session.json`, JSON.stringify(record, null, 2))
+      await fs.writeFile(`${dir}/session.json`, JSON.stringify(record, null, 2))
     } catch (err) {
       console.error(`[take-sync] could not update ${sessionId}:`, err)
     }
@@ -2506,13 +2511,13 @@ app.post('/takes/:takeId/sync', async (c) => {
 app.get('/scan-locations', async (c) => {
   try {
     const locations: Record<string, unknown>[] = []
-    for await (const entry of Deno.readDir(SCANS_DIR)) {
-      if (!entry.isFile || !entry.name.endsWith('.glb')) continue
+    for (const entry of await fs.readdir(SCANS_DIR, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.glb')) continue
       if (isDerivedScanFile(entry.name)) continue // .opt/.lodN artifacts have no companion .json
       const metaPath = `${SCANS_DIR}/${entry.name.replace(/\.glb$/, '.json')}`
       let meta: Record<string, unknown> = {}
       try {
-        meta = JSON.parse(await Deno.readTextFile(metaPath)) as Record<string, unknown>
+        meta = JSON.parse(await fs.readFile(metaPath, 'utf8')) as Record<string, unknown>
       } catch { /* no companion metadata */ }
 
       // Only include scans that have GPS data
@@ -2638,7 +2643,7 @@ async function readScanMeta(
 ): Promise<Record<string, unknown>> {
   let meta: Record<string, unknown> = {}
   try {
-    const parsed: unknown = JSON.parse(await Deno.readTextFile(scanMetaPath(filename)))
+    const parsed: unknown = JSON.parse(await fs.readFile(scanMetaPath(filename), 'utf8'))
     // A sidecar that is JSON but not an object (a `null`, say) holds no facts about the scan; read as one it would
     // throw in sessionForScan and fail every read of every world.
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) meta = parsed as Record<string, unknown>
@@ -2727,8 +2732,8 @@ const SCAN_LIST_CONCURRENCY = 64
 
 async function listStoredScans(): Promise<StoredScanInfo[]> {
   const names: string[] = []
-  for await (const entry of Deno.readDir(SCANS_DIR)) {
-    if (!entry.isFile || !entry.name.endsWith('.glb')) continue
+  for (const entry of await fs.readdir(SCANS_DIR, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.glb')) continue
     if (isDerivedScanFile(entry.name)) continue // .opt/.lodN artifacts aren't standalone scans
     names.push(entry.name)
   }
@@ -2743,11 +2748,11 @@ async function listStoredScans(): Promise<StoredScanInfo[]> {
         // A scan deleted between readDir and stat is simply gone from the
         // listing — it is not a reason to fail the whole call, and callers
         // like `readWorldUnlocked` treat a throw here as a world-load error.
-        let stat: Deno.FileInfo
+        let stat: Stats
         try {
-          stat = await Deno.stat(`${SCANS_DIR}/${filename}`)
+          stat = await fs.stat(`${SCANS_DIR}/${filename}`)
         } catch (err) {
-          if (err instanceof Deno.errors.NotFound) return null
+          if (isNotFound(err)) return null
           throw err
         }
         return {
@@ -2758,7 +2763,7 @@ async function listStoredScans(): Promise<StoredScanInfo[]> {
         }
       }),
     )
-    // Batches are appended in order, so `scans` keeps Deno.readDir order and the
+    // Batches are appended in order, so `scans` keeps the directory's listing order and the
     // stable sort below breaks uploadedAt ties exactly as it did before.
     scans.push(...batch.filter((scan): scan is StoredScanInfo => scan !== null))
   }
@@ -2926,7 +2931,7 @@ function createWorldMembers(): WorldMember[] {
 
 /**
  * Writes `value` as JSON to `path` so that a reader never sees a half-written file: the text goes to a temporary file in
- * the same directory and is renamed over `path`, which is atomic on one filesystem. `Deno.writeTextFile` on the path
+ * the same directory and is renamed over `path`, which is atomic on one filesystem. `fs.writeFile` on the path
  * itself truncates it first, and a read that lands in that gap sees an empty file. For a scan's sidecar that is not a
  * slow read but a lost scan: `readScanMeta` reads an unparseable sidecar as `{}`, the scan then reads as filed under no
  * Place, a world refresh evicts it, and the eviction takes its patches, comments and jobs with it (ADR 0011 hands those
@@ -2935,10 +2940,10 @@ function createWorldMembers(): WorldMember[] {
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   const tmp = `${path}.${crypto.randomUUID()}.tmp`
   try {
-    await Deno.writeTextFile(tmp, JSON.stringify(value, null, 2))
-    await Deno.rename(tmp, path)
+    await fs.writeFile(tmp, JSON.stringify(value, null, 2))
+    await fs.rename(tmp, path)
   } catch (err) {
-    await Deno.remove(tmp).catch(() => {})
+    await fs.rm(tmp).catch(() => {})
     throw err
   }
 }
@@ -2954,11 +2959,11 @@ async function writeWorldUnlocked(world: WorldProject): Promise<void> {
   world.updatedAt = new Date().toISOString()
   const tmp = `${worldPath(world.shareSlug)}.${crypto.randomUUID()}.tmp`
   try {
-    await Deno.writeTextFile(tmp, JSON.stringify(world, null, 2))
-    await Deno.rename(tmp, worldPath(world.shareSlug))
+    await fs.writeFile(tmp, JSON.stringify(world, null, 2))
+    await fs.rename(tmp, worldPath(world.shareSlug))
   } catch (err) {
     // A write that failed leaves no copy of the whole world behind: no deletion path would look for it.
-    await Deno.remove(tmp).catch(() => {})
+    await fs.rm(tmp).catch(() => {})
     throw err
   }
 }
@@ -3040,12 +3045,12 @@ async function mutateWorldFiles(
 ): Promise<number> {
   const names: string[] = []
   try {
-    for await (const entry of Deno.readDir(WORLDS_DIR)) {
-      if (entry.isFile && entry.name.endsWith('.json')) names.push(entry.name)
+    for (const entry of await fs.readdir(WORLDS_DIR, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith('.json')) names.push(entry.name)
     }
   } catch (error) {
     // The worlds directory may be empty (not there yet). A listing that failed for another reason has looked at no world.
-    if (options.strict && !(error instanceof Deno.errors.NotFound)) throw error
+    if (options.strict && !(isNotFound(error))) throw error
   }
 
   let updated = 0
@@ -3053,14 +3058,14 @@ async function mutateWorldFiles(
   for (const name of names) {
     try {
       const changed = await withWorldLock(safeSlug(name.replace(/\.json$/, '')), async () => {
-        const world = JSON.parse(await Deno.readTextFile(`${WORLDS_DIR}/${name}`)) as WorldProject
+        const world = JSON.parse(await fs.readFile(`${WORLDS_DIR}/${name}`, 'utf8')) as WorldProject
         if (!await mutator(world)) return false
         await writeWorldUnlocked(world)
         return true
       })
       if (changed) updated += 1
     } catch (error) {
-      if (!(error instanceof SyntaxError || error instanceof TypeError || error instanceof Deno.errors.NotFound)) failed += 1
+      if (!(error instanceof SyntaxError || error instanceof TypeError || isNotFound(error))) failed += 1
       console.warn(`[world] Could not mutate ${name}:`, error)
     }
   }
@@ -3160,7 +3165,7 @@ class WorldNotFoundError extends Error {
 async function readWorldUnlocked(slug: string, create = true): Promise<WorldProject> {
   const safe = safeSlug(slug)
   try {
-    const world = JSON.parse(await Deno.readTextFile(worldPath(safe))) as WorldProject
+    const world = JSON.parse(await fs.readFile(worldPath(safe), 'utf8')) as WorldProject
     ensureWorldProjectCollections(world)
     await refreshWorldScans(world)
     return world
@@ -3171,7 +3176,7 @@ async function readWorldUnlocked(slug: string, create = true): Promise<WorldProj
     // returns back over the real file, one such error permanently replaced
     // every thing, observation and comment with synthesizeWorld's empty
     // collections. Anything else rethrows and surfaces as a 500.
-    if (!(err instanceof Deno.errors.NotFound)) throw err
+    if (!(isNotFound(err))) throw err
     if (!create) throw new WorldNotFoundError()
     return synthesizeWorld(safe)
   }
@@ -3218,7 +3223,7 @@ function loadProjectWorld(projectId: string): Promise<WorldProject> {
   const slug = projectWorldSlug(projectId)
   return withWorldLock(slug, async () => {
     try {
-      const world = JSON.parse(await Deno.readTextFile(worldPath(slug))) as WorldProject
+      const world = JSON.parse(await fs.readFile(worldPath(slug), 'utf8')) as WorldProject
       ensureWorldProjectCollections(world)
       if (world.projectId !== projectId) return await synthesizeWorld(slug, projectId)
       await refreshWorldScans(world)
@@ -3226,7 +3231,7 @@ function loadProjectWorld(projectId: string): Promise<WorldProject> {
     } catch (err) {
       // Same narrowing as `readWorldUnlocked`, for the same reason: only a
       // missing file may synthesize over a project's stored world.
-      if (!(err instanceof Deno.errors.NotFound)) throw err
+      if (!(isNotFound(err))) throw err
       return synthesizeWorld(slug, projectId)
     }
   })
@@ -3319,7 +3324,7 @@ async function refreshWorldScans(world: WorldProject): Promise<void> {
   // only way to tell an unambiguous rename from one still tangled in a
   // not-yet-migrated collision. A count of 1 means no sibling scan shares
   // this id, so any job/patch naming it can only have meant this scan; a
-  // count > 1 is exactly the collision `deno task migrate-scan-ids` exists to
+  // count > 1 is exactly the collision `npm run migrate:scan-ids` exists to
   // resolve; a guess made here, live, on every GET, could differ request to
   // request and is not this function's call to make.
   const scansByCurrentId = new Map<string, number>()
@@ -3472,11 +3477,11 @@ function belongsToCurrentWorld(
  */
 async function readProjectWorldUnlocked(slug: string, projectId: string): Promise<WorldProject> {
   try {
-    const world = JSON.parse(await Deno.readTextFile(worldPath(slug))) as WorldProject
+    const world = JSON.parse(await fs.readFile(worldPath(slug), 'utf8')) as WorldProject
     ensureWorldProjectCollections(world)
     return world.projectId === projectId ? world : await synthesizeWorld(slug, projectId)
   } catch (err) {
-    if (!(err instanceof Deno.errors.NotFound)) throw err
+    if (!(isNotFound(err))) throw err
     return synthesizeWorld(slug, projectId)
   }
 }
@@ -3500,11 +3505,13 @@ const worldHandOver = createWorldHandOver({
   },
   // A world that has gone since is not made again by a retry: the read below would build a new one for the slug.
   readWorld: async (slug) => {
-    await Deno.stat(worldPath(safeSlug(slug)))
+    await fs.stat(worldPath(safeSlug(slug)))
     return loadWorld(slug)
   },
   sleep,
-  later: (run, ms) => Deno.unrefTimer(setTimeout(run, ms)),
+  later: (run, ms) => {
+    setTimeout(run, ms).unref()
+  },
   warn: (message, error) => console.warn(message, error),
 })
 
@@ -3585,7 +3592,7 @@ function clientBaseUrl(c: { req: { url: string; header: (name: string) => string
  * the browser does.
  */
 function person4dCallbackBase(): string {
-  const override = Deno.env.get('FDANYONE_CALLBACK_BASE')
+  const override = process.env.FDANYONE_CALLBACK_BASE
   if (override) return override.replace(/\/+$/, '')
   // With no host found this is the neutral fallback, which the off-box service cannot reach: the boot warning says
   // so, and FDANYONE_CALLBACK_BASE is the fix.
@@ -3783,7 +3790,7 @@ function broadcastLegacyJobUpdate(wj: WorldJob): void {
 async function worldOfStoredScan(filename: string): Promise<{ slug: string; projectId: string | null }> {
   let meta: Record<string, unknown> = {}
   try {
-    const parsed: unknown = JSON.parse(await Deno.readTextFile(scanMetaPath(filename)))
+    const parsed: unknown = JSON.parse(await fs.readFile(scanMetaPath(filename), 'utf8'))
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) meta = parsed as Record<string, unknown>
   } catch { /* no sidecar: filed under no Place */ }
   const projectId = scanProjectId(meta)
@@ -4111,7 +4118,7 @@ async function _dispatchWorldJob(slug: string, jobId: string, signal?: AbortSign
  * "iterate every world file, apply logic, save only if changed" helper
  * `removeScanFromWorlds` already uses) instead of a second `WORLDS_DIR`
  * directory-scan implementation — ADR 0001, and this ticket's own Open
- * Questions answer. Called once, at boot, right before `Deno.serve(...)`
+ * Questions answer. Called once, at boot, right before `serve(...)`
  * (see the call site's comment for why not earlier — TDZ on later
  * module-level consts the seeded pump dispatch can reach).
  */
@@ -4190,11 +4197,11 @@ async function scanGlbBytesForExport(filename: string): Promise<Uint8Array | nul
   const base = filename.replace(/\.glb$/, '')
   let target = filename
   try {
-    const manifest = JSON.parse(await Deno.readTextFile(`${SCANS_DIR}/${base}.manifest.json`)) as OptimizeScanManifest
+    const manifest = JSON.parse(await fs.readFile(`${SCANS_DIR}/${base}.manifest.json`, 'utf8')) as OptimizeScanManifest
     if (manifest.artifacts?.optimized?.filename) target = manifest.artifacts.optimized.filename
   } catch { /* no manifest: the viewer loads the raw upload */ }
   try {
-    return await Deno.readFile(`${SCANS_DIR}/${target}`)
+    return await readBytes(`${SCANS_DIR}/${target}`)
   } catch {
     return null
   }
@@ -4230,11 +4237,11 @@ async function _runExportWorldJob(slug: string, jobId: string, signal?: AbortSig
     const path = worldExportPath(slug)
     const tmp = `${path}.${crypto.randomUUID()}.tmp`
     try {
-      await Deno.writeFile(tmp, exported.bytes)
-      await Deno.rename(tmp, path)
+      await fs.writeFile(tmp, exported.bytes)
+      await fs.rename(tmp, path)
     } catch (err) {
       // A failed write leaves no copy of the scans' geometry behind: no deletion path would look for it.
-      await Deno.remove(tmp).catch(() => {})
+      await fs.rm(tmp).catch(() => {})
       throw err
     }
 
@@ -4309,7 +4316,7 @@ async function detectionLikesForWorld(world: WorldProject): Promise<DetectionLik
     if (!scanTakesPartInThingMatching(scan)) continue
     let meta: Record<string, unknown> = {}
     try {
-      meta = JSON.parse(await Deno.readTextFile(scanMetaPath(scan.filename))) as Record<string, unknown>
+      meta = JSON.parse(await fs.readFile(scanMetaPath(scan.filename), 'utf8')) as Record<string, unknown>
     } catch { /* no metadata sidecar */ }
 
     const withPositions = detectionsFromMeta(meta['detections'])
@@ -4365,7 +4372,7 @@ async function _runSplatAlignJob(slug: string, jobId: string): Promise<void> {
     // runSplatAlign already treats as a skip.
     let calibration: ScanCalibration | null = null
     try {
-      const raw = JSON.parse(await Deno.readTextFile(scanMetaPath(scan.filename))) as Record<string, unknown>
+      const raw = JSON.parse(await fs.readFile(scanMetaPath(scan.filename), 'utf8')) as Record<string, unknown>
       const candidate = raw['calibration']
       if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
         calibration = candidate as ScanCalibration
@@ -4413,7 +4420,7 @@ async function _runSplatAlignJob(slug: string, jobId: string): Promise<void> {
         const metaPath = scanMetaPath(scan.filename)
         let meta: Record<string, unknown> = {}
         try {
-          meta = JSON.parse(await Deno.readTextFile(metaPath)) as Record<string, unknown>
+          meta = JSON.parse(await fs.readFile(metaPath, 'utf8')) as Record<string, unknown>
         } catch { /* no sidecar yet — this run mints one */ }
         // The record is replaced and the floor height it held is kept beside it (withReplacedCalibration): the scan is still
         // placed by the flat transform, and the manifest's calibrationGroundY would read null once the record went.
@@ -4433,7 +4440,7 @@ async function _runSplatAlignJob(slug: string, jobId: string): Promise<void> {
     let segmentsExist = false
     if (result.status === 'ok') {
       try {
-        await Deno.stat(`${sessionPath}/panoptic.segments.json`)
+        await fs.stat(`${sessionPath}/panoptic.segments.json`)
         segmentsExist = true
       } catch { /* nothing segmented yet; a panoptic-scan that finds objects queues its own lift (F-28) */ }
     }
@@ -4523,7 +4530,7 @@ async function _runColmapPosesJob(slug: string, jobId: string, signal?: AbortSig
     const scanGlbPath = `${SCANS_DIR}/${scan.filename}`
     let scanGlbExists = true
     try {
-      await Deno.stat(scanGlbPath)
+      await fs.stat(scanGlbPath)
     } catch {
       scanGlbExists = false
     }
@@ -5482,7 +5489,7 @@ function _runPlaceRegisterJob(slug: string, jobId: string): Promise<void> {
  */
 function placeRegisterSfmHost(): PlaceRegisterSfmHost {
   return {
-    enabled: sfmEnabled((name) => Deno.env.get(name)),
+    enabled: sfmEnabled((name) => process.env[name]),
     sessionsDir: SESSIONS_DIR,
     workRoot: (projectId) => {
       const dir = projectMediaDirPath(PROJECT_MEDIA_DIR, projectId)
@@ -5587,7 +5594,7 @@ async function _runOptimizeScanJob(slug: string, jobId: string, signal?: AbortSi
 
     // ── Ported near-verbatim from jobs.ts's JobQueue._runOptimize() ──────────
     const sourcePath = `${SCANS_DIR}/${filename}`
-    const glb = await Deno.readFile(sourcePath)
+    const glb = await readBytes(sourcePath)
     console.log(`[world-jobs] optimizing ${filename} (${(glb.byteLength / 1024).toFixed(0)} KB)`)
 
     // Stamp the one provenance field the client cannot know. Derived from the
@@ -5602,7 +5609,7 @@ async function _runOptimizeScanJob(slug: string, jobId: string, signal?: AbortSi
     const base = filename.replace(/\.glb$/, '')
 
     const optimizedName = `${base}.opt.glb`
-    await Deno.writeFile(`${SCANS_DIR}/${optimizedName}`, result.optimized.bytes)
+    await fs.writeFile(`${SCANS_DIR}/${optimizedName}`, result.optimized.bytes)
 
     // pipeline returns coarsest-first; name finest as lod1, coarser as lod2…
     const lodEntries: OptimizeScanManifest['artifacts']['lods'] = []
@@ -5610,7 +5617,7 @@ async function _runOptimizeScanJob(slug: string, jobId: string, signal?: AbortSi
     for (let i = 0; i < finestFirst.length; i++) {
       const lod = finestFirst[i]
       const lodFilename = `${base}.lod${i + 1}.glb`
-      await Deno.writeFile(`${SCANS_DIR}/${lodFilename}`, lod.bytes)
+      await fs.writeFile(`${SCANS_DIR}/${lodFilename}`, lod.bytes)
       lodEntries.push({
         filename: lodFilename,
         bytes: lod.bytes.byteLength,
@@ -5635,10 +5642,7 @@ async function _runOptimizeScanJob(slug: string, jobId: string, signal?: AbortSi
         lods: lodEntries,
       },
     }
-    await Deno.writeTextFile(
-      `${SCANS_DIR}/${base}.manifest.json`,
-      JSON.stringify(manifest, null, 2),
-    )
+    await fs.writeFile(`${SCANS_DIR}/${base}.manifest.json`, JSON.stringify(manifest, null, 2))
 
     const ratio = result.optimized.bytes.byteLength / glb.byteLength
     const note = `${(glb.byteLength / 1024).toFixed(0)} KB → ${(result.optimized.bytes.byteLength / 1024).toFixed(0)} KB (${Math.round(ratio * 100)}%)` +
@@ -5942,7 +5946,7 @@ function jobFailureReason(job: WorldJob, world: WorldProject, preflight: JobPref
  */
 function readyStatusFor(scan: ScanManifest): ScanManifestStatus {
   try {
-    if (!Deno.statSync(`${SCANS_DIR}/${scan.filename}`).isFile) return 'processing'
+    if (!statSync(`${SCANS_DIR}/${scan.filename}`).isFile()) return 'processing'
   } catch {
     return 'processing' // ingested, awaiting geometry — the same state ingest set
   }
@@ -6032,30 +6036,30 @@ function jobResultFor(job: WorldJob): string {
       return 'Person reconstructed in 4D. The .4d/ sequence is available as a splat4d layer on the scan.'
     case 'thing-interactive-asset':
       // Dead branch at runtime: _runThingInteractiveAssetJob writes the result itself, from the delivery's own
-      // verdicts, and never calls jobResultFor. Present only so this switch stays exhaustive under `deno check`.
+      // verdicts, and never calls jobResultFor. Present only so this switch stays exhaustive under `npm run typecheck:server`.
       return 'PhysAg3D made an interactive asset of a Thing from one keyframe. The GLB and the delivery report are on the job.'
     case 'memory-push':
       return 'Scan pushed to Companion Memory as a capture.scan event with the GLB attached.'
     case 'export-world':
       // Dead branch at runtime: _runExportWorldJob always sets currentJob.result
       // itself (it names any scan left out), and never calls jobResultFor.
-      // Present only so this switch stays exhaustive under `deno check`.
+      // Present only so this switch stays exhaustive under `npm run typecheck:server`.
       return 'World export written beside the world manifest.'
     case 'keyframe-purge':
       // Dead branch at runtime: _runKeyframePurgeJob sets the result itself (counts only) and never calls
-      // jobResultFor. Present only so this switch stays exhaustive under `deno check`.
+      // jobResultFor. Present only so this switch stays exhaustive under `npm run typecheck:server`.
       return 'Camera frames older than the retention period were purged.'
     case 'optimize-scan':
       // Dead branch at runtime: _runOptimizeScanJob always sets
       // currentJob.result itself (the size-reduction note, ADR 0003's
       // Job.note → WorldJob.result mapping) and never calls jobResultFor —
-      // present only so this switch stays exhaustive under `deno check`
+      // present only so this switch stays exhaustive under `npm run typecheck:server`
       // now that WorldJobType includes 'optimize-scan'.
       return 'Scan optimized: quantized (+Draco) GLB and coarse-to-fine LOD previews written.'
     case 'place-register':
       // Dead branch at runtime: runPlaceRegisterJob always sets the result itself (what was measured, and that
       // nothing moves until a person applies it) and never calls jobResultFor. Present only so this switch
-      // stays exhaustive under `deno check`.
+      // stays exhaustive under `npm run typecheck:server`.
       return 'Alignment check compared this scan with the Place\'s other scans. A proposal, if any, is on the job; nothing is applied.'
   }
 }
@@ -6195,7 +6199,7 @@ async function frameObservationsForScan(scan: ScanManifest, limit = 500): Promis
 
   let raw = ''
   try {
-    raw = await Deno.readTextFile(`${dir}/keyframes.jsonl`)
+    raw = await fs.readFile(`${dir}/keyframes.jsonl`, 'utf8')
   } catch {
     // The session exists and simply streamed nothing. Not an error.
     return []
@@ -6275,10 +6279,10 @@ app.get('/worlds', async (c) => {
   const worlds: WorldProject[] = []
   const stored = await listStoredScans().catch(() => [])
   try {
-    for await (const entry of Deno.readDir(WORLDS_DIR)) {
-      if (!entry.isFile || !entry.name.endsWith('.json')) continue
+    for (const entry of await fs.readdir(WORLDS_DIR, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue
       try {
-        worlds.push(JSON.parse(await Deno.readTextFile(`${WORLDS_DIR}/${entry.name}`)) as WorldProject)
+        worlds.push(JSON.parse(await fs.readFile(`${WORLDS_DIR}/${entry.name}`, 'utf8')) as WorldProject)
       } catch { /* ignore one broken world */ }
     }
   } catch { /* directory may not exist yet */ }
@@ -6301,7 +6305,7 @@ app.post('/worlds', async (c) => {
   const slug = safeSlug(body.shareSlug ?? body.name ?? `world-${Date.now()}`)
   const existingPath = worldPath(slug)
   try {
-    await Deno.stat(existingPath)
+    await fs.stat(existingPath)
     return c.json({ error: 'World already exists', shareSlug: slug }, 409)
   } catch { /* create */ }
   const { world } = await updateWorld(slug, (world) => {
@@ -6546,14 +6550,14 @@ app.get('/worlds/:slug/frames/:scanId', async (c) => {
 // SCAN_REQUIRE_AUTH=1), and no token only on an install that is open by design. Anonymous viewing covers
 // GET /worlds/:slug, not this. Do not add `allowAnonymous` here: once sign-in is on (or SCAN_REQUIRE_AUTH=1),
 // /scans/*.glb needs a Companion session, and the session guard on /worlds covers only the exact path, not
-// /worlds/:slug/..., so an anonymous export would be the one way round it (tests/unit/deno/export_route_guard.test.ts).
+// /worlds/:slug/..., so an anonymous export would be the one way round it (tests/unit/server/export_route_guard.test.ts).
 app.get('/worlds/:slug/export.glb', async (c) => {
   const slug = c.req.param('slug')
   const world = await findWorld(slug)
   if (!world) return c.json(WORLD_NOT_FOUND, 404)
   const { denied } = await worldAccess(c, world, 'viewer')
   if (denied) return denied
-  const data = await Deno.readFile(worldExportPath(slug)).catch(() => null)
+  const data = await readBytes(worldExportPath(slug)).catch(() => null)
   if (!data) return c.json({ error: 'World export has not been built. Queue an export-world job for this world first.' }, 404)
   return new Response(data, {
     headers: {
@@ -6597,10 +6601,10 @@ app.post('/upload-summary', async (c) => {
 async function findFilenameBySessionId(sessionId: string): Promise<string | null> {
   if (!sessionId) return null
   try {
-    for await (const entry of Deno.readDir(SCANS_DIR)) {
-      if (!entry.isFile || !entry.name.endsWith('.json')) continue
+    for (const entry of await fs.readdir(SCANS_DIR, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue
       try {
-        const raw = await Deno.readTextFile(`${SCANS_DIR}/${entry.name}`)
+        const raw = await fs.readFile(`${SCANS_DIR}/${entry.name}`, 'utf8')
         const meta = JSON.parse(raw) as Record<string, unknown>
         if (meta['sessionId'] === sessionId) {
           return entry.name.replace(/\.json$/, '.glb')
@@ -6646,7 +6650,7 @@ app.post('/process-scan', async (c) => {
   // Read stored metadata (.json companion file saved alongside .glb)
   let meta: Record<string, unknown> = {}
   try {
-    const raw = await Deno.readTextFile(metaPath)
+    const raw = await fs.readFile(metaPath, 'utf8')
     meta = JSON.parse(raw) as Record<string, unknown>
   } catch { /* no metadata file — use empty object */ }
 
@@ -6727,7 +6731,7 @@ const DEFAULT_PROJECT: ProjectRecord = {
   areas: [{ areaId: 'area-default', name: 'Unassigned', kind: 'site', parentAreaId: null }],
 }
 
-const PROJECTS_FILE = Deno.env.get('PROJECTS_FILE') ?? './projects.json'
+const PROJECTS_FILE = process.env.PROJECTS_FILE ?? './projects.json'
 let projectMutationQueue: Promise<void> = Promise.resolve()
 
 /**
@@ -7023,7 +7027,7 @@ registerGeoreferenceRoutes(app, {
  * first, and derive the filename from the validated role rather than trusting
  * anything in the request.
  */
-const PROJECT_MEDIA_DIR = Deno.env.get('PROJECT_MEDIA_DIR') ?? `${SCANS_DIR}/projects`
+const PROJECT_MEDIA_DIR = process.env.PROJECT_MEDIA_DIR ?? `${SCANS_DIR}/projects`
 
 // Legacy shim (FN-110): this pair serves the photos of a Place whose frame has no id, which predates ADR 0011's
 // per-frame photos (server/place_frame_routes.ts). It takes photos only for such a Place, and is kept for the phones and
@@ -7056,22 +7060,19 @@ app.post('/projects/:id/reference-photos', async (c) => {
 
   try {
     const bytes = new Uint8Array(await image.arrayBuffer())
-    await Deno.mkdir(dir, { recursive: true })
+    await fs.mkdir(dir, { recursive: true })
     const name = referencePhotoFileName(meta.role)
     // One filename per role, so re-calibrating a Place replaces its photos
     // rather than accumulating superseded ones nothing references.
-    await Deno.writeFile(`${dir}/${name}`, bytes)
-    await Deno.writeTextFile(
-      `${dir}/reference-photos.json`,
-      JSON.stringify(
+    await fs.writeFile(`${dir}/${name}`, bytes)
+    await fs.writeFile(`${dir}/reference-photos.json`, JSON.stringify(
         {
           ...(await readReferencePhotoIndex(dir)),
           [meta.role]: { ...meta, file: name, bytes: bytes.byteLength, receivedAt: Date.now() },
         },
         null,
         2,
-      ),
-    )
+      ))
     return c.json({ ok: true, role: meta.role, url: referencePhotoUrl(projectId, meta.role) })
   } catch (err) {
     console.error('[project reference-photo error]', err)
@@ -7081,7 +7082,7 @@ app.post('/projects/:id/reference-photos', async (c) => {
 
 async function readReferencePhotoIndex(dir: string): Promise<Record<string, unknown>> {
   try {
-    return JSON.parse(await Deno.readTextFile(`${dir}/reference-photos.json`)) as Record<string, unknown>
+    return JSON.parse(await fs.readFile(`${dir}/reference-photos.json`, 'utf8')) as Record<string, unknown>
   } catch {
     return {}
   }
@@ -7094,7 +7095,7 @@ app.get('/projects/:id/reference-photos/:file', async (c) => {
   const role = roleForReferencePhotoFile(c.req.param('file'))
   if (!dir || !role) return c.json({ error: 'Invalid reference photo path' }, 400)
   try {
-    const data = await Deno.readFile(`${dir}/${referencePhotoFileName(role)}`)
+    const data = await readBytes(`${dir}/${referencePhotoFileName(role)}`)
     return new Response(data, {
       headers: {
         'Content-Type': 'image/jpeg',
@@ -7162,7 +7163,7 @@ app.delete('/projects/:id', async (c) => {
     if (!deleted.deleted) return c.json({ error: 'Not found' }, 404)
     return c.json({ ok: true, referencePhotosRemoved: deleted.referencePhotosRemoved, worldsRemoved: deleted.worldsRemoved })
   } catch (err) {
-    console.error(`[project delete] stopped on an error (${err instanceof Error ? err.name : 'Error'})`)
+    console.error(`[project delete] stopped on an error (${errorKind(err)})`)
     return c.json({ error: 'Could not delete this Place completely, so it was kept. Try again.' }, 500)
   }
 })
@@ -7190,7 +7191,7 @@ app.post('/projects/:id/merge', async (c) => {
     try {
       await removePlaceMedia(PROJECT_MEDIA_DIR, sourceProjectId)
     } catch (err) {
-      console.error(`[project merge] could not remove the reference photos (${err instanceof Error ? err.name : 'Error'})`)
+      console.error(`[project merge] could not remove the reference photos (${errorKind(err)})`)
       return { result: { target, photosFailed: true }, save: false }
     }
 
@@ -7276,7 +7277,7 @@ app.post('/projects/:id/merge', async (c) => {
     handOver = done.handed
     removal = done.removed
   } catch (err) {
-    console.error(`[project merge] could not remove the merged Place's world (${err instanceof Error ? err.name : 'Error'})`)
+    console.error(`[project merge] could not remove the merged Place's world (${errorKind(err)})`)
     return c.json({ error: 'The Places were merged, but the merged Place\'s world could not be removed, so it was kept. Ask for the merge again to finish.' }, 500)
   }
   // ADR 0011 keeps a placement a person set by hand in the world a scan left, because it is a position in that world. A world that
@@ -7317,7 +7318,7 @@ async function removeGonePlaceWorlds(projectId: string, keep: KeepWorld): Promis
 /**
  * Gives every scan that a comment, a patch or a job of the world names, and that has no row in it, the row a read of the world
  * would have made for it, when exactly one stored scan has that id. A record whose scan is not on disk is left as it is, and so
- * is one whose id two scans share (the collision `deno task migrate-scan-ids` resolves): neither can be said to be waiting.
+ * is one whose id two scans share (the collision `npm run migrate:scan-ids` resolves): neither can be said to be waiting.
  */
 async function giveRecordsTheirScanRows(slug: string): Promise<void> {
   const stored = await listStoredScans()
@@ -7403,7 +7404,7 @@ async function rewriteScanProject(
   for (const filename of filenames) {
     const path = scanMetaPath(filename)
     try {
-      const meta = JSON.parse(await Deno.readTextFile(path)) as Record<string, unknown>
+      const meta = JSON.parse(await fs.readFile(path, 'utf8')) as Record<string, unknown>
       meta['projectId'] = projectId
       meta['floorId'] = floorId
       meta['roomId'] = roomId
@@ -7431,11 +7432,11 @@ async function rewriteScanProject(
 
 async function rewriteProjectReferences(sourceProjectId: string, targetProjectId: string): Promise<HandOverReport> {
   const filed = new Set<string>()
-  for await (const entry of Deno.readDir(SCANS_DIR)) {
-    if (!entry.isFile || !entry.name.endsWith('.json')) continue
+  for (const entry of await fs.readdir(SCANS_DIR, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue
     const path = `${SCANS_DIR}/${entry.name}`
     try {
-      const meta = JSON.parse(await Deno.readTextFile(path)) as Record<string, unknown>
+      const meta = JSON.parse(await fs.readFile(path, 'utf8')) as Record<string, unknown>
       if (meta['projectId'] !== sourceProjectId) continue
       meta['projectId'] = targetProjectId
       await writeJsonAtomic(path, meta)
@@ -7484,43 +7485,45 @@ function rejectDisallowedWsOrigin(
 // Broadcast-only WebSocket: scan uploads, job transitions, session lifecycle.
 // The desktop viewer subscribes to refresh its scan list live.
 
-app.get('/events', (c) => {
-  const rejected = rejectDisallowedWsOrigin(c)
-  if (rejected) return rejected
+app.get('/events', (c, next) => rejectDisallowedWsOrigin(c) ?? next(), upgradeWebSocket((c) => {
   // `?world=<slug>` keeps this socket to that world's events and the unscoped ones (F-09).
   const wanted = c.req.query('world')
-  const { socket, response } = Deno.upgradeWebSocket(c.req.raw)
-  socket.addEventListener('open', () => {
-    eventSockets.set(socket, { world: wanted ? safeSlug(wanted) : null })
-    // Shim (ADR 0003 / ticket 0004): this "pending jobs" count used to read
-    // jobQueue.jobs directly — a fifth JobQueue consumer beyond the four
-    // named surfaces, found via this ticket's closing grep and folded into
-    // scope here. Same translate-then-count as the other surfaces so the
-    // legacy queued|running vocabulary is preserved.
-    // Guarded: an unhandled rejection here would terminate the Deno process,
-    // so a client that disconnects between 'open' and this send (or a
-    // transiently unreadable world file) must not be able to take the server
-    // down. The handshake is best-effort — no in-repo listener branches on
-    // 'hello', so dropping it degrades nothing.
-    void (async () => {
-      try {
-        const world = await loadWorld('default')
-        if (socket.readyState !== WebSocket.OPEN) return
-        const pending = world.jobs
-          .filter(j => j.type === 'optimize-scan')
-          .map(worldJobToLegacyJob)
-          .filter(j => j.status === 'queued' || j.status === 'running').length
-        // `clientLogs` says whether phone console records are sent on this stream (CLIENT_LOGS_BROADCAST).
-        socket.send(JSON.stringify({ type: 'hello', jobs: pending, clientLogs: CLIENT_LOGS_BROADCAST }))
+  return {
+    onOpen: (_event, socket) => {
+      eventSockets.set(socket, { world: wanted ? safeSlug(wanted) : null })
+      // Shim (ADR 0003 / ticket 0004): this "pending jobs" count used to read
+      // jobQueue.jobs directly — a fifth JobQueue consumer beyond the four
+      // named surfaces, found via this ticket's closing grep and folded into
+      // scope here. Same translate-then-count as the other surfaces so the
+      // legacy queued|running vocabulary is preserved.
+      // Guarded: an unhandled rejection here would end the server process,
+      // so a client that disconnects between 'open' and this send (or a
+      // transiently unreadable world file) must not be able to take the server
+      // down. The handshake is best-effort — no in-repo listener branches on
+      // 'hello', so dropping it degrades nothing.
+      void (async () => {
+        try {
+          const world = await loadWorld('default')
+          if (socket.readyState !== WS_OPEN) return
+          const pending = world.jobs
+            .filter(j => j.type === 'optimize-scan')
+            .map(worldJobToLegacyJob)
+            .filter(j => j.status === 'queued' || j.status === 'running').length
+          // `clientLogs` says whether phone console records are sent on this stream (CLIENT_LOGS_BROADCAST).
+          socket.send(JSON.stringify({ type: 'hello', jobs: pending, clientLogs: CLIENT_LOGS_BROADCAST }))
       } catch (err) {
         console.error('[events] hello handshake failed:', err)
       }
     })()
-  })
-  socket.addEventListener('close', () => eventSockets.delete(socket))
-  socket.addEventListener('error', () => eventSockets.delete(socket))
-  return response
-})
+  },
+  onClose: (_event, socket) => {
+    eventSockets.delete(socket)
+  },
+  onError: (_event, socket) => {
+    eventSockets.delete(socket)
+  },
+  }
+}))
 
 // ── Signalling relay — /rtc-signal?room=<id>&role=phone|viewer|capture ───────
 //
@@ -7537,126 +7540,137 @@ app.get('/events', (c) => {
 // coordinated capture is the point of the 4D person wave, so it is ungated.
 const rtcRooms = new Map<string, RtcRoom>()
 
-app.get('/rtc-signal', (c) => {
+/** The role a /rtc-signal request asks for: `phone`, `capture`, or else `viewer`. */
+function rtcRoleOf(param: string | null | undefined): RtcRole {
+  return param === 'phone' ? 'phone' : param === 'capture' ? 'capture' : 'viewer'
+}
+
+app.get('/rtc-signal', (c, next) => {
   const rejected = rejectDisallowedWsOrigin(c)
   if (rejected) return rejected
-  const url = new URL(c.req.url)
-  const roleParam = url.searchParams.get('role')
-  const role: RtcRole = roleParam === 'phone' ? 'phone' : roleParam === 'capture' ? 'capture' : 'viewer'
-
   // Per-role gate: the preview pair is experimental, capture is not.
-  if (role !== 'capture' && !WEBRTC_LIVE_ENABLED) {
+  if (rtcRoleOf(c.req.query('role')) !== 'capture' && !WEBRTC_LIVE_ENABLED) {
     return c.json({ error: 'WebRTC live streaming is disabled.' }, 404)
   }
-
-  const { socket, response } = Deno.upgradeWebSocket(c.req.raw)
+  return next()
+}, upgradeWebSocket((c) => {
+  const url = new URL(c.req.url)
+  const role = rtcRoleOf(url.searchParams.get('role'))
   const roomId = (url.searchParams.get('room') ?? 'default').replace(/[^a-zA-Z0-9_-]/g, '')
   const clientId = url.searchParams.get('clientId')
   const label = url.searchParams.get('label') ?? undefined
+  // The room is joined when the socket opens. This callback also runs for a request that is never upgraded, which
+  // must join nothing.
+  let room: RtcRoom | null = null
+  let peer: RtcPeer | null = null
 
-  if (!rtcRooms.has(roomId)) rtcRooms.set(roomId, { members: new Map() })
-  const room = rtcRooms.get(roomId)!
+  return {
+    onOpen: (_event, socket) => {
+      if (!rtcRooms.has(roomId)) rtcRooms.set(roomId, { members: new Map() })
+      const joinedRoom = rtcRooms.get(roomId)!
+      const joined = joinRoom(joinedRoom, role, clientId, socket, label)
+      if (!joined.ok) {
+        // Refuse explicitly rather than dropping the socket, so the device can say
+        // why it could not join instead of showing an unexplained failure.
+        try { socket.send(JSON.stringify({ type: 'join-rejected', reason: joined.reason, message: joined.message })) } catch { /* closed */ }
+        try { socket.close() } catch { /* already gone */ }
+        return
+      }
+      room = joinedRoom
+      peer = joined.peer
+      announceJoin(joinedRoom, joined.peer, joined.superseded)
+    },
 
-  const joined = joinRoom(room, role, clientId, socket, label)
-  if (!joined.ok) {
-    // Refuse explicitly rather than dropping the socket, so the device can say
-    // why it could not join instead of showing an unexplained failure.
-    socket.addEventListener('open', () => {
-      try { socket.send(JSON.stringify({ type: 'join-rejected', reason: joined.reason, message: joined.message })) } catch { /* closed */ }
-      try { socket.close() } catch { /* already gone */ }
-    })
-    return response
+    onMessage: (ev, socket) => {
+      if (!room || !peer) return
+      const raw = ev.data as string
+
+      // Clock-sync probes are answered here rather than relayed: the server's
+      // clock is the shared reference every member estimates an offset against,
+      // and a peer-relayed reply would measure the wrong path. Everything else is
+      // forwarded without inspection, exactly as before.
+      if (typeof raw === 'string' && raw.includes('"sync-ping"')) {
+        try {
+          const msg = JSON.parse(raw) as Record<string, unknown>
+          if (msg['type'] === 'sync-ping') {
+            const serverTime = Date.now()
+            try {
+              socket.send(JSON.stringify({ type: 'sync-pong', id: msg['id'] ?? null, t1: serverTime, t2: Date.now() }))
+            } catch { /* closing */ }
+            return
+          }
+        } catch { /* fall through to relay */ }
+      }
+
+      for (const other of relayTargets(room, peer)) {
+        try { other.ws.send(raw) } catch { /* other peer closed */ }
+      }
+    },
+
+    onClose: () => {
+      if (!room || !peer) return
+      // Only the socket that currently holds the slot may clear it. A superseded
+      // socket closing after its replacement registered must not evict the live
+      // peer, nor tell the others that this member has left when it has not.
+      if (!leaveRoom(room, peer)) {
+        console.log(`[rtc] superseded ${role} socket closed in room "${roomId}" — live peer kept`)
+        return
+      }
+      console.log(`[rtc] ${role} (${peer.peerId}) left room "${roomId}"`)
+      if (room.members.size === 0) {
+        rtcRooms.delete(roomId)
+        return
+      }
+      // Same rule on departure: roster to capture members only, so the preview
+      // pair's message stream is exactly what it was.
+      const capture = [...room.members.values()].filter(p => p.role === 'capture')
+      if (capture.length > 0) {
+        sendAll(capture, { type: 'roster', room: roomId, members: roster(room) })
+      }
+      if (role === 'phone' || role === 'viewer') {
+        sendAll(
+          [...room.members.values()].filter(p => p.role === 'phone' || p.role === 'viewer'),
+          { type: 'peer-left', role },
+        )
+      }
+    },
   }
-  const peer = joined.peer
 
-  // A role has exactly one live socket. Reconnects (and a second editor tab)
-  // arrive while the previous socket is still half-open, so the incumbent is
-  // closed here rather than silently dropped — otherwise its later close event
-  // would delete the peer that replaced it and wedge the room for both sides.
-  if (joined.superseded) {
-    console.log(`[rtc] ${peer.peerId} reconnected to room "${roomId}" — closing the superseded socket`)
-    try { joined.superseded.ws.close() } catch { /* already gone */ }
+  function announceJoin(room: RtcRoom, peer: RtcPeer, superseded: RtcPeer | null | undefined): void {
+    // A role has exactly one live socket. Reconnects (and a second editor tab)
+    // arrive while the previous socket is still half-open, so the incumbent is
+    // closed here rather than silently dropped — otherwise its later close event
+    // would delete the peer that replaced it and wedge the room for both sides.
+    if (superseded) {
+      console.log(`[rtc] ${peer.peerId} reconnected to room "${roomId}" — closing the superseded socket`)
+      try { superseded.ws.close() } catch { /* already gone */ }
+    }
+    console.log(`[rtc] ${role} (${peer.peerId}) joined room "${roomId}"`)
+
+    const announce = () => {
+      // The preview handshake is FIRST and is sent only to the preview pair,
+      // byte-for-byte as before this endpoint gained take rooms.
+      //
+      // This ordering is load-bearing, not cosmetic: `mock-rtc-room.spec.ts`
+      // asserts on the *first* frame a joining viewer receives, and a roster sent
+      // ahead of `peer-ready` silently broke the live feed's rendezvous. The
+      // roster is a take concept — a phone/viewer preview pair has no use for one
+      // — so it goes only to capture members.
+      if (previewPairReady(room)) {
+        sendAll(
+          [...room.members.values()].filter(p => p.role === 'phone' || p.role === 'viewer'),
+          { type: 'peer-ready' },
+        )
+      }
+      const capture = [...room.members.values()].filter(p => p.role === 'capture')
+      if (capture.length > 0) {
+        sendAll(capture, { type: 'roster', room: roomId, members: roster(room) })
+      }
+    }
+
+    announce()
   }
-  console.log(`[rtc] ${role} (${peer.peerId}) joined room "${roomId}"`)
-
-  const announce = () => {
-    // The preview handshake is FIRST and is sent only to the preview pair,
-    // byte-for-byte as before this endpoint gained take rooms.
-    //
-    // This ordering is load-bearing, not cosmetic: `mock-rtc-room.spec.ts`
-    // asserts on the *first* frame a joining viewer receives, and a roster sent
-    // ahead of `peer-ready` silently broke the live feed's rendezvous. The
-    // roster is a take concept — a phone/viewer preview pair has no use for one
-    // — so it goes only to capture members.
-    if (previewPairReady(room)) {
-      sendAll(
-        [...room.members.values()].filter(p => p.role === 'phone' || p.role === 'viewer'),
-        { type: 'peer-ready' },
-      )
-    }
-    const capture = [...room.members.values()].filter(p => p.role === 'capture')
-    if (capture.length > 0) {
-      sendAll(capture, { type: 'roster', room: roomId, members: roster(room) })
-    }
-  }
-
-  socket.addEventListener('open', () => announce())
-  if (socket.readyState === WS_OPEN) announce()
-
-  socket.addEventListener('message', (ev) => {
-    const raw = ev.data as string
-
-    // Clock-sync probes are answered here rather than relayed: the server's
-    // clock is the shared reference every member estimates an offset against,
-    // and a peer-relayed reply would measure the wrong path. Everything else is
-    // forwarded without inspection, exactly as before.
-    if (typeof raw === 'string' && raw.includes('"sync-ping"')) {
-      try {
-        const msg = JSON.parse(raw) as Record<string, unknown>
-        if (msg['type'] === 'sync-ping') {
-          const serverTime = Date.now()
-          try {
-            socket.send(JSON.stringify({ type: 'sync-pong', id: msg['id'] ?? null, t1: serverTime, t2: Date.now() }))
-          } catch { /* closing */ }
-          return
-        }
-      } catch { /* fall through to relay */ }
-    }
-
-    for (const other of relayTargets(room, peer)) {
-      try { other.ws.send(raw) } catch { /* other peer closed */ }
-    }
-  })
-
-  socket.addEventListener('close', () => {
-    // Only the socket that currently holds the slot may clear it. A superseded
-    // socket closing after its replacement registered must not evict the live
-    // peer, nor tell the others that this member has left when it has not.
-    if (!leaveRoom(room, peer)) {
-      console.log(`[rtc] superseded ${role} socket closed in room "${roomId}" — live peer kept`)
-      return
-    }
-    console.log(`[rtc] ${role} (${peer.peerId}) left room "${roomId}"`)
-    if (room.members.size === 0) {
-      rtcRooms.delete(roomId)
-      return
-    }
-    // Same rule on departure: roster to capture members only, so the preview
-    // pair's message stream is exactly what it was.
-    const capture = [...room.members.values()].filter(p => p.role === 'capture')
-    if (capture.length > 0) {
-      sendAll(capture, { type: 'roster', room: roomId, members: roster(room) })
-    }
-    if (role === 'phone' || role === 'viewer') {
-      sendAll(
-        [...room.members.values()].filter(p => p.role === 'phone' || p.role === 'viewer'),
-        { type: 'peer-left', role },
-      )
-    }
-  })
-
-  return response
-})
+}))
 
 // ── "Sign in with Companion Account" (CI-Portal OIDC) ────────────────────────
 // Inert unless PORTAL_OIDC_ENABLED=1 — see portal_auth.ts for the flow and env.
@@ -7699,11 +7713,11 @@ registerMemoryPush(app, memoryPushCfg, {
 // fall-through so a single container port hosts both UI and API. STATIC_DIR
 // defaults to ./dist, so the route serves whatever `npm run build` left there;
 // only when that folder does not exist does every unknown path stay a 404.
-const STATIC_DIR = Deno.env.get('STATIC_DIR') ?? './dist'
+const STATIC_DIR = process.env.STATIC_DIR ?? './dist'
 let staticAvailable = false
 try {
-  const s = await Deno.stat(STATIC_DIR)
-  staticAvailable = s.isDirectory
+  const s = await fs.stat(STATIC_DIR)
+  staticAvailable = s.isDirectory()
 } catch { /* no dist — fine in dev */ }
 
 if (staticAvailable) {
@@ -7732,7 +7746,7 @@ if (staticAvailable) {
     if (p.includes('..')) return c.notFound()
     const file = `${STATIC_DIR}${p}`
     try {
-      const bytes = await Deno.readFile(file)
+      const bytes = await readBytes(file)
       const ext = p.slice(p.lastIndexOf('.'))
       return new Response(bytes, {
         headers: {
@@ -7759,7 +7773,7 @@ async function _runKeyframePurgeJob(slug: string, jobId: string, signal?: AbortS
     const summary = await runKeyframePurge({
       sessionsDir: SESSIONS_DIR,
       scansDir: SCANS_DIR,
-      env: (name) => Deno.env.get(name),
+      env: (name) => process.env[name],
       removeCopies: removeSessionDataElsewhere,
       signal,
       ...request,
@@ -7801,6 +7815,18 @@ async function enqueueKeyframePurgeJob(payload: { dryRun: boolean }): Promise<vo
 // A run of the photo method that died with the server left COLMAP's database and model of camera frames behind: gone first.
 await sweepAllWorkDirs(PROJECT_MEDIA_DIR)
 await recoverWorldJobsOnBoot()
-scheduleKeyframeRetention(Deno.env.get(KEYFRAME_RETENTION_ENV), () => enqueueKeyframePurgeJob({ dryRun: false }))
+scheduleKeyframeRetention(process.env[KEYFRAME_RETENTION_ENV], () => enqueueKeyframePurgeJob({ dryRun: false }))
 
-Deno.serve({ hostname: '0.0.0.0', port: PORT }, app.fetch)
+const server = serve({
+  fetch: app.fetch,
+  hostname: '0.0.0.0',
+  port: PORT,
+  // Request and Response stay Node's own classes, so a handler and the modules it calls see one kind of each.
+  overrideGlobalObjects: false,
+  // No time limit on a request: Node's default of 300 s would cut off a large upload over a slow link.
+  serverOptions: { requestTimeout: 0 },
+}, (info) => {
+  // The test harnesses read the port from this line when PORT=0.
+  console.log(`Listening on http://0.0.0.0:${info.port}/ (http://localhost:${info.port}/)`)
+})
+injectWebSocket(server)

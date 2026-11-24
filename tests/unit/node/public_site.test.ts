@@ -1,7 +1,7 @@
 /**
  * The static build on Cloudflare Pages (docs/operations/DEPLOY.md). Pages falls
  * back to index.html with a 200 for every unknown path unless the build has a
- * 404.html. With one, a link to a path that only the Deno server knows opens the
+ * 404.html. With one, a link to a path that only the server knows opens the
  * 404 page, so every link the pages ship has to resolve without that server.
  *
  * Run: npm run test:public-site
@@ -35,7 +35,7 @@ test('/editor is rewritten to a page the build produces', () => {
   assert.match(read('vite.config.ts'), new RegExp(`'${target!.slice(1)}\\.html'`), `${target} is not a Vite entry`)
 })
 
-test('every same-origin link in the shipped pages resolves without the Deno server', () => {
+test('every same-origin link in the shipped pages resolves without the server', () => {
   const known = rewrites()
   for (const page of ['index.html', 'viewer.html', 'webxr.html', 'public/smoke.html']) {
     for (const [, path] of read(page).matchAll(/href="(\/[^"?#]*)/g)) {

@@ -19,7 +19,7 @@
  * the person re-tapping a different spot next visit. Whether it helps at all is
  * what DX2 and DX5 measure; every limit below is adopted until they have.
  *
- * Pure: no DOM, no Deno, nothing from the engine. The providers hand over the
+ * Pure: no DOM, no Node API, nothing from the engine. The providers hand over the
  * frames they saw (`HitBurstFrame` in ./provider.ts), this file judges them.
  */
 import type { ARProvider, BurstFrameListener, HitBurst, HitBurstFrame, HitResult, Pose } from './provider.ts'

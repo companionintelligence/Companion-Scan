@@ -23,7 +23,7 @@
  * 0001-real-photograph-corpus.md's manual step lands) is reported as a
  * skipped failure, not a crash.
  *
- * OLLAMA_MODEL is baked into the engine at Deno-server start, so each
+ * OLLAMA_MODEL is baked into the engine at server start, so each
  * candidate gets a fresh isolated server on :8095 (data under
  * .test-run/bench/, never the real scans/ and worlds/ dirs). Per model:
  * wait for /health engineLoadState==='ready', warm up with one discarded
@@ -40,7 +40,6 @@
  */
 import { spawn, spawnSync, execSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { firstPerTier } from '../src/shared/model-catalog.ts'
@@ -57,11 +56,6 @@ const READY_TIMEOUT_MS = 120_000
 const WARMUP_MS = Number(process.env.BENCH_WARMUP_MS ?? 300_000)
 const RUN_DIR = join(root, '.test-run', 'bench')
 const CV_CORPUS_OVERRIDE = process.env.CV_CORPUS
-
-const denoBin = (() => {
-  try { return execSync('command -v deno', { shell: '/bin/sh' }).toString().trim() } catch { /* not on PATH */ }
-  return join(homedir(), '.deno', 'bin', 'deno')
-})()
 
 // Fresh isolated data dirs each run
 rmSync(RUN_DIR, { recursive: true, force: true })
@@ -188,7 +182,7 @@ async function benchModel(model) {
     return { ...row, failures: err.message }
   }
 
-  const server = spawn(denoBin, ['run', '--allow-net', '--allow-read', '--allow-write', '--allow-env', '--allow-ffi', 'server/main.ts'], {
+  const server = spawn(process.execPath, ['server/main.ts'], {
     cwd: root,
     env: {
       ...process.env,
@@ -202,15 +196,15 @@ async function benchModel(model) {
     detached: true, // own process group so teardown kills grandchildren too
   })
   currentServer = server
-  server.stdout.on('data', (d) => process.stdout.write(`[deno] ${d}`))
-  server.stderr.on('data', (d) => process.stderr.write(`[deno] ${d}`))
+  server.stdout.on('data', (d) => process.stdout.write(`[server] ${d}`))
+  server.stderr.on('data', (d) => process.stderr.write(`[server] ${d}`))
 
   try {
     await waitForReady(server)
     await warmup(model, warmupImage)
 
     // Async spawn, not execSync: a blocked parent stops draining the server's
-    // stdout pipe and a full 64KB buffer wedges the Deno API mid-request.
+    // stdout pipe and a full 64KB buffer wedges the API server mid-request.
     const evalStart = Date.now()
     await new Promise((resolve, reject) => {
       const ev = spawn('node', ['scripts/eval-cv.mjs'], {

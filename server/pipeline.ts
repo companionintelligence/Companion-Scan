@@ -15,8 +15,8 @@
  * no textures.  The `stats.textures` count is recorded so a KTX2 stage can be
  * gated on it when textured reconstruction meshes arrive.
  *
- * This module is runtime-agnostic (no Deno/Node globals) so the same code runs
- * in the Deno server and under Node for tests (`npm run smoke:pipeline`).
+ * This module is runtime-agnostic (no Node or browser globals) so the same code runs
+ * in the server and under Node for tests (`npm run smoke:pipeline`).
  *
  * ── Provenance invariant: extras live on NODES only ────────────────────────
  *

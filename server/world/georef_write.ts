@@ -1,7 +1,7 @@
 /**
  * `PUT /projects/:id/georeference`: how a Place's georeference is replaced, and the only way it is.
  *
- * Deno-API-free (ADR 0004: server/main.ts cannot be imported by a test, so what can be tested on its own lives in a file of
+ * Node-API-free (ADR 0004: server/main.ts cannot be imported by a test, so what can be tested on its own lives in a file of
  * its own), and the same shape as `applySpatialFrameWrite` in server/wp-a-projects.ts, which it copies on purpose
  * (ADR 0001): a counter the Place holds, a write that names the counter it last read, and an answer that carries what the
  * Place holds when the two disagree. The record is `Project.georeference`, the counter is `Project.georefVersion`; both are
