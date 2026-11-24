@@ -22,9 +22,11 @@ ARCore session as the AR runtime. It is the scanner and the editor. The full she
 - ARCore can still be checking when the app starts, so the page asks again: at most five times, a
   second apart (`NATIVE_RECHECKS`, `NATIVE_RECHECK_MS`).
 - ARCore is optional (the `com.google.ar.core` meta-data is `optional`), so the app installs on
-  phones without it. `supported` is true only when Google Play Services for AR is installed. The
-  plugin asks Google Play for nothing, and `reason` says what is missing. When ARCore is missing or
-  needs an update, the 8th Wall status line says so.
+  phones without it. `supported` is true only when Google Play Services for AR is installed, and
+  `reason` says what is missing. Since wave 14, `capabilities()` also reports `installable`, and the
+  page's `start()` asks Google Play to install or update ARCore through ARCore's own flow; a person
+  who declines gets the reason, and the scanner runs the web runtimes. When ARCore is missing or
+  needs an update, the 8th Wall status line says so. Not run on a device.
 - `ScanAR` hands the page the camera frame as a JPEG with its pose and projection
   (`captureFrame`), exact hit tests (`hitTest`), pose, feature-point and hit-grid events, and
   optional depth from the ARCore depth API. It has one origin anchor (`setOriginAnchor`,
@@ -47,9 +49,10 @@ ARCore session as the AR runtime. It is the scanner and the editor. The full she
   (#282), a local `./gradlew assembleDebug` made a debug APK of about 41 MB, and the Mobile Build
   workflow's Android job built one too (run 45260987425, 2026-11-23;
   [Builds of the merged tree](README.md#builds-of-the-merged-tree)). Neither ran the Android unit
-  tests: `./gradlew testDebugUnitTest` last passed the origin file's round trip
-  (`OriginAnchorStoreTest`) with #268 (`f6b993d`), before the merge. No build of the merged tree has
-  been installed on a phone or an emulator. A debug APK build, an install and launch on an Android
+  tests. Since wave 14 the Mobile Build workflow runs `./gradlew testDebugUnitTest` (11
+  `ScanARRules` tests and 8 `OriginAnchorStoreTest` tests, where Capacitor's template stubs were) and
+  compiles the instrumented tests, which no job runs; its run 45327838056 passed on `main` at
+  `8deb264`. No build has been installed on a phone or an emulator. A debug APK build, an install and launch on an Android
   16 emulator, and the start screen were observed before the merge, on a tree that registered a
   different plugin ([DEVICE_TEST_KIT.md](../testing/DEVICE_TEST_KIT.md#surfaces)).
 - **Web side: tested without a device.** `npm run test:native-ar` covers the codec, the provider
@@ -69,6 +72,7 @@ ARCore session as the AR runtime. It is the scanner and the editor. The full she
 | Pinned libraries | `mobile/android/app/gradle.lockfile` |
 | Web side | `src/ar/native.ts`, `src/ar/native-bridge.ts`, `src/ar/runtime-select.ts`, the runtime choice in `src/main.ts` |
 | Web build for the shell | `scripts/native/build-web.mjs` (`npm run build:web` in `mobile/`) |
+| Offline queue | `src/page-upload-queue.ts`: the app has no service worker, so the scanner page queues the scan, summary and finalize uploads it cannot send, in the IndexedDB database `companion-scan-offline-queue`, and retries them at start, when the device is back online and every minute. `src/ui/queue-notice.ts` words its notices. Not run on a device |
 | Not used | `ArSessionPlugin.java` compiles into the app and is unregistered: neither shell puts it on the bridge ([DEVICE_TEST_KIT.md](../testing/DEVICE_TEST_KIT.md#ar-in-the-shells)) |
 
 ## Build

@@ -196,11 +196,9 @@ once what is in it has been handed over.
   Place it can find there, the default Place, does not replace it. In that case the backup can still hold the default Place's record. The
   `.corrupt-<time>` copy is the owner's: it holds whatever Places the unreadable file held, no deletion reads, changes or removes it, and it stays
   until the owner removes it.
-- **A world that has gone is built again when its address is asked for** (a stale link, an open editor tab). The new world holds none of what the Place's
-  world held (its name, address, Things, comments or share tokens), and it lists up to 24 of the stored scans that no Place holds (the ones that look like
-  scans) or, when there are none, up to eight of the stored scans of any Place, which carry their own locations as they do in any world: a world for any
-  name does, and `GET /worlds/<slug>` answers a request that carries no token. That is how the server builds a world with no Place, and a deletion does
-  not change it.
+- **A world that has gone is not built again** when its address is asked for (a stale link, an open editor tab). Since wave 14 a `GET /worlds/<slug>`
+  for a world with no file answers 404, except `default` and the `project-<id>` world of a Place still in the registry. Until then the server built and
+  saved a new world for any address, listing stored scans with their locations, and answered a request that carried no token.
 - **SenseNova folders** are found through the scan's jobs in its worlds. The folder of a job that has aged out of a world's job history is
   not found by a single-scan delete; "clear all scans" removes the whole `.sensenova/` folder.
 - No button in the editor or the scanner calls `DELETE /scans/:filename` today. The only in-app deletion of server data is
@@ -228,7 +226,7 @@ contact other services, and the brief for this note said there are none. That is
 
 | Service | What it receives | When | Code |
 |---|---|---|---|
-| **OpenStreetMap Nominatim** (`nominatim.openstreetmap.org`) | The phone's latitude and longitude, to six decimal places (about 0.1 m), the page's origin as Referer, and a fixed User-Agent | Each address lookup, once a GPS fix exists. The iOS location prompt says the app "looks up its street address" | `src/geo/geo-tracker.ts` (documented there as F117) |
+| **OpenStreetMap Nominatim** (`nominatim.openstreetmap.org`) | The phone's latitude and longitude, to six decimal places (about 0.1 m), the page's origin as Referer, and a fixed User-Agent | Each address lookup, once a GPS fix exists and this device has answered yes to the one-time card that asks whether to look up the street address (the answer is kept under `companion-scan-geocode-consent`; a no sends nothing, and a different geocoder host is asked again). The iOS location prompt says the app "looks up its street address" | `src/geo/geo-tracker.ts` (documented there as F117) |
 | **Google Fonts** (`fonts.googleapis.com`, `fonts.gstatic.com`) | The device's IP address and user agent, to serve the Manrope typeface | When a page loads, unless offline | `index.html`, `viewer.html` |
 | **CARTO map tiles** (`basemaps.cartocdn.com`) | Which map tiles are requested, so roughly where the map is centred, and the IP address | When the history drawer's map or the editor's map is shown | `src/main.ts`, `src/viewer/geomap.ts` |
 | **Google Play Services for AR (ARCore)**, Android app only | Whatever Google's service collects, under Google's privacy policy | While AR runs | Disclosed in the app's Legal notices (`src/ui/legal-notices.ts`) |

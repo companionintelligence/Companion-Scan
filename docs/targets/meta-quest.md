@@ -28,23 +28,31 @@ Plan: [wave 13](../factory/13-device-targets/README.md), tickets 0005 and 0006.
   - The pose is camera-to-world in OpenGL/Blender axes, which is what the splat dataset builder reads.
   - The app sends about two keyframes a second, and only when the head has moved.
   - HTTPS only; plain http is refused.
+- **Sign-in**: when the server has sign-in on, the app opens the CI-Portal sign-in in the system
+  browser with `shell=quest`, comes back on `com.companionintelligence.scan.quest://auth` with a
+  one-time code, trades it for the session token, and sends that token as a Bearer header on
+  every request (`auth/`). Not run on a headset.
 - **A local recording**, optional, in mq3drecon's legacy layout under the app's external files folder.
   It writes `left_camera_raw/*.yuv`, the camera characteristics and image-format JSON, and `hmd_poses.csv`.
 - **Splat viewer**: the Spatial SDK splat module draws a splat downloaded over HTTPS from the person's
   server, or a local file.
-  - The SDK lists PLY and SPZ, so of the server's files the app takes `<scan>.splat.ply`.
-  - It refuses `.compressed.ply` and `.sog`.
+  - The SDK lists PLY and SPZ. From the person's server the app takes only `<scan>.splat.ply`
+    (a bare name, or an https address under its `/scans/`); any `.ply` or `.spz` only from another
+    https host or the local folder.
+  - It refuses `.compressed.ply`, `.sog` and plain `http://` (`splat/SplatSource.kt`).
 - **On-device vision hook**: ONNX Runtime, CPU provider.
   - It loads a model from the app's files folder if one is there, and says so if not.
-  - No weights are bundled, and its outputs stay on the headset.
+  - No weights are bundled, and its outputs stay on the headset. It runs only while a capture runs.
   - ONNX Runtime's own telemetry is switched off: its start-up provider is removed from the manifest, and the app calls `setTelemetry(false)`.
 
 ## Status
 
 **Builds here, not run on a headset** (2026-11-23).
 
-- `./gradlew testDebugUnitTest assembleDebug` in `meta/` passes: 81 JVM unit tests in 13 classes, and a debug APK of about 101 MB. ONNX Runtime adds about 36 MB of that. It passed again on commit `81e437c`, the tree `main` merged as `e897380` (#282) ([Builds of the merged tree](README.md#builds-of-the-merged-tree)).
-- No workflow builds `meta/` or runs its tests: those runs were local.
+- `./gradlew testDebugUnitTest assembleDebug` in `meta/` passed then with 81 JVM unit tests in 13 classes, and a debug APK of about 101 MB. ONNX Runtime adds about 36 MB of that. It passed again on commit `81e437c`, the tree `main` merged as `e897380` (#282) ([Builds of the merged tree](README.md#builds-of-the-merged-tree)).
+- Since wave 14 (#289) the app has 108 JVM unit tests, in 16 test files, and the **Quest Build**
+  workflow (`.github/workflows/quest-build.yml`, started by hand) runs them and builds the debug
+  APK. Its run 45327834865 passed on `main` at `8deb264`, after the merge.
 - The unit tests cover:
   - the pose conversions, against the server's `poseToMatrix` and the SDK's own pose classes;
   - the uploader, against an HTTPS mock server;
@@ -82,7 +90,8 @@ headset only.
 4. Start a capture. Walk the room. Stop it.
 5. The session then appears on the server like a phone's, and the existing jobs build the scan and the splat.
 
-A server with sign-in on refuses the uploads until ticket 0010 gives native apps a return URL.
+With sign-in on, press **Sign in with Companion Account** on the panel first; the uploads then
+carry the session token.
 
 ## Test
 
@@ -96,12 +105,10 @@ The Quest Browser checks for the web path stay in [web-webxr.md](web-webxr.md#te
 
 ## Known gaps
 
-- Sign-in for native apps (ticket 0010).
 - The display-time pose stamp is a heuristic. Frame times are start of exposure, with no rolling-shutter correction.
 - Frames upload as pinhole. Distortion is saved only in the local recording.
-- The vision hook runs on streamed frames whenever a model is loaded, whether or not a capture is
-  running (`onCameraFrame` in `capture/CaptureController.kt` has no capturing check for it). Its
-  only output is a text summary on the panel.
+- The vision hook's only output is a text summary on the panel: nothing maps it onto
+  `WorldDetection` or uploads it (wave 13 ticket 0009, the rest).
 - mq3drecon was not run here. Its reader takes the image size from the camera's active array, so the recording fits only if that is 1280×960.
 - Licences:
   - The Meta Spatial SDK is under the Meta Platform Technologies SDK License Agreement, which must be reviewed before the app is distributed.

@@ -16,10 +16,10 @@ and [PLATFORM_SUPPORT.md](../operations/PLATFORM_SUPPORT.md).
 |---|---|---|---|---|---|
 | Web, 8th Wall | iPhone and iPad, Safari | the 8th Wall XR Engine (`public/xr.js`) | `/?project=default` | In code. The web bundle built at `81e437c` ([below](#builds-of-the-merged-tree)). No run on an iPhone or iPad is recorded. | [web-8thwall.md](web-8thwall.md) |
 | Web, WebXR | Android Chrome with ARCore, Meta Quest Browser | WebXR `immersive-ar` | `/webxr.html` | In code, in the same bundle. On Android one session start was seen, and tracking was not reached. Quest support is documented, not verified. | [web-webxr.md](web-webxr.md) |
-| Android app, ARCore | Android phones and tablets | ARCore through `ScanAR`, then 8th Wall, then WebXR | the app (`mobile/`) | Built at `81e437c`: a local debug APK, and the Mobile Build workflow's (run 45260987425). Not run on a device. | [android-arcore.md](android-arcore.md) |
-| Android app, 8th Wall | Android phones and tablets | 8th Wall only | the app, built with `VITE_AR_RUNTIME=8thwall` | Built once, locally, at `81e437c`: a debug APK. No workflow builds it. Not run on a device. | [android-8thwall.md](android-8thwall.md) |
-| Meta Quest app | Meta Quest 3 and 3S | native: Meta Spatial SDK, Camera2 passthrough | the app (`meta/`) | Built locally at `81e437c`: a debug APK, and its 81 JVM unit tests pass. No workflow builds it. Not run on a headset. | [meta-quest.md](meta-quest.md) |
-| iOS app | iPhone | ARKit through `ScanAR`, drawn in RealityKit's `ARView`, then 8th Wall | the app (`mobile/`) | Compiled for the iOS Simulator at `81e437c` (Mobile Build run 45260987425). Not run on a device. | [ios.md](ios.md) |
+| Android app, ARCore | Android phones and tablets | ARCore through `ScanAR`, then 8th Wall, then WebXR | the app (`mobile/`) | Built at `81e437c`, and on `main` after wave 14 by Mobile Build (run 45327838056), which also runs its unit tests. Not run on a device. | [android-arcore.md](android-arcore.md) |
+| Android app, 8th Wall | Android phones and tablets | 8th Wall only | the app, built with `VITE_AR_RUNTIME=8thwall` | Built locally at `81e437c`, and on `main` after wave 14 by Mobile Build's 8th Wall job (run 45327838056); `npm run build:8thwall` in `mobile/` makes it. Not run on a device. | [android-8thwall.md](android-8thwall.md) |
+| Meta Quest app | Meta Quest 3 and 3S | native: Meta Spatial SDK, Camera2 passthrough | the app (`meta/`) | Built locally at `81e437c`, and on `main` after wave 14 by the Quest Build workflow (run 45327834865), whose 108 JVM unit tests pass. Not run on a headset. | [meta-quest.md](meta-quest.md) |
+| iOS app | iPhone | ARKit through `ScanAR`, drawn in RealityKit's `ARView`, then 8th Wall | the app (`mobile/`) | Compiled for the iOS Simulator at `81e437c` (Mobile Build run 45260987425), and on `main` after wave 14 (run 45327838056). Not run on a device. | [ios.md](ios.md) |
 | Desktop app | Windows, macOS, Linux | none: no capture | the app (`desktop/`) | In code. Built by workflows run by hand. Sign-in has not run against a real Portal. | [desktop/README.md](../../desktop/README.md) |
 | Scan server | Linux; macOS and Windows unverified | none | `server/main.ts` | Runs on Linux: verified on one host. | [server.md](server.md) |
 
@@ -49,7 +49,17 @@ device.
 
 The local builds ran from a build script that is not in this repository; wave 13's ticket 0002
 plans to move it in. The APKs are debug builds for the owner's own devices, and none is
-published. No build ran the Android app's unit tests.
+published. No build then ran the Android app's unit tests.
+
+After wave 14 merged (`main` at `8deb264`), the workflows, started by hand, built it again:
+
+| Workflow | Run | Jobs |
+|---|---|---|
+| Mobile Build | 45327838056 | Android (debug APK, with `testDebugUnitTest` and the instrumented tests compiled), Android 8th Wall (debug APK), iOS (Simulator app): all succeeded |
+| Quest Build | 45327834865 | Quest app (108 JVM unit tests and the debug APK): succeeded |
+| Subsystem Tests | 45327830988 | 4D capture service and gimbal: succeeded |
+
+Nothing built from it has run on a device.
 
 ## Where the checklists are
 
@@ -102,8 +112,8 @@ the notices. The Android release build signs from four environment variables or 
    succeeded: a GitHub pre-release with the installers, the APK, `LICENSE`,
    `THIRD-PARTY-NOTICES.txt`, `SHA256SUMS.txt` and notes on installing each one.
 
-The APK it publishes is the default build, native first. No workflow builds the 8th Wall APK
-([android-8thwall.md](android-8thwall.md)).
+The APK it publishes is the default build, native first. Native Release does not build the 8th Wall
+APK; the Mobile Build workflow builds a debug one ([android-8thwall.md](android-8thwall.md)).
 
 ### Not done yet
 

@@ -173,19 +173,20 @@ session start:
 `FIRST_POSE_TIMEOUT_MS` is unchanged, and the four-state verdict is unchanged: the grace window
 was never too short, it was started too early.
 
-### Left to fix in `src/ar/preflight.ts`
+### What this found in `src/ar/preflight.ts`
 
 This pass found two things wrong in `src/ar/preflight.ts`, a file it did not own:
 
-1. The module header states as established fact that on the Beam Pro "the pipeline never emits
-   a frame". It does; the stall is intermittent, ~2 starts in 8. The header still said so at
-   `e897380` (2026-11-23), and wave 14 ticket 0004 plans the fix
-   ([14-inventory-fixes](../factory/14-inventory-fixes/README.md)).
+1. The module header stated as established fact that on the Beam Pro "the pipeline never emits
+   a frame". It does: about two starts in eight succeed, and the rest stall. Fixed in wave 14,
+   ticket 0004 (#286): the header now says the stall happens on some starts. It gives the rate
+   the wrong way round, though, as the stall happening on "about two starts in eight".
 2. `firstFrameVerdict()`'s no-frame branch said **"This device cannot run the live scanner"**
    and set `routeToUpload: true`, a permanent claim about the device where the measurement above
    says retrying is the right advice. That is fixed: the branch now reports "AR did not start
    this time" as `degraded`, keeps the capture rail usable, says a second try often clears it,
-   and does not send the person to upload.
+   and does not send the person to upload. Whether "often" fits a start that succeeds about two
+   times in eight is left to the owner.
 
 ## Runtime anchors: where they exist and what the app does with them
 
