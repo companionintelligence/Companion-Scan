@@ -10,18 +10,9 @@ import type { InferMode } from '../inference/router'
 import { formatBytes, type ProvisioningStatus } from '../inference/model-provisioning'
 import { icon, iconLabel, type IconName } from './icons'
 import { previousRunPanelNote } from './previous-run'
+import { categoryColor, categoryTextColor } from './category-color.ts'
+import { buildDetectionEditForm } from './detection-edit-form.ts'
 
-const CATEGORY_COLORS: Record<string, string> = {
-  chair: '#72ddd4', table: '#81c784', sofa: '#ff8a65', couch: '#ff8a65',
-  bed: '#ce93d8', desk: '#a5d6a7', monitor: '#80cbc4', tv: '#80cbc4',
-  door: '#ffcc80', window: '#80deea', shelf: '#c5e1a5', bookcase: '#c5e1a5',
-  lamp: '#fff176', plant: '#66bb6a',
-}
-function categoryColor(label: string): string {
-  const l = label.toLowerCase()
-  for (const [k, c] of Object.entries(CATEGORY_COLORS)) if (l.includes(k)) return c
-  return '#b0bec5'
-}
 function fmtCoord(v: number): string { return v.toFixed(2) }
 
 /**
@@ -631,7 +622,7 @@ export class SidePanel {
     labelEl.textContent = det.label
 
     const confEl = document.createElement('span')
-    confEl.style.cssText = `color:${color};font-size:11px;`
+    confEl.style.cssText = `color:${categoryTextColor(det.label)};font-size:11px;`
     confEl.textContent = `${conf}%`
 
     const editBtn = document.createElement('button')
@@ -664,33 +655,29 @@ export class SidePanel {
       <span style="color:#ffcc80;">${fmtCoord(p.z)}</span>
     `
 
-    // Inline edit form
-    const editForm = document.createElement('div')
+    // Inline edit form: the one the history drawer uses too (./detection-edit-form.ts).
     // A draft typed before a re-render reopens here, with what was typed.
     const draft = this._editing?.key === key ? this._editing : null
+    const form = buildDetectionEditForm({
+      initial: draft ? { label: draft.label, description: draft.description } : { label: det.label, description: det.description },
+      stored: { label: det.label, description: det.description },
+      onSave: async (text) => {
+        editForm.style.display = 'none'
+        this._editing = null
+        await this.store.updateDetection(key, text)
+      },
+      onCancel: () => {
+        editForm.style.display = 'none'
+        this._editing = null
+      },
+    })
+    const editForm = form.element
+    const { labelInput, descInput } = form
     editForm.style.cssText = `display:${draft ? 'block' : 'none'};margin-top:8px;`
-    // Structure only — the label/description are user- and VLM-authored text and
-    // are assigned as DOM properties below, never interpolated. Interpolating them
-    // into the value="" attribute truncated any label containing a double quote
-    // (a plausible one: `Samsung 27" monitor`), and reopening the form then saved
-    // the truncated string back over the real one.
-    editForm.innerHTML = `
-      <input type="text" placeholder="Label"
-        class="ci-field"
-        style="margin-bottom:5px;" />
-      <textarea placeholder="Description" rows="2"
-        class="ci-field ci-textarea"></textarea>
-      <div style="display:flex;gap:6px;margin-top:5px;">
-        <button class="edit-save ci-inline-btn ci-inline-btn--primary" style="flex:1;">Save</button>
-        <button class="edit-cancel ci-inline-btn ci-inline-btn--muted" style="flex:1;">Cancel</button>
-      </div>
-    `
-    const labelInput = editForm.querySelector<HTMLInputElement>('input')!
-    const descInput = editForm.querySelector<HTMLTextAreaElement>('textarea')!
-    labelInput.value = draft ? draft.label : det.label
-    descInput.value = draft ? draft.description : det.description
     labelInput.dataset['focusId'] = `${key}:label`
     descInput.dataset['focusId'] = `${key}:desc`
+    form.saveBtn.dataset['focusId'] = `${key}:save`
+    form.cancelBtn.dataset['focusId'] = `${key}:cancel`
     if (draft) card.dataset['editing'] = 'true'
     // The typed text lives in SidePanel state as well as in this node, so a re-render keeps it.
     const keepDraft = () => {
@@ -710,25 +697,6 @@ export class SidePanel {
         ? { startedAt: this.store.startedAt, key, label: labelInput.value, description: descInput.value }
         : null
       if (show) labelInput.focus()
-    })
-
-    const saveBtn = editForm.querySelector<HTMLButtonElement>('.edit-save')!
-    saveBtn.dataset['focusId'] = `${key}:save`
-    saveBtn.addEventListener('click', async (e) => {
-      e.stopPropagation()
-      const newLabel = (labelInput.value || det.label).trim()
-      const newDesc = (descInput.value || det.description).trim()
-      editForm.style.display = 'none'
-      this._editing = null
-      await this.store.updateDetection(key, { label: newLabel, description: newDesc })
-    })
-
-    const cancelBtn = editForm.querySelector<HTMLButtonElement>('.edit-cancel')!
-    cancelBtn.dataset['focusId'] = `${key}:cancel`
-    cancelBtn.addEventListener('click', (e) => {
-      e.stopPropagation()
-      editForm.style.display = 'none'
-      this._editing = null
     })
 
     info.append(row1, desc, posBadge, editForm)

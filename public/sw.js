@@ -128,6 +128,9 @@ const QUEUE_KIND_PREFIXES = [
 ]
 
 // How a kind reads in the notice that says it was dropped: [one, many].
+// QUEUE_KIND_PREFIXES, QUEUE_KIND_NAMES, MAX_QUEUE_ITEMS, MAX_QUEUE_AGE_MS, MAX_FLUSH_ATTEMPTS and
+// RETRIABLE_FLUSH_STATUSES are mirrored by src/page-upload-queue.ts, the same queue run by the page in a
+// native shell, which has no worker. tests/unit/node/wp-14-scanner-ui-page-queue.test.ts holds them equal.
 const QUEUE_KIND_NAMES = {
   place: ['Place change', 'Place changes'],
   scan: ['scan upload', 'scan uploads'],
@@ -276,7 +279,16 @@ async function networkOrQueue(request) {
       }), { status: 507, headers: { 'Content-Type': 'application/json' } })
     }
     await registerFlushSync()
-    await notifyClients({ type: 'offline-queued', queueId, url: request.url, method: request.method })
+    // `kind` names what was queued, so the page can say so (src/ui/queue-notice.ts): a keyframe or a Place
+    // change is not "a scan queued for sync". It is also the middle part of queueId, which a page reads
+    // from a worker that predates this field.
+    await notifyClients({
+      type: 'offline-queued',
+      queueId,
+      url: request.url,
+      method: request.method,
+      kind: queueKindOfPath(new URL(request.url).pathname),
+    })
     return new Response(JSON.stringify({
       ok: false,
       queuedOffline: true,
