@@ -358,7 +358,8 @@ export function toolSpecs(home: string): ToolSpec[] {
     }),
     row(L['lingbot-map-python'], {
       label: 'LingBot-Map interpreter',
-      usedBy: 'lingbot-map-reconstruct — point clouds and poses from keyframes',
+      // floor-plan runs on the same interpreter: it reads the cloud this one wrote, and needs only its numpy.
+      usedBy: 'lingbot-map-reconstruct — point clouds and poses from keyframes; floor-plan — a 2D plan from that cloud',
     }),
     row(L['lingbot-map-model'], {
       label: 'LingBot-Map checkpoint',
@@ -827,6 +828,12 @@ export function assessPipelines(
         torchless('lingbot-map-python')
           ? ['LINGBOT_MAP_PYTHON has no torch — the worker skips with "torch import failed".']
           : [],
+    },
+    {
+      // numpy only. The interpreter is not probed for it; a run without it skips with the fix (server/floor_plan.ts).
+      id: 'floor-plan',
+      label: 'Floor plan from a LingBot-Map cloud',
+      requires: ['lingbot-map-python'],
     },
     {
       id: 'splat-detect',

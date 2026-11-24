@@ -32,6 +32,7 @@ export const SCAN_REQUIRED_JOB_TYPES: readonly WorldJobType[] = [
   'sensenova-vision',
   'panoptic-scan',
   'panoptic-lift',
+  'floor-plan',
 ]
 
 /** Whether a job of `type` needs a scan to run. */
