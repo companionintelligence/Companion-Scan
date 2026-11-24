@@ -122,9 +122,9 @@ export const PROJECTS_DB_NAME = 'ci-xr-projects'
 /**
  * localStorage keys a native shell keeps its Companion sign-in in (FN-044): the session token
  * (src/shared/shell-sign-in.ts writes it), the PKCE verifier of a sign-in it started, and the one-time codes of the
- * latest sign-in returns it was handed. src/shared/api-base.ts declares the same three names with the same values and
- * reads them; tests/unit/node/wp-capture-core-registry.test.ts holds the two equal until api-base imports these. Do not
- * rename: a shell that already signed in would read as signed out, and a sign-in in flight could not be finished.
+ * latest sign-in returns it was handed. src/shared/api-base.ts imports and re-exports these three, so this is the one
+ * declaration. Do not rename: a shell that already signed in would read as signed out, and a sign-in in flight could not
+ * be finished.
  */
 export const SHELL_SESSION_KEY = 'companion-scan-shell-session'
 export const SHELL_SIGN_IN_PENDING_KEY = 'companion-scan-shell-sign-in'

@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { SCAN_SERVER_KEY } from './storage-keys.ts'
+import { SCAN_SERVER_KEY, SHELL_SESSION_KEY, SHELL_SIGN_IN_PENDING_KEY } from './storage-keys.ts'
 
 /**
  * Where the Scan server is, as seen from the page.
@@ -190,17 +190,13 @@ export function editorPath(search = ''): string {
   return `${isNativeShell() ? '/viewer.html' : '/editor'}${search}`
 }
 
-/** Where a shell keeps its Companion session token (src/shared/shell-sign-in.ts writes it). */
-export const SHELL_SESSION_KEY = 'companion-scan-shell-session'
-
-/** Where a shell keeps the PKCE verifier of a sign-in it started, until the browser hands the app back. */
-export const SHELL_SIGN_IN_PENDING_KEY = 'companion-scan-shell-sign-in'
-
 /**
- * Where a shell keeps the one-time codes of the latest sign-in returns it was handed, so that a
- * return handed over again on a later page load is not finished a second time.
+ * The localStorage keys a shell keeps its Companion sign-in in: the session token (src/shared/shell-sign-in.ts writes
+ * it), the PKCE verifier of a sign-in it started, and the one-time codes of the latest sign-in returns it was handed.
+ * They are declared once, in the key registry (src/shared/storage-keys.ts), and re-exported here for the modules that
+ * have always imported them from api-base.
  */
-export const SHELL_SIGN_IN_CODES_KEY = 'companion-scan-shell-sign-in-codes'
+export { SHELL_SESSION_KEY, SHELL_SIGN_IN_CODES_KEY, SHELL_SIGN_IN_PENDING_KEY } from './storage-keys.ts'
 
 /** The shell's session token, or null outside a shell or before its sign-in. Blocked storage reads as no token. */
 export function shellSessionToken(): string | null {

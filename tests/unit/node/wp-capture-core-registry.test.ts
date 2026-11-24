@@ -2,8 +2,8 @@
  * Wave 14, ticket 0004 (FN-044): the storage-key registry, src/shared/storage-keys.ts, declares the keys it was missing.
  *
  *  - 'ci-xr-projects', the Places database, which src/project/project-store.ts now imports instead of typing.
- *  - The three keys a native shell keeps its sign-in in. src/shared/api-base.ts (another session's file) declares them
- *    too, so this test holds the two equal until api-base imports them from the registry.
+ *  - The three keys a native shell keeps its sign-in in. src/shared/api-base.ts imports and re-exports them from the
+ *    registry (wave 14 integration), so the registry holds the one declaration.
  *  - The geocoder's consent key, new in this ticket (F-08).
  *
  * Run: node --experimental-strip-types --no-warnings --test tests/unit/node/wp-capture-core-registry.test.ts
@@ -27,10 +27,13 @@ test('the Places database is declared once, with its value unchanged, and the st
   assert.doesNotMatch(store.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, ''), /'ci-xr-projects'/, 'no second literal in code')
 })
 
-test('the shell keys are declared in the registry with exactly api-base\'s values', () => {
+test('the shell keys are declared once, in the registry, and api-base re-exports them', () => {
   assert.equal(registry.SHELL_SESSION_KEY, apiBase.SHELL_SESSION_KEY)
   assert.equal(registry.SHELL_SIGN_IN_PENDING_KEY, apiBase.SHELL_SIGN_IN_PENDING_KEY)
   assert.equal(registry.SHELL_SIGN_IN_CODES_KEY, apiBase.SHELL_SIGN_IN_CODES_KEY)
+  const apiBaseCode = read('src/shared/api-base.ts').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+  assert.doesNotMatch(apiBaseCode, /'companion-scan-shell-(session|sign-in|sign-in-codes)'/, 'no second literal in api-base')
+  assert.match(apiBaseCode, /export \{ SHELL_SESSION_KEY, SHELL_SIGN_IN_CODES_KEY, SHELL_SIGN_IN_PENDING_KEY \} from '\.\/storage-keys\.ts'/)
   assert.deepEqual(
     [registry.SHELL_SESSION_KEY, registry.SHELL_SIGN_IN_PENDING_KEY, registry.SHELL_SIGN_IN_CODES_KEY],
     ['companion-scan-shell-session', 'companion-scan-shell-sign-in', 'companion-scan-shell-sign-in-codes'],
