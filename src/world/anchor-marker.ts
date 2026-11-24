@@ -3,9 +3,11 @@
  * when a compass bearing is known) marking where a project's calibration
  * anchor sits. Built once, used by the capture side's calibration flow
  * (src/ar/project-calibration.ts, src/ar/constellation-ghosts.ts, and the ring
- * of src/ar/calibration-guides.ts) and by the World Editor
- * (src/viewer/viewer.ts), so the same visual represents the same concept in
- * both places.
+ * of src/ar/calibration-guides.ts). The World Editor (src/viewer/viewer.ts)
+ * draws a scan's calibrated origin with the origin decal (./origin-decal.ts)
+ * since wave 16, which reuses this file's ring radius and ring arithmetic, so the
+ * two decals are the same size on the ground; it still draws its pins with
+ * buildAnchorPin below.
  */
 import * as THREE from 'three'
 import { ANCHOR_RADIUS_M } from './anchor-placement.ts'

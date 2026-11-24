@@ -1,18 +1,19 @@
 /**
  * The calibrated origin, drawn on the ground in the scanner's AR scene: a
  * crosshair at the origin, an arrow along the user-set heading, and a north
- * tick that makes the decal world-direction aware (wave 12, ticket 0001).
+ * tick that makes the decal world-direction aware (wave 12, ticket 0001). The
+ * World Editor draws each calibrated scan's origin with it too, without a north
+ * tick (wave 16, ticket 0005; `addAnchorMarker` in src/viewer/viewer.ts).
  *
  * Geometry only. What the origin *is* (where it sits, which way it faces, which
  * way north lies) is decided by `originDecalPlan()` in `./geo.ts`, so this file
  * has nothing to get wrong that a unit test could not see.
  *
  * A sibling of `buildAnchorMarker()` rather than an extension of it. That
- * marker is what the World Editor and the viewer draw for every scan's anchor,
- * and its tests pin its group yaw to the compass bearing. An arrow needs its own
- * yaw, separate from north, so it cannot share that group without changing what
- * the editor shows. The ring radius is reused from there, so the two decals
- * stay the same size on the ground.
+ * marker is what the capture side's calibration flow draws, and its tests pin
+ * its group yaw to the compass bearing. An arrow needs its own yaw, separate
+ * from north, so it cannot share that group. The ring radius is reused from
+ * there, so the two decals stay the same size on the ground.
  */
 import * as THREE from 'three'
 // Explicit extensions: the Node unit tests load this file directly, and Node's
