@@ -18,36 +18,63 @@ and `gimbal_recenter` were all rewritten to use closed-loop positioning instead 
 portrait/landscape switch, not a real lock/follow/fpv selector. The web control UI is a compact
 one-handed PWA matching CI-Common's design tokens (`packages/tokens/src/tokens.css`, dark theme),
 with a live orientation readout, a persistent command-coverage grid, and a structured frame
-inspector.
+inspector. What is verified on hardware, and what has changed since without a rig, is listed
+under ["Verification status"](#verification-status) at the end.
 
 **Update (2026-08-25) — the web UI is now "Scanner Control", built around running a scan rather
 than probing the protocol.** What changed, all in `subsystems/osmo-ble/web/`:
 
-- **Scan-type presets** replace hand-typed position lists: **Dome** (the default — 21 pan
-  columns x 5 tilt rows = **105 positions**, a long run), **Quick 25** (5x5 around centre, a
-  look rather than a reconstruction), **Band** (wide and shallow, for corridor-shaped rooms),
-  and **Custom**. Editing any field moves the selection to Custom, so the lit name always
-  describes the numbers on screen. The interior rows of the multi-row presets are
-  interpolations, not separately measured coverage figures.
-- **A compact action bar**, plus a **compass + tilt readout**. The compass needle comes from
-  the *phone's* magnetometer, relayed to the backend over the existing `/ws` broadcast as
-  `phone-telemetry` (`protocol/phone_telemetry.mjs`). It is displayed *alongside* the gimbal's
-  own quaternion, never averaged into it — the gimbal quaternion is relative to wherever it
-  booted and has no compass reference, while the phone heading is absolute but unreliable
-  indoors near steel. `headingAccuracyDeg` travels with the heading for exactly that reason.
-- **A scan-in-progress lock.** While a grid run owns the gimbal, the backend rejects manual
-  motion commands with **HTTP 409**, and the UI disables the joystick, recenter, capture and
-  run controls to match. This is an interlock, not a nicety: the joystick streams `speed`
-  commands to the same two motors the closed-loop controller is steering, and one stray touch
-  makes two controllers fight. It really happened — see the wedge note below.
-- **`POST /api/grid-stop`**, checked between positions so a long dome unwinds cleanly instead
-  of being killed mid-move. No front-end calls it yet — curl only.
-- **Wedge detection.** Three consecutive positions that time out *without the reported pose
-  moving* (< 1.5°) abort the run with an error naming the likely cause — the gimbal's BLE stack
-  has wedged, and the fix is the physical button-combo reset below. Two in a row could just be
-  a tight corner; three is the signature. This was written after a stray joystick touch during
-  a 105-position dome pinned the gimbal at one pose (pan -121.5, tilt -27.6) for six
-  consecutive positions, each burning the full `maxMs` and photographing the same view.
+- **Scan-type presets** replace hand-typed position lists. Per station, as the code has them
+  (`SCAN_PRESETS` in `subsystems/osmo-ble/web/page-state.mjs`):
+  - **Dome**, the default: 150° of pan in 7 columns at 25°, crossed with tilts -25° and +5°, so
+    **14 positions per station**. On the built-in arc that is pan 96° round through 180° to -114°.
+  - **Quick**: 120° in 4 columns at 40°, tilts -20° and +5°, so 8 positions. A look, not a
+    reconstruction.
+  - **Band**: wide and shallow, for corridor-shaped rooms. As many columns 20° apart as fit at
+    least 8° inside each stop (9 on the built-in arc, 91° → -109°), with tilts -15° and +5°.
+  - **Custom**.
+
+  The presets are dome *shapes* relative to the reachable arc the backend reports, so they
+  follow the arc when a probe measures it from where the tripod stands. Editing any field moves
+  the selection to Custom, so the lit name always describes the numbers on screen. The interior
+  rows of the multi-row presets are interpolations, not separately measured coverage figures.
+  (These replaced the original single-station presets of 105 and 25 positions when
+  multi-station capture arrived. Stations, not positions, decide whether a capture can be solved.
+  See "Multi-station capture" in the subsystem README.)
+- **A compact action bar**, plus a **compass + tilt readout**. The compass needle shows the
+  *gimbal's* pan (`web/orientation.mjs`). That pan is relative to wherever the gimbal booted and
+  has no north. The *phone's* magnetometer heading has its own captioned block under the
+  gimbal's numbers, filled from `phone-telemetry` frames relayed over the backend's `/ws`
+  (`protocol/phone_telemetry.mjs`). It is shown *alongside* the gimbal's quaternion, never
+  averaged into it: the phone heading is absolute but unreliable indoors near steel, and
+  `headingAccuracyDeg` travels with it for exactly that reason. **Nothing in the app sends those
+  frames yet.** `src/capture/phone-telemetry-sender.ts` is not imported anywhere, so the phone
+  block reads "no phone telemetry yet". The relay keeps every key of a frame but drops its
+  location (`lat`, `lng`, `accuracyM`, `altitudeM`), which nothing reads.
+- **A scan-in-progress lock.** While a grid run sweeps, the backend rejects manual motion
+  commands with **HTTP 409**, and the UI disables the joystick, Center, the orientation and stick
+  buttons, raw send, the test matrix, the photo buttons and Run to match. This is an interlock,
+  not a nicety. The joystick streams `speed` commands to the same two motors the closed-loop
+  controller is steering, so one stray touch makes two controllers fight. It really happened;
+  see the wedge note below. **While the run is parked between stations** the backend lets manual
+  motion through again, and the page re-enables the same controls. The exceptions are Photo,
+  which stays off because a camera-mode run holds the phone's one MCP session, and Run.
+- **`POST /api/grid-stop`**, checked between positions, so a long dome unwinds cleanly instead
+  of being killed mid-move, and immediate while the run is parked. It can be called from:
+  - the page's **Stop scan** button;
+  - `npm run cli -- stop`;
+  - Ctrl-C during `npm run cli -- grid`, which stops the run on the backend and waits for it
+    to end, so `manifest.json` is complete;
+  - the MCP tool `stop_grid_capture`.
+- **Wedge detection.** Three consecutive positions that end non-converged at the same pose
+  (within 1.5°), or that the move loop reports as stalled, abort the run
+  (`createWedgeGuard()` in `protocol/stall.mjs`). The message then compares where it stopped with
+  the arc the station was planned against (`diagnoseJam()` in `protocol/dome.mjs`). A stop where
+  the arc said there was travel means the arc moved with the tripod: re-probe, don't reset the
+  gimbal. Two in a row could just be a tight corner; three is the signature. This was written
+  after a stray joystick touch during a 105-position dome pinned the gimbal at one pose (pan
+  -121.5, tilt -27.6) for six consecutive positions, each burning the full `maxMs` and
+  photographing the same view.
 
 **Architecture — one BLE connection, owned by `server/backend.mjs`:** the `osmo-gimbal` MCP
 server does **not** hold its own Bluetooth connection. It's a Claude Code-spawned subprocess,
@@ -57,6 +84,26 @@ granted Bluetooth access. Every gimbal MCP tool is a thin HTTP client of
 `subsystems/osmo-ble/server/backend.mjs` instead, which you run yourself in a real terminal — the
 only place BLE has been proven to work. This also means there's only ever one BLE connection to
 the single physical gimbal, not two independent ones fighting over it.
+
+**Access: token, origins and bind address (wave 14).** The backend used to answer every origin
+with `Access-Control-Allow-Origin *` on every interface, with no credential. So any web page the
+operator had open could move the gimbal: a "simple" cross-site POST is not even preflighted.
+There are now three settings, all optional, read from the shell that starts `npm run backend`
+(rules in `subsystems/osmo-ble/server/access.mjs`):
+
+| Setting | Default | Effect |
+|---|---|---|
+| `OSMO_BACKEND_TOKEN` | unset: no check | Every route except the CORS preflight needs `Authorization: Bearer <token>`, and `/ws` takes it as `?token=`. The CLI and the MCP server read the same variable; the page has a token field under Connect, Advanced. |
+| `BACKEND_ALLOWED_ORIGINS` | the Gimbal control page's own origin: port 8787 on the host the backend was reached at, or a loopback name | A comma list of whole origins replaces the default; `*` restores the old open behaviour. A request with no `Origin` (CLI, MCP, curl) is never refused for its origin. |
+| `BACKEND_HOST` | every interface | Bind address, for example `127.0.0.1`. |
+
+The page server takes `WEB_HOST` the same way, and now serves only `web/` and `protocol/`. The
+defaults keep the documented rig working: a phone opens `http://<machine>:8787` and points the
+page at `http://<machine>:8788`. The origin check runs on the server, before any route, and on
+the WebSocket upgrade. A refused page gets a 403 naming the origin to add. The default origin rule
+does not stop a DNS-rebinding page served on port 8787. The token, an explicit
+`BACKEND_ALLOWED_ORIGINS`, or `BACKEND_HOST=127.0.0.1` closes that. A phone-telemetry sender on
+the scanner page (another origin) needs its origin listed, and `?token=` when a token is set.
 
 **Known gotcha:** code changes only take effect once the long-running processes that loaded them
 restart — Node doesn't hot-reload modules. `server/backend.mjs` now runs under `node --watch`
@@ -248,23 +295,29 @@ photo count instead of "however many the heuristics trigger," see the grid-captu
 
 Since the absolute-angle opcode does nothing, "move to an absolute angle" is instead built on top
 of the confirmed-working speed command: `moveToClosedLoop` (`server/backend.mjs`) sends speed
-corrections in a loop, reading the live quaternion after each tick via `quatToEulerDeg`
-(`protocol/telemetry.mjs`, shared with the web UI's orientation readout), until the error is
-within `toleranceDeg` or `maxMs` elapses. Two things this does NOT solve, handled defensively
-instead:
+corrections in a loop, reading the live quaternion after each tick via `quatToGimbalControlDeg`'s
+pan and tilt (`protocol/telemetry.mjs`, shared with the web UI's orientation readout), until the
+error is within `toleranceDeg` or `maxMs` elapses. (It read `quatToEulerDeg` until the
+feedback-axis fix below.) Two things this does NOT solve, handled defensively instead:
 - Euler angles from a tilted device mix axes together — this is a relative-change indicator, not
   a calibrated attitude readout, so "converged" means "close enough," not exact degrees.
-- The correspondence between `quatToEulerDeg`'s sign and which physical direction a positive
+- The correspondence between the pan/tilt sign and which physical direction a positive
   commanded speed drives each axis was never independently calibrated. Each axis adaptively flips
-  its own sign the first time a correction makes that axis's error worse instead of better, so a
-  wrong initial guess self-corrects rather than diverging.
+  its own sign when a correction makes that axis's error worse on the same side of zero, so a
+  wrong initial guess self-corrects rather than diverging (`protocol/control.mjs`).
 
 `gimbal_move_to(yawDeg, pitchDeg)` exposes this as a single step, returning
 `{converged, timedOut, ticks, finalYaw, finalPitch, history}` — **check `converged`**, don't
-assume a call that returned without erroring actually reached the target. `gimbal_sweep` strings
-several of these together across a yaw range; `gimbal_recenter` targets `(0, 0)` (caveat: "0,0" is
-wherever this device's quaternion frame reads as zero, not independently confirmed to be true
-mechanical center).
+assume a call that returned without erroring actually reached the target.
+
+- **The target is checked first.** `POST /api/move-to` answers **400** for a pan outside the
+  reachable arc the backend is using, or a tilt outside -45°..+16°. A running scan still answers
+  409 first. That arc is measured from where the tripod stands, or else the built-in fallback, and
+  the refusal says which. On the fallback, run `arc-probe` first. The joystick is unaffected.
+- `gimbal_sweep` strings several moves together across a yaw range, stepping **along** the arc
+  (96 → 180 → -114, never through the front). Both ends must be inside the arc.
+- `gimbal_recenter` targets the **centre of the arc in use** (171° on the built-in arc) at tilt 0.
+  It used to target pan 0, which is inside the fallback arc's dead zone.
 
 **Fixed 2026-08-24 — the feedback axis was wrong, and it never converged before this.** The loop
 read `quatToEulerDeg().yaw`. Measured live on a mounted OM6, that channel is pinned at exactly
@@ -380,6 +433,10 @@ error string. 13 regression tests cover it.
 
 ### Known pan limit on this rig
 
+*Superseded by the reachable-arc model (2026-08-29, subsystem README): the limit is a stop fixed
+to the tripod base, so it moves whenever the tripod does. Measure it with `arc-probe`. The
+observations below are the history that led there.*
+
 As of 2026-08-26 the pan axis will not travel past about **−53.5°**. Three
 independent moves stalled there, and the sign probe confirmed neither direction
 gets past it. Usable range is roughly **−145° to −53.5°** — about 90°, which is
@@ -422,26 +479,40 @@ orchestrate it by hand:
 
 ```bash
 npm run cli -- grid --dry-run                       # print the plan, touch nothing
-npm run cli -- grid                                 # move -> photo at all 9 positions
-npm run cli -- grid --ingest http://localhost:8000/ingest-photos
+npm run cli -- grid --stations 4                    # 4 stations x 14 positions, reach probed at each
+npm run cli -- grid --stations 4 --ingest http://localhost:8000/ingest-photos
 npm run cli -- grid --pans 100,130,160 --tilts -15,0,15 --out ./myscan
+npm run cli -- stop                                 # stop a running capture, from any terminal
 ```
+
+(The verified 2026-08-24 run above was the CLI's default plan of the time, 3 x 3 from one spot.)
 
 or press **Run scan** in the Scanner Control web UI (`npm run web`), which shows per-position
 progress live. Both call `POST /api/grid-capture` on the backend, which is where the
 orchestration actually lives — deliberately, so exactly one process ever holds an MCP session to
 the phone.
 
-**The two front-ends do not default to the same plan.** The CLI still defaults to 3x3 = 9
-positions (`--pans 120,145,170 --tilts -10,0,10`); the web UI defaults to the **Dome** preset —
-21 pan columns at 15° from -150 to 150, crossed with 5 tilt rows at 10° from -30 to 10, so 105
-positions and tens of minutes of gimbal-and-phone time. It defaults wide because the failure
-this pipeline keeps hitting is too *few* distinct viewing angles, not too many. `--pans`/`--tilts`
-take explicit comma-separated lists, so reproducing a preset from the CLI means writing all 21
-values out. Either way the backend refuses manual
-motion commands with a 409 for the run's duration, and `POST /api/grid-stop` aborts it cleanly
-between positions — note that endpoint currently has **no caller**: neither the CLI nor the web
-UI exposes a stop control yet, so today it is reachable only by curl.
+**Both front-ends default to the same dome shape, 7 pan columns x 2 tilt rows = 14 positions per
+station.** They send it differently:
+
+- **The CLI** defaults to 150° of pan centred on the arc in use, at a 25° step, crossed with tilts
+  -25° and 0°. The 25° step clears the scanner's 20° keyframe threshold. Without `--pans` it posts
+  the centre and span, not the columns, so the backend **measures the reach at the start of every
+  station** and re-plans the columns inside it, keeping their count. `--no-probe-arc` skips that.
+  Until wave 14 the CLI posted the columns, so it never probed and `--no-probe-arc` did nothing.
+  This behaviour is new on the rig and needs a rig run.
+- **The web UI** defaults to the **Dome** preset (96° → -114° on the built-in arc, tilts -25° and
+  +5°). It builds and checks the columns against the arc the backend reports in its status, and
+  posts them as an explicit list. Explicit columns are the caller's, so the backend does not
+  probe or move them per station. Switching the page to a centre/span plan is an owner decision.
+  The Capture select is sent with the plan: **Scanner app** posts `capturePhotos: false`.
+
+Either way the backend refuses manual motion commands with a 409 while a run sweeps, and stops
+refusing them while it is parked. `POST /api/grid-stop` ends a run cleanly between positions, or
+at once while parked; the page, the CLI and MCP all call it (see the 2026-08-25 update above).
+**Run scan does not ingest anything.** Only the CLI's `--ingest` posts the photos to
+`/ingest-photos`. A page-started camera run leaves them on the phone, and each result row links
+to its photo.
 
 **Prerequisite — the phone's MCP URL and token:** set `ANDROID_MCP_URL` and `ANDROID_MCP_TOKEN`
 in the *backend's* environment (the CLI can also pass `--device-url` / `--device-token`). The
@@ -472,9 +543,10 @@ For an *exact* photo count (e.g. "9 photos") rather than relying on auto-capture
 drive an explicit camera-capture tool instead — verified against this repo's actual capture→3D
 pipeline, not invented:
 
-1. `plan_scan_grid` (in `osmo-gimbal`, pure computation, no device needed) — returns a
-   serpentine-ordered `yawCount x pitchCount` grid of absolute `(yawDeg, pitchDeg)` targets.
-   Defaults to 3x3 = 9 targets, minimizing travel between consecutive steps.
+1. `plan_scan_grid` (in `osmo-gimbal`, no device needed) — returns a serpentine-ordered
+   `yawCount x pitchCount` grid of absolute `(yawDeg, pitchDeg)` targets for ONE station, planned
+   along the reachable arc the backend reports (the built-in one when no backend answers).
+   Defaults to 7 x 2 = 14 targets, minimizing travel between consecutive steps.
 2. For each target: `gimbal_move_to(yawDeg, pitchDeg)` — closed-loop move, check `converged` in
    the result (see "Closed-loop positioning" above) before treating the step as actually there.
 3. Immediately after each move: a photo-capture tool call on whichever Android device is
@@ -505,23 +577,24 @@ pipeline, not invented:
 > pairs as `PLANAR_OR_PANORAMIC` and registered only 4 of 9 images.** A wider sweep measurably
 > helps — the phone's lens sits off the pan/tilt axes, so a big pan does produce a small
 > baseline, and each station simply sees more of the room — which is why the web UI defaults to
-> the 105-position dome and why **Quick 25** is 25 rather than 9 (nine frames from one station
-> is below what SfM needs to register reliably; the old 9-shot preset produced runs that looked
-> complete and then failed to reconstruct). But a wider sweep does not *manufacture* translation.
-> For a genuinely well-conditioned capture the rig has to be physically moved between grids and
-> the sessions pooled (`scripts/scan-room.ts --pool <a> <b> … --as <id>`). **Multi-station
-> pooling is untested from this capture path** — recorded as the constraint and the remedy, not
-> as a verified procedure.
+> its widest preset. But a wider sweep does not *manufacture* translation. For a well-conditioned
+> capture the rig has to be physically moved between grids. That is now built in: `--stations N`
+> in the CLI and the Stations field on the page park the run between domes while the tripod is
+> carried. Measured over this rig's frames: one dome from one spot registered 3 of 17 images, and
+> 5 stations registered 36 of 36 (see "Multi-station capture" in the subsystem README).
 >
 > LingBot-Map is a different kind of model — a feed-forward transformer that predicts geometry
 > rather than triangulating it — so it is not bound by this constraint, which is part of why
 > this path was built around it in the first place.
 
 **Hardware limits the presets stay inside** (probed on the real OM6, so treat them as the
-envelope for any `--pans`/`--tilts` you write by hand): yaw sweeps cleanly across roughly
-±175°, **provided a single move never has to cross the ±180 seam**; tilt converges down to
-about **−40°** but **stalls near +16°**, which is a real mechanical limit rather than a display
-choice.
+envelope for any `--pans`/`--tilts` you write by hand). Pan travels about **178°** and **cannot
+rotate through the front**. The built-in arc runs +82° round *through* 180° to -100°, so a sweep
+does cross the ±180 seam. Where that arc falls moves with the tripod base, so measure it with
+`arc-probe` after every carry (the subsystem README's "reachable pan arc" sections). Tilt
+converges down to about **−40°** but **stalls near +16°**, a real mechanical limit rather than a
+display choice; the routes refuse tilts outside -45°..+16°. (An earlier note here said pan swept
+±175° provided no move crossed the seam. That predates the arc being measured.)
 
 **Correction to a common assumption:** this pipeline's real end artifact is a point cloud /
 gaussian splat (`.ply`/`.sog`), not a GLTF — a `.glb` only exists as an optional lossy sidecar
@@ -529,8 +602,8 @@ gaussian splat (`.ply`/`.sog`), not a GLTF — a `.glb` only exists as an option
 pre-existing mobile-exported `.glb`, not something this pipeline produces). A full gaussian splat
 is a further, manually-enqueued `splat-train` job — worth doing, but 9 sparse gridded photos is
 thin input for 3DGS quality; the point cloud is the realistic fast result from one run. (This is
-the same coverage problem the parallax warning above quantifies — it is why the web UI's default
-preset is the 105-position dome rather than the CLI's 3x3.)
+the same coverage problem the parallax warning above quantifies — it is why every front-end now
+defaults to a multi-station dome rather than one grid from one spot.)
 
 **And note what a splat from this path is *not*: measured.** Structure-from-motion is
 scale-blind, so a reconstruction from gridded photos has no metres in it at any stage. Nothing
@@ -556,7 +629,7 @@ project/session can reach it, not just this one):
 ```json
 "android-beam-pro-1": {
   "type": "http",
-  "url": "http://beam-pro-1.capybara-ulmer.ts.net:8080/mcp",
+  "url": "http://beam-pro-1.<tailnet>.ts.net:8080/mcp",
   "headers": { "Authorization": "Bearer ${ANDROID_MCP_TOKEN_BEAM_PRO_1}" }
 }
 ```
@@ -571,42 +644,55 @@ Troubleshooting order:
 1. On the device itself: confirm the Android Remote Control MCP app is running/foregrounded (its
    own persistent notification, "MCP Server Running", should be present in the notification
    shade — if it's gone, the app process died and needs relaunching).
-2. Confirm network reachability from this Mac: `tailscale ping <device>.capybara-ulmer.ts.net`.
+2. Confirm network reachability from this Mac: `tailscale ping <device>.<tailnet>.ts.net`.
 3. From an interactive Claude Code session, reconnect the specific server via `/mcp` (or restart
    the session) — a session that failed to connect at startup does not necessarily keep retrying
    indefinitely on its own, and fixing the device side alone does not re-establish an already-
    failed session-level connection.
 
-## Verification checklist (this integration's testing plan)
+## Verification status
 
-- **Backend + MCP proxy**: with `npm run backend` running and connected, call
-  `mcp__osmo-gimbal__gimbal_move_to` directly and confirm it returns without erroring — **done,
-  2026-08-21**.
-- **Closed-loop convergence**: call `gimbal_move_to` with a nonzero target and confirm
-  `converged: true` with a plausible `finalYaw`/`finalPitch`, not just "didn't error" — pending a
-  live gimbal connection (dropped when editing `backend.mjs` restarted the `--watch` process, and
-  the gimbal itself stopped advertising over BLE shortly after — check it's powered on/awake and
-  in range, then `scan_devices` → `connect` again).
-- **Dev-loop**: touch `subsystems/osmo-ble/protocol/commands.mjs` and confirm the watched backend
-  restarts itself (its stdout prints the restart) — confirmed working, but note the restart drops
-  the live BLE connection every time, requiring a reconnect after each code change.
-- **Full pipeline**: run the 9-step grid-capture loop for real (closed-loop moves + real photo
-  capture on the mounted Android device, not the relative-nudge rehearsal), confirm
-  `/ingest-photos` returns 202 with a `jobId`, poll it to `completed`, and confirm the resulting
-  point cloud actually looks room-shaped before calling a run successful.
+What has run on the real gimbal, and when:
+
+- **Backend + MCP proxy**: `gimbal_move_to` through the MCP server returns without erroring.
+  **Done, 2026-08-21.**
+- **Closed-loop convergence**: targets 140°, 165°, 130° and 150° returned `converged: true` in
+  7–20 ticks after the feedback-axis fix. **Done, 2026-08-24** (see "Closed-loop positioning").
+- **Dev-loop**: a save restarts the watched backend, which drops the BLE link every time, so
+  reconnect after each code change. Since 2026-08-26 the restart stops the motors first (the
+  latch gotcha above). **Confirmed.**
+- **Full pipeline**: `npm run cli -- grid --ingest …` gave 9/9 positions converged, 9 byte-distinct
+  photos, and the ingest job completed. **Done, 2026-08-24.** Judging the point cloud was not
+  possible: the reconstruction step skipped without the LingBot-Map worker.
+- **Reach probe**: 7 moves, 85 s, both stops found, and a second probe agreed within 0.1°.
+  **Done, 2026-08-30** (subsystem README).
+
+**Changed without a rig (wave 14, 2026-11-23). Each of these needs a rig run:**
+
+- A CLI `grid` with no `--pans` now probes the reach at every station and re-plans.
+  `--no-probe-arc` skips that.
+- A page run with Capture set to **Scanner app** takes no photos and needs no phone token.
+- **Stop scan** on the page, `cli stop`, Ctrl-C in `cli grid` and MCP `stop_grid_capture` each end
+  a sweeping run after its current position and a parked run at once.
+- While a run is parked, the joystick and Center work from the page, and Photo stays off.
+- `gimbal_recenter` lands at the arc centre. `move-to` and `gimbal_sweep` refuse targets outside
+  the arc.
+- With `OSMO_BACKEND_TOKEN` set, the page (token under Advanced), the CLI and the MCP server all
+  still connect. With the defaults, a phone that opens the page by the machine's name still
+  reaches the backend.
 
 ## Open questions for a deeper integration
 
-- Whether to move `osmo-gimbal` from local `stdio` to a Tailscale-exposed `http` MCP server to
-  match the Android device entries in `.mcp.json`, so it's usable from any collaborator's
-  session, not just the one Mac holding the physical gimbal.
+- Whether to register `osmo-gimbal` as the Tailscale-exposed `http` MCP server by default. The
+  transport exists (`--http`, with `OSMO_MCP_TOKEN` required; see the subsystem README), and so do
+  the backend's own access settings above. `.mcp.json` still registers stdio.
 - Whether `dwellMs` needs tuning against this project's actual `minDistanceM`/`minRotationDeg`
   thresholds (check `src/capture/auto-capture.ts` and `src/capture/keyframes.ts`) for the
   *passive* sweep path specifically — the grid-capture path above sidesteps this by using
   explicit photo capture instead.
-- Whether closed-loop `gimbal_move_to`'s adaptive sign-flip actually converges cleanly on live
-  hardware across the full grid range, or whether it needs a smarter controller (e.g. slowing
-  down near the tolerance boundary instead of a flat bang-bang speed) — untested pending gimbal
-  reconnection.
+- Whether the closed loop needs more than the proportional control law and sign probe it now has
+  (`protocol/control.mjs`, `protocol/stall.mjs`). It converges on live hardware (2026-08-24) and no
+  longer limit-cycles (2026-08-26). Untested across a full multi-station dome after wave 14's
+  changes.
 - Whether the gimbal dropping off BLE advertising mid-session (observed 2026-08-21, cause
   unconfirmed — battery/sleep timeout/handling) needs a documented wake procedure once understood.

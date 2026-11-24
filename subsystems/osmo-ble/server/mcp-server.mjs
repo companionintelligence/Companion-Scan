@@ -4,11 +4,19 @@
 // Code), with an optional Streamable HTTP transport for remote/Tailscale access — see
 // "HTTP transport" below the tool definitions and ../README.md.
 //
-// Confidence levels (see ../README.md for the full research writeup): the pairing handshake
-// and frame codec are verified against a real captured DUML frame. Gimbal recenter/mode/nudge
-// are MEDIUM confidence, ported from Osmo Pocket 3 reverse-engineering, not yet confirmed
-// against an Osmo Mobile 6. Shutter/record are deliberately NOT implemented — no source had
-// verified byte-level data for them; guessing risks sending an unknown command to the device.
+// Confidence levels (see ../README.md and docs/operations/GIMBAL_INTEGRATION.md for the record):
+//   - The pairing handshake and frame codec are verified against a real captured DUML frame.
+//   - The speed command (gimbal_nudge) is live-verified on an Osmo Mobile 6. Every closed-loop
+//     move is built on it.
+//   - gimbal_move_to, gimbal_sweep and gimbal_recenter are those closed-loop moves, live-verified
+//     to converge on an OM6 (2026-08-24). The absolute-angle opcode they replaced does nothing on
+//     that hardware.
+//   - gimbal_set_mode reaches the device, but it is a portrait/landscape toggle, not a
+//     lock/follow/fpv selector.
+//   - Shutter/record are deliberately NOT implemented. No source had verified byte-level data for
+//     them, and guessing risks sending an unknown command to the device.
+// Every move these tools ask for is checked by the backend against the reachable pan arc it is
+// using (POST /api/move-to answers 400 outside it), and the tools plan along that arc themselves.
 //
 // ARCHITECTURE (changed 2026-08-21): this process does NOT hold its own BLE connection anymore.
 // It never reliably could — this is a Claude Code-spawned subprocess, parented by the same
@@ -26,9 +34,19 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 // The same arc the backend plans and validates against — imported so a plan this tool hands an
 // agent can never be one the backend then refuses (or worse, one the gimbal tries).
-import { planDomePans, unreachablePans, makeArc, describeArc, DEFAULT_PAN_ARC, PAN_ARC_START_DEG, PAN_ARC_END_DEG, PAN_ARC_CENTER_DEG, PAN_ARC_SPAN_DEG, DEFAULT_PAN_SPAN_DEG, MIN_STATIONS_FOR_PARALLAX } from '../protocol/dome.mjs';
+import {
+  planDomePans, planGrid, planSweepAlongArc, unreachablePans, arcFromPayload, describeArc,
+  DEFAULT_PAN_ARC, PAN_ARC_START_DEG, PAN_ARC_END_DEG, PAN_ARC_CENTER_DEG, PAN_ARC_SPAN_DEG,
+  DEFAULT_PAN_SPAN_DEG, MIN_STATIONS_FOR_PARALLAX, TILT_MIN_DEG, TILT_MAX_DEG,
+} from '../protocol/dome.mjs';
 
 const BACKEND_URL = process.env.OSMO_BACKEND_URL || 'http://localhost:8788';
+/**
+ * The backend's token, when it was started with one: the same variable the backend reads (see
+ * server/access.mjs). It is a different secret from OSMO_MCP_TOKEN below, which guards this
+ * server's own HTTP transport.
+ */
+const BACKEND_TOKEN = (process.env.OSMO_BACKEND_TOKEN ?? '').trim() || null;
 
 function textResult(obj) {
   return { content: [{ type: 'text', text: typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2) }] };
@@ -44,7 +62,10 @@ async function backendFetch(path, { method = 'GET', body } = {}) {
   try {
     res = await fetch(`${BACKEND_URL}${path}`, {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: {
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...(BACKEND_TOKEN ? { Authorization: `Bearer ${BACKEND_TOKEN}` } : {}),
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch (err) {
@@ -54,6 +75,15 @@ async function backendFetch(path, { method = 'GET', body } = {}) {
   // The remediation says what to do about a refusal (a scan owns the gimbal, a test route is off).
   if (!res.ok) throw new Error([json.error || `Backend returned HTTP ${res.status}`, json.remediation].filter(Boolean).join(' — '));
   return json;
+}
+
+/**
+ * The reachable pan arc the backend is using right now, measured or fallback. Every tool that plans
+ * a move asks for it, so a plan matches what the backend's move-to check will accept.
+ */
+async function backendArc() {
+  const status = await backendFetch('/api/status');
+  return arcFromPayload(status?.panArc);
 }
 
 // Tool registration lives in a factory rather than at module scope so the HTTP transport can
@@ -206,7 +236,10 @@ function createMcpServer() {
     {
       title: 'Recenter gimbal',
       description:
-        'Recenter via the same closed-loop positioning as gimbal_move_to (targets yaw=0, pitch=0 in the approximate Euler decomposition of the live quaternion) — the dedicated recenter/absolute-angle opcodes were both either unverified or, in the absolute-angle case, confirmed non-functional on this hardware (2026-08-21). Caveat: "0,0" here is wherever this device\'s quaternion frame reads as zero, which is not independently confirmed to be the true mechanical center.',
+        'Recenter: a closed-loop move (the same positioning as gimbal_move_to) to the CENTRE OF THE REACHABLE PAN ARC the backend is using, at tilt 0. '
+        + 'It used to aim at pan 0. On this mount pan 0 is in the dead zone: the gimbal cannot rotate through the front, and the built-in arc runs +82 round through 180 to -100, centred on 171. '
+        + 'The centre comes from GET /api/status (panArc.centerDeg). It is MEASURED when probe_pan_arc has run from this tripod position; otherwise it is the built-in fallback, which was measured somewhere else. Run probe_pan_arc first if the tripod has moved. '
+        + 'The dedicated recenter/absolute-angle opcodes were either unverified or, in the absolute-angle case, confirmed non-functional on this hardware (2026-08-21).',
       inputSchema: {
         toleranceDeg: z.number().min(0.5).max(20).optional().describe('Convergence deadband in degrees (default 3)'),
         speedDegPerSec: z.number().min(5).max(60).optional().describe('Correction speed while error exceeds tolerance (default 25)'),
@@ -214,8 +247,9 @@ function createMcpServer() {
     },
     async ({ toleranceDeg, speedDegPerSec }) => {
       try {
-        const result = await backendFetch('/api/move-to', { method: 'POST', body: { yawDeg: 0, pitchDeg: 0, toleranceDeg, speedDegPerSec } });
-        return textResult(result);
+        const arc = await backendArc();
+        const result = await backendFetch('/api/move-to', { method: 'POST', body: { yawDeg: arc.centerDeg, pitchDeg: 0, toleranceDeg, speedDegPerSec } });
+        return textResult({ target: { yawDeg: arc.centerDeg, pitchDeg: 0, arc: describeArc(arc) }, ...result });
       } catch (err) {
         return errorResult(err);
       }
@@ -246,28 +280,28 @@ function createMcpServer() {
     {
       title: 'Sweep gimbal across a yaw range',
       description:
-        'MEDIUM CONFIDENCE — step the gimbal yaw from startYawDeg to endYawDeg in stepDeg increments using the same closed-loop positioning as gimbal_move_to (the absolute-angle opcode this used to rely on is confirmed non-functional on this hardware), dwelling dwellMs at each step before moving on — intended for driving a phone mounted in the gimbal through a scan sweep (e.g. for CI-Spatial\'s room scanner, which auto-captures purely off the phone\'s own tracked movement/rotation). Set dwellMs comfortably above the scanner client\'s auto-capture interval (~2.5s+) so each step actually registers as a new capture rather than motion blur. Capped at 60 steps per call. For interleaving a photo capture between steps yourself, use gimbal_move_to instead. Note (2026-08-24): the underlying closed-loop positioning had a wrong-feedback-axis bug that stopped it ever converging on real hardware; fixed, see gimbal_move_to and GIMBAL_INTEGRATION.md. If the gimbal has no macOS Bluetooth bond it will still ignore motor commands outright, which shows up as every step reporting a flat history — check the bond before suspecting this tool.',
+        'Step the gimbal yaw from startYawDeg to endYawDeg in stepDeg increments, ALONG the reachable pan arc (the way the gimbal can actually turn, never through the front; both ends must be inside the arc the backend is using), using the same closed-loop positioning as gimbal_move_to (the absolute-angle opcode this used to rely on is confirmed non-functional on this hardware), dwelling dwellMs at each step before moving on — intended for driving a phone mounted in the gimbal through a scan sweep (e.g. for CI-Spatial\'s room scanner, which auto-captures purely off the phone\'s own tracked movement/rotation). Set dwellMs comfortably above the scanner client\'s auto-capture interval (~2.5s+) so each step actually registers as a new capture rather than motion blur. Capped at 60 steps per call. For interleaving a photo capture between steps yourself, use gimbal_move_to instead. Note (2026-08-24): the underlying closed-loop positioning had a wrong-feedback-axis bug that stopped it ever converging on real hardware; fixed, see gimbal_move_to and GIMBAL_INTEGRATION.md. If the gimbal has no macOS Bluetooth bond it will still ignore motor commands outright, which shows up as every step reporting a flat history — check the bond before suspecting this tool.',
       inputSchema: {
-        startYawDeg: z.number().min(-160).max(160),
-        endYawDeg: z.number().min(-160).max(160),
+        startYawDeg: z.number().min(-180).max(180).describe('Where the sweep starts. Must be inside the reachable pan arc the backend is using (GET /api/status panArc).'),
+        endYawDeg: z.number().min(-180).max(180).describe('Where it ends. The sweep travels ALONG the reachable arc (e.g. 96 -> 180 -> -114), never through the front.'),
         stepDeg: z.number().min(1).max(90).optional().describe('Degrees per step (default 15)'),
         dwellMs: z.number().int().min(200).max(30000).optional().describe('Extra milliseconds to hold at each step after convergence, before moving on (default 3000)'),
-        pitchDeg: z.number().min(-60).max(60).optional().describe('Constant pitch to hold throughout the sweep (default 0)'),
+        pitchDeg: z.number().min(TILT_MIN_DEG).max(TILT_MAX_DEG).optional().describe(`Constant pitch to hold throughout the sweep (default 0; tilt travel is ${TILT_MIN_DEG}..+${TILT_MAX_DEG})`),
       },
     },
     async ({ startYawDeg, endYawDeg, stepDeg, dwellMs, pitchDeg }) => {
       try {
-        const step = stepDeg ?? 15;
         const dwell = dwellMs ?? 3000;
-        const span = endYawDeg - startYawDeg;
-        const direction = span >= 0 ? 1 : -1;
-        const count = Math.floor(Math.abs(span) / step) + 1;
-        if (count > 60) {
-          throw new Error(`Sweep would take ${count} steps (max 60) — narrow the range or increase stepDeg`);
+        // Planned along the arc the backend will check each move against, so a sweep is refused
+        // before its first move rather than at whichever step reaches the dead zone. It used to
+        // interpolate numerically, which took 96 -> -114 straight through the front.
+        const arc = await backendArc();
+        const plan = planSweepAlongArc({ startDeg: startYawDeg, endDeg: endYawDeg, stepDeg: stepDeg ?? 15, arc });
+        if (plan.error) {
+          throw new Error(`${plan.error}${arc.source === 'measured' ? '' : ' That arc is the built-in fallback; run probe_pan_arc to measure it from this tripod position.'}`);
         }
         const results = [];
-        for (let i = 0; i < count; i++) {
-          const yawDeg = i === count - 1 ? endYawDeg : startYawDeg + direction * step * i;
+        for (const [i, yawDeg] of plan.pans.entries()) {
           const moveResult = await backendFetch('/api/move-to', {
             method: 'POST',
             body: { yawDeg, pitchDeg: pitchDeg ?? 0 },
@@ -275,7 +309,7 @@ function createMcpServer() {
           await new Promise((resolve) => setTimeout(resolve, dwell));
           results.push({ step: i, yawDeg, ...moveResult });
         }
-        return textResult({ stepsSent: results.length, results });
+        return textResult({ stepsSent: results.length, arc: describeArc(arc), results });
       } catch (err) {
         return errorResult(err);
       }
@@ -289,8 +323,8 @@ function createMcpServer() {
       description:
         'Move to a single absolute (yawDeg, pitchDeg) using closed-loop speed control driven by live quaternion feedback, not the absolute-angle opcode — that opcode (cmdId 0x14) was live-tested 2026-08-21 and confirmed to do nothing on this hardware, likely because our guessed payload struct never matched DJI\'s real (larger) angle-set structs. This is the single-step primitive behind gimbal_sweep, exposed on its own so a caller can interleave something else (e.g. a photo-capture tool call on a different MCP server) between steps of a multi-position scan (see plan_scan_grid). Returns {converged, timedOut, ticks, finalYaw, finalPitch, history} — check `converged` before assuming the position was actually reached; the yaw/pitch mapping used for feedback is an approximate Euler decomposition, not a calibrated attitude readout, so treat "close enough within toleranceDeg" as the real contract, not exact degrees. Fixed 2026-08-24: the loop previously steered on the raw `yaw` Euler channel, which on a mounted OM6 is pinned at -90 while physical pan lands in `roll` — so it never converged on real hardware. It now steers on measured pan/tilt (see GIMBAL_INTEGRATION.md). finalYaw/finalPitch carry pan/tilt values; the field names are kept for wire compatibility. If a call does report timedOut, read the history array and check whether pan/tilt actually change between ticks — a completely flat history means the gimbal is not moving at all (no macOS Bluetooth bond, or a wedged BLE stack), which is a different problem from a move that fell short. A result carrying `noTelemetry: true` is a third, distinct outcome: the gimbal stopped sending telemetry mid-move, so the loop gave up rather than driving blind for the rest of maxMs. Reconnect (the `connect` tool) before retrying — a longer maxMs cannot help, and neither can a bigger tolerance.',
       inputSchema: {
-        yawDeg: z.number().min(-160).max(160).optional().describe('Target yaw in degrees (default 0)'),
-        pitchDeg: z.number().min(-60).max(60).optional().describe('Target pitch in degrees (default 0)'),
+        yawDeg: z.number().min(-180).max(180).optional().describe(`Target yaw (pan) in degrees (default 0). Must be inside the reachable pan arc the backend is using: the built-in one runs ${PAN_ARC_START_DEG} round through 180 to ${PAN_ARC_END_DEG} (centre ${PAN_ARC_CENTER_DEG}), so 0 itself is refused until probe_pan_arc measures an arc that contains it. The backend answers 400 outside the arc.`),
+        pitchDeg: z.number().min(TILT_MIN_DEG).max(TILT_MAX_DEG).optional().describe(`Target pitch (tilt) in degrees (default 0); measured travel ${TILT_MIN_DEG}..+${TILT_MAX_DEG}`),
         toleranceDeg: z.number().min(0.5).max(20).optional().describe('Convergence deadband in degrees (default 3)'),
         speedDegPerSec: z.number().min(5).max(60).optional().describe('Correction speed while error exceeds tolerance (default 25)'),
         maxMs: z.number().int().min(1000).max(30000).optional().describe('Give up and report timedOut if not converged by then (default 8000)'),
@@ -329,6 +363,27 @@ function createMcpServer() {
   );
 
   server.registerTool(
+    'stop_grid_capture',
+    {
+      title: 'Stop a running grid capture',
+      description:
+        'Stop the multi-station grid capture the backend is running (POST /api/grid-stop), however it was started: the Gimbal control page, the CLI or curl. '
+        + 'While it is sweeping, it stops after the current position. While it is parked between stations, waiting for the tripod to be moved, it stops at once. '
+        + 'Either way the stations already captured are complete and are kept. '
+        + 'Without this, a capture whose client went away keeps sweeping with nobody watching, or stays parked until its 30-minute cap, holding the gimbal the whole time. '
+        + 'Safe to call when nothing is running: it reports stopped: false.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        return textResult(await backendFetch('/api/grid-stop', { method: 'POST' }));
+      } catch (err) {
+        return errorResult(err);
+      }
+    }
+  );
+
+  server.registerTool(
     'plan_scan_grid',
     {
       title: 'Plan a yaw/pitch grid scan',
@@ -351,10 +406,7 @@ function createMcpServer() {
       // measured; it never refuses to plan.
       let arc = DEFAULT_PAN_ARC;
       try {
-        const status = await backendFetch('/api/status');
-        if (status?.panArc?.source === 'measured') {
-          arc = makeArc({ startDeg: status.panArc.startDeg, endDeg: status.panArc.endDeg, source: 'measured', measuredAt: status.panArc.measuredAt });
-        }
+        arc = await backendArc();
       } catch {
         /* no backend to ask; the fallback is reported below rather than assumed silently */
       }
@@ -372,14 +424,16 @@ function createMcpServer() {
       // (floor, furniture, where walls meet), and tilt's measured travel is asymmetric anyway —
       // it converges to about -40 but jams near +16.
       const pitchSteps = Array.from({ length: pCount }, (_, i) => (pCount === 1 ? -10 : -10 - pRange / 2 + (pRange * i) / (pCount - 1)));
-      const targets = [];
-      let index = 0;
-      for (let row = 0; row < pCount; row++) {
-        const cols = row % 2 === 0 ? dome.pans.map((v, i) => [i, v]) : dome.pans.map((v, i) => [i, v]).reverse();
-        for (const [col, yawDeg] of cols) {
-          targets.push({ index: index++, row, col, yawDeg, pitchDeg: Math.round(pitchSteps[row] * 10) / 10 });
-        }
-      }
+      // The serpentine order is planGrid's, the one the backend's grid capture sweeps in. This tool
+      // used to build its own copy. row and col are recovered from the position: planGrid walks
+      // even rows forwards and odd rows backwards.
+      const columns = dome.pans.length;
+      const targets = planGrid({ pans: dome.pans, tilts: pitchSteps.map((p) => Math.round(p * 10) / 10) })
+        .map((g, index) => {
+          const row = Math.floor(index / columns);
+          const within = index % columns;
+          return { index, row, col: row % 2 === 0 ? within : columns - 1 - within, yawDeg: g.pan, pitchDeg: g.tilt };
+        });
       // Belt and braces on the invariant this tool exists to hold: the planner already
       // guarantees it, and an agent acting on a bad plan drives real motors into a real stop.
       const unreachable = unreachablePans(targets.map((t) => t.yawDeg), arc);
@@ -503,8 +557,8 @@ if (HTTP_MODE) {
 // Streamable HTTP, for remote access over Tailscale — same pattern as the
 // android-* entries in .mcp.json ({"type":"http","url":"http://<host>:PORT/mcp",
 // "headers":{"Authorization":"Bearer ${TOKEN}"}}). Binds all interfaces (no
-// host arg to .listen(), mirroring server/backend.mjs) so it's reachable from
-// the tailnet.
+// host arg to .listen(), like server/backend.mjs does by default) so it's
+// reachable from the tailnet. The bearer token below is required for that reason.
 //
 // Stateless mode (sessionIdGenerator: undefined): no session bookkeeping across
 // requests. The SDK explicitly forbids reusing one StreamableHTTPServerTransport

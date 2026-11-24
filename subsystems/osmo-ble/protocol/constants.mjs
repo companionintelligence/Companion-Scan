@@ -1,7 +1,9 @@
-// BLE + DUML constants for the Osmo family. Confidence level noted per source's own caveats
-// (see ../README.md "Protocol notes" for the full research writeup) — nothing here has been
-// verified against an actual Osmo Mobile 6 yet; this is the best synthesis of Osmo Pocket 3 /
-// Osmo Action reverse-engineering, which shares DJI's common DUML framing.
+// BLE + DUML constants for the Osmo family, synthesised from Osmo Pocket 3 / Osmo Action
+// reverse-engineering, which shares DJI's common DUML framing. Confidence is noted per constant
+// (see ../README.md "Protocol notes" for the research writeup). Some have since been checked on a
+// real Osmo Mobile 6. The DUML framing, the pairing frame and the speed command are verified;
+// 0x14 and 0x44 behave as noted below. The write characteristic and the telemetry cmdSet are still
+// unconfirmed for this device.
 
 // 16-bit short forms (used to match against noble's characteristic.uuid, which normalizes
 // to lowercase dashless short form for base-UUID-derived characteristics).
@@ -87,8 +89,8 @@ export const CMD_ID = {
   GIMBAL_STICK_CONTROL_ENABLE: 0x58, // dji_gimbal_set_stick_control_enable — HANDHELD-specific per class hierarchy (HandheldGimbalAbstraction), bound to KeyHandheldStickPositionPush/KeyStickGimbalControlEnabledPush. Best candidate for a required "arm joystick control" precondition before speed/angle commands are honored — untested.
   GIMBAL_SPEED_CTRL: 0x0c, // dji_gimbal_set_cmd_custom_ctrl_speed — confirmed by SDK naming (set_gimbal_control_gimbal_speed)
   GIMBAL_ANGLE_SET: 0x0a, // dji_gimbal_set_control_gimbal_angle — the BASE angle command (has a "_new" struct variant); NOT the same wire struct as GIMBAL_ABS_ANGLE below
-  GIMBAL_ABS_ANGLE: 0x14, // dji_gimbal_set_control_gimbal_angle_ex — an "extended" angle variant, distinct payload from the base 0x0A command per SDK naming
-  GIMBAL_SET_WORK_MODE: 0x44, // dji_gimbal_set_gimbal_work_mode (SDK alias literally "set_gimbal_mode") — the TRUE mode-set command; the previous guess of 0x4C for this was wrong
+  GIMBAL_ABS_ANGLE: 0x14, // dji_gimbal_set_control_gimbal_angle_ex — an "extended" angle variant, distinct payload from the base 0x0A command per SDK naming. Does nothing on an OM6 (A/B tested live 2026-08-21).
+  GIMBAL_SET_WORK_MODE: 0x44, // dji_gimbal_set_gimbal_work_mode (SDK alias literally "set_gimbal_mode"). Named the mode-set command in the SDK, but on an OM6 it toggles portrait/landscape (live-tested 2026-08-21; see buildGimbalSetMode). The previous guess of 0x4C for it was wrong
   GIMBAL_RESET_AND_CENTER: 0x4c, // dji_gimbal_set_work_mode_and_return_center (SDK alias "action_gimbal_set_reset") — a reset/recenter action, NOT a generic mode-set despite prior assumption
 };
 

@@ -1,6 +1,11 @@
-// Command builders on top of the raw DUML codec. Each export documents its confidence
-// level per the protocol research (see ../README.md) — none of this has been verified
-// against a real Osmo Mobile 6 yet.
+// Command builders on top of the raw DUML codec. Each export documents its own confidence level.
+// Several have since been checked on a real Osmo Mobile 6; ../README.md and
+// docs/operations/GIMBAL_INTEGRATION.md hold the record:
+//   - The speed command's axis order and signs are live-verified (2026-08-21).
+//   - The absolute-angle command (0x14) is confirmed to do nothing on that hardware.
+//   - The 0x44 "mode" command is confirmed to be a portrait/landscape toggle.
+//   - Pairing matches a real captured frame byte for byte.
+// The rest is still inferred from disassembly and from sibling products.
 
 import { encodeFrame, packString } from './duml.mjs';
 import { COMPONENT, FLAGS, CMD_SET, CMD_ID, GIMBAL_MODE, DEFAULT_IDENTIFIER } from './constants.mjs';
@@ -80,6 +85,11 @@ export function buildGimbalStickControlEnable(msgId, enable = true) {
  * this hasn't been independently live-tested (recenter, the only live-tested caller, sends all
  * zeros so it can't distinguish axis order at all). Treat pitch/yaw here as INFERRED, not
  * confirmed, until a non-zero angle move is tested live.
+ *
+ * LIVE RESULT (2026-08-21): on an Osmo Mobile 6 this command does nothing. An A/B test in one
+ * session gave delta 0.0002 against 0.126 for the speed command. Positioning is closed-loop speed
+ * control instead (moveToClosedLoop in server/backend.mjs). Kept for the test matrix and for
+ * comparison.
  */
 export function buildGimbalAbsoluteAngle(msgId, { pitchDeg = 0, rollDeg = 0, yawDeg = 0, durationSeconds = 1 } = {}) {
   const payload = new Uint8Array(8);
@@ -148,9 +158,10 @@ export function buildGimbalSpeedControl(msgId, { pitchDegPerSec = 0, rollDegPerS
  * GimbalVerticalShotEnabledSet, and live testing on a real OM6 (2026-08-21) matches: sending
  * mode=FOLLOW physically rotates the phone mount to landscape. This is a portrait/vertical-shot
  * toggle, not a lock/follow/fpv selector — the UI should stop calling it "mode" and label it as
- * an orientation/vertical-shot toggle instead. The payload shape (byte0 fixed 0xFE, byte1 the
- * selector, values seen: 1, 3, 4) is otherwise accurate; semantics of 1 vs 3 vs 4 beyond
- * "landscape happens on FOLLOW's value" are still unresolved. No verified cmdId for a general
+ * an orientation/vertical-shot toggle instead. The payload is byte0 fixed 0xFE, then byte1 the
+ * selector. This builder sends GIMBAL_MODE's 0, 1 or 2, and only 1 (FOLLOW, landscape) has a
+ * confirmed effect. An earlier note here listed 1, 3 and 4 as the selector values seen; this
+ * builder has never sent 3 or 4, and what 0 and 2 do is unresolved. No verified cmdId for a general
  * gimbal work-mode selector exists.
  */
 export function buildGimbalSetMode(msgId, mode) {

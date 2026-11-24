@@ -8,12 +8,12 @@ const MCP_JSON = {
   mcpServers: {
     'android-tab-s8-ultra': {
       type: 'http',
-      url: 'http://liams-tab-s8-ultra.capybara-ulmer.ts.net:8080/mcp',
+      url: 'http://lab-tab-s8-ultra.example.ts.net:8080/mcp',
       headers: { Authorization: 'Bearer ${ANDROID_MCP_TOKEN_TAB_S8_ULTRA}' },
     },
     'android-beam-pro-1': {
       type: 'http',
-      url: 'http://beam-pro-1.capybara-ulmer.ts.net:8080/mcp',
+      url: 'http://beam-pro-1.example.ts.net:8080/mcp',
       headers: { Authorization: 'Bearer ${ANDROID_MCP_TOKEN_BEAM_PRO_1}' },
     },
     'osmo-gimbal': { command: 'node', args: ['subsystems/osmo-ble/server/mcp-server.mjs'] },
@@ -28,25 +28,25 @@ test('envSlug maps a device name onto its token variable suffix', () => {
 });
 
 test('hostLabel reduces a device URL to the name .mcp.json keys it by', () => {
-  assert.equal(hostLabel('http://beam-pro-1.capybara-ulmer.ts.net:8080/mcp'), 'beam-pro-1');
+  assert.equal(hostLabel('http://beam-pro-1.example.ts.net:8080/mcp'), 'beam-pro-1');
   assert.equal(hostLabel('not a url'), '');
 });
 
 test('parseMcpDevices reads the URL and the token VARIABLE NAME, skipping non-http entries', () => {
   assert.deepEqual(DEVICES.map((d) => d.name).sort(), ['beam-pro-1', 'tab-s8-ultra']);
   const beam = DEVICES.find((d) => d.name === 'beam-pro-1');
-  assert.equal(beam.url, 'http://beam-pro-1.capybara-ulmer.ts.net:8080/mcp');
+  assert.equal(beam.url, 'http://beam-pro-1.example.ts.net:8080/mcp');
   assert.equal(beam.tokenEnv, 'ANDROID_MCP_TOKEN_BEAM_PRO_1');
 });
 
-// The hostname is NOT a reliable source for the token variable — the real fleet has
-// liams-tab-s8-ultra behind ANDROID_MCP_TOKEN_TAB_S8_ULTRA. Deriving the variable from the
+// The hostname is NOT a reliable source for the token variable — the real fleet has a tablet
+// whose host label (here lab-tab-s8-ultra) differs from its key, behind ANDROID_MCP_TOKEN_TAB_S8_ULTRA. Deriving the variable from the
 // host would look right on beam-pro-1 and be wrong on half the fleet, which is why the
 // mapping is read from the file that already states it.
 test('the token variable follows the .mcp.json key, not the hostname', () => {
   const tab = DEVICES.find((d) => d.name === 'tab-s8-ultra');
   assert.equal(tab.tokenEnv, 'ANDROID_MCP_TOKEN_TAB_S8_ULTRA');
-  assert.equal(hostLabel(tab.url), 'liams-tab-s8-ultra');
+  assert.equal(hostLabel(tab.url), 'lab-tab-s8-ultra');
 });
 
 test('a literal Authorization header is never read as a token', () => {
@@ -68,7 +68,7 @@ test('a device with its own token resolves with no request fields at all', () =>
   const r = resolveDevice({ request: {}, env: { ANDROID_MCP_TOKEN_BEAM_PRO_1: SECRET }, devices: DEVICES });
   assert.equal(r.ok, true);
   assert.equal(r.device, 'beam-pro-1');
-  assert.equal(r.url, 'http://beam-pro-1.capybara-ulmer.ts.net:8080/mcp');
+  assert.equal(r.url, 'http://beam-pro-1.example.ts.net:8080/mcp');
   assert.equal(r.token, SECRET);
   assert.equal(r.tokenEnv, 'ANDROID_MCP_TOKEN_BEAM_PRO_1');
 });
@@ -89,7 +89,7 @@ test('a per-device token wins over a shared ANDROID_MCP_TOKEN', () => {
 });
 
 test('a bare ANDROID_MCP_URL still finds the per-device token by matching the host back to the registry', () => {
-  const env = { ANDROID_MCP_URL: 'http://beam-pro-1.capybara-ulmer.ts.net:8080/mcp', ANDROID_MCP_TOKEN_BEAM_PRO_1: SECRET };
+  const env = { ANDROID_MCP_URL: 'http://beam-pro-1.example.ts.net:8080/mcp', ANDROID_MCP_TOKEN_BEAM_PRO_1: SECRET };
   const r = resolveDevice({ request: {}, env, devices: DEVICES });
   assert.equal(r.ok, true);
   assert.equal(r.device, 'beam-pro-1');
@@ -115,7 +115,7 @@ test('explicit request fields still win over everything resolved', () => {
 test('an explicit URL with no token of its own still resolves the token from the environment', () => {
   const env = { ANDROID_MCP_TOKEN_BEAM_PRO_1: SECRET };
   const r = resolveDevice({
-    request: { deviceUrl: 'http://beam-pro-1.capybara-ulmer.ts.net:8080/mcp' },
+    request: { deviceUrl: 'http://beam-pro-1.example.ts.net:8080/mcp' },
     env,
     devices: DEVICES,
   });

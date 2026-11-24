@@ -22,18 +22,33 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 // The backend's own planners, imported rather than reimplemented, so a --dry-run can never
 // disagree with what a real run would do and the CLI cannot offer a plan the backend refuses.
-import { planGrid } from './android-capture.mjs';
-import { planDomePans, unreachablePans, MIN_STATIONS_FOR_PARALLAX, PAN_ARC_START_DEG, PAN_ARC_END_DEG } from '../protocol/dome.mjs';
+import {
+  planGrid, planDomePans, unreachablePans, arcFromPayload, describeArc,
+  DEFAULT_PAN_ARC, DOME_PAN_STEP_DEG, SCANNER_MIN_ROTATION_DEG, MIN_STATIONS_FOR_PARALLAX,
+} from '../protocol/dome.mjs';
 
 const BACKEND_URL = process.env.OSMO_BACKEND_URL || 'http://localhost:8788';
+/**
+ * The backend's token, when it was started with one. The same variable the backend reads, so one
+ * name holds one secret (see server/access.mjs). Sent as a Bearer header, never printed.
+ */
+const BACKEND_TOKEN = (process.env.OSMO_BACKEND_TOKEN ?? '').trim() || null;
 const STATE_FILE = fileURLToPath(new URL('../.cli-state.json', import.meta.url));
+
+/** Headers for a backend request: the JSON type when there is a body, and the token when set. */
+function backendHeaders(hasBody) {
+  return {
+    ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+    ...(BACKEND_TOKEN ? { Authorization: `Bearer ${BACKEND_TOKEN}` } : {}),
+  };
+}
 
 async function api(method, path, body) {
   let res;
   try {
     res = await fetch(`${BACKEND_URL}${path}`, {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: backendHeaders(Boolean(body)),
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch (err) {
@@ -89,7 +104,9 @@ function parseArgs(argv) {
   return { positional, flags };
 }
 
-const HELP = `osmo-ble CLI — terminal client for server/backend.mjs (BACKEND_URL=${BACKEND_URL})
+const HELP = `osmo-ble CLI — terminal client for server/backend.mjs (OSMO_BACKEND_URL=${BACKEND_URL})
+If the backend was started with OSMO_BACKEND_TOKEN, set the same variable here; it is sent as a
+Bearer token.
 
 Connection lifecycle:
   scan [--timeout ms]                    Scan for nearby BLE devices (default 5000ms)
@@ -111,7 +128,9 @@ Pairing:
 
 Motion / commands:
   command <type> [--params '<json>']     Fire one command (speed, recenter, setMode, raw, ...)
-  move-to <yawDeg> <pitchDeg>            Closed-loop absolute move
+  move-to <yawDeg> <pitchDeg>            Closed-loop absolute move. Refused (400) when the target is
+                                          outside the reachable arc in use or the tilt travel; run
+                                          arc-probe first if the arc is only the built-in fallback.
       [--tolerance deg] [--speed degPerSec] [--tick ms] [--settle ms] [--max ms]
   probe <type> [--params json] [--wait ms] [--stop-type type] [--stop-params json]
                                           Send one command, wait, then send a stop, and report
@@ -121,8 +140,8 @@ Motion / commands:
   arc-probe [--step deg]                Measure how far pan really swings from this tripod spot.
                                         The arc is fixed to the BASE, so it moves when the tripod
                                         does — re-run this after every move. The grid command does
-                                        it per station already; use this after a jam, or before
-                                        sweeping by hand.
+                                        it per station already (unless --pans or --no-probe-arc);
+                                        use this after a jam, or before moving by hand.
 
 Automated capture:
   grid [--stations N]                     Sweep a dome, PAUSE while you carry the tripod to the
@@ -134,12 +153,22 @@ Automated capture:
        [--station-labels a,b,c]           Names for the stations (default station-01, ...).
                                           Each becomes a subdirectory under --out.
        [--pan-center DEG] [--pan-span DEG] [--pan-step DEG]
-                                          Dome width, clamped to the gimbal's reachable pan arc
-                                          (+82° round through 180° to -100° — it cannot rotate
-                                          through the front). Default: 150° centred on 171°.
+                                          Dome width, clamped to the gimbal's reachable pan arc.
+                                          It cannot rotate through the front; the built-in arc is
+                                          +82° round through 180° to -100°. Default: 150° centred
+                                          on the arc, at a ${DOME_PAN_STEP_DEG}° step (7 columns), which
+                                          clears the scanner's ${SCANNER_MIN_ROTATION_DEG}° keyframe threshold.
+                                          The backend re-measures the arc at each station and
+                                          re-plans these columns inside it, keeping their count.
+       [--no-probe-arc]                   Skip that per-station measurement (about a minute of
+                                          the gimbal driving to both stops, on purpose). The
+                                          columns are then planned against whatever arc the
+                                          backend already has, which may be from another spot.
        [--pans 120,145,170] [--tilts -25,0]
                                           Explicit columns/rows instead. Any pan in the dead
-                                          zone is refused, not attempted.
+                                          zone is refused, not attempted. Explicit columns are
+                                          the caller's, so the backend does not probe or move
+                                          them per station.
        [--device NAME]                    Which phone to drive, by its .mcp.json name (e.g.
                                           beam-pro-1). Only needed when more than one device
                                           has its token set; otherwise ANDROID_MCP_DEVICE or
@@ -169,6 +198,12 @@ Automated capture:
                                           only for a rig that is not being carried. The pause
                                           is the point; skipping it captures every station from
                                           the same spot, which is the degenerate case.
+                                          Ctrl-C during a run stops it on the backend (POST
+                                          /api/grid-stop) and waits for it to end, so the
+                                          manifest is complete. Press Ctrl-C again to exit at once.
+  stop                                   Stop a running capture (POST /api/grid-stop): after the
+                                          current position, or at once if it is parked between
+                                          stations. Stations already captured are kept.
 
 Telemetry:
   frames [--limit N]                     Recent raw DUML frames (default 50)
@@ -351,6 +386,13 @@ async function main() {
       }));
       return;
 
+    // The same stop the page's Stop button and the MCP stop_grid_capture tool send. Killing a
+    // `grid` client does not stop the backend's loop, so a capture started from anywhere can be
+    // stopped from here.
+    case 'stop':
+      print(await api('POST', '/api/grid-stop'));
+      return;
+
     case 'grid': {
       const nums = (v, fallback) => (v === undefined ? fallback : String(v).split(',').map(Number));
       const num = (v) => (v === undefined ? undefined : Number(v));
@@ -360,33 +402,55 @@ async function main() {
         ? String(flags['station-labels']).split(',').map((s) => s.trim()).filter(Boolean)
         : null;
 
+      // Plan against the arc the backend is using right now, measured or fallback, so the preview
+      // is the plan the backend will start from. A dry run touches nothing physical: this is one
+      // GET, and with no backend to ask, the plan says it used the built-in fallback.
+      let arc = DEFAULT_PAN_ARC;
+      let arcFrom = 'the built-in fallback (no backend reachable to ask)';
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/status`, { headers: backendHeaders(false), signal: AbortSignal.timeout(1500) });
+        if (res.ok) {
+          arc = arcFromPayload((await res.json())?.panArc);
+          arcFrom = `the backend's ${arc.source === 'measured' ? 'measured' : 'fallback'} arc`;
+        }
+      } catch {
+        /* no backend: plan against the fallback, and say so below */
+      }
+
       // Pan columns: an explicit list if given, otherwise the same centre/span planner the
       // backend uses, imported rather than reimplemented so a dry run and a real run cannot
       // disagree about where the gimbal is going.
       let pans;
       let panPlan = null;
+      /** The centre/span the backend plans from, when no explicit list was given. */
+      let panSpec = null;
       if (flags.pans !== undefined) {
         pans = nums(flags.pans);
-        const bad = unreachablePans(pans);
+        const bad = unreachablePans(pans, arc);
         if (bad.length) {
           throw new Error(
             `${bad.length} of ${pans.length} pan column(s) are in the gimbal's dead zone `
-            + `(${bad.map((b) => `${b.pan}°`).join(', ')}). Pan travels ${PAN_ARC_START_DEG}° round `
-            + `through 180° to ${PAN_ARC_END_DEG}° and cannot rotate through the front; driving into `
-            + 'the stop jams it. Use --pan-center/--pan-span and the plan is clamped for you.',
+            + `(${bad.map((b) => `${b.pan}°`).join(', ')}). Pan can only travel ${describeArc(arc)} `
+            + 'and cannot rotate through the front; driving into the stop jams it. Use '
+            + '--pan-center/--pan-span and the plan is clamped for you.',
           );
         }
       } else {
-        panPlan = planDomePans({
+        // 25 degrees, not the planner's own 15: 15 is under the scanner's 20-degree keyframe
+        // threshold, which this command's own --movement-only help cites.
+        panSpec = {
           centerDeg: num(flags['pan-center']),
           spanDeg: num(flags['pan-span']),
-          stepDeg: num(flags['pan-step']) ?? 15,
-        });
+          stepDeg: num(flags['pan-step']) ?? DOME_PAN_STEP_DEG,
+        };
+        panPlan = planDomePans({ ...panSpec, arc });
         pans = panPlan.pans;
         if (panPlan.clampedFrom) {
           console.error(`(pan span trimmed ${panPlan.clampedFrom}° -> ${panPlan.spanDeg}°: that is the whole reachable arc)`);
         }
       }
+      // A centre/span plan is measured and re-planned per station by the backend unless told not to.
+      const probesPerStation = panSpec !== null && !flags['no-probe-arc'];
 
       const grid = planGrid({ pans, tilts });
 
@@ -397,7 +461,10 @@ async function main() {
           if (s < stationsPlanned) console.error('  --- pause: carry the tripod to the next spot ---');
         }
         console.error(`\n(${stationsPlanned} station(s) x ${grid.length} positions = ${stationsPlanned * grid.length}, serpentine.`);
-        console.error(` pan ${panPlan ? `${panPlan.spanDeg}° centred on ${panPlan.centerDeg}°` : `[${pans.join(', ')}]`}, all inside the reachable arc.`);
+        console.error(` pan ${panPlan ? `${panPlan.spanDeg}° centred on ${panPlan.centerDeg}° at a ${panPlan.stepDeg}° step` : `[${pans.join(', ')}]`}, all inside ${arcFrom}.`);
+        console.error(probesPerStation
+          ? ' The backend measures the reach at each station and re-plans these columns inside it, keeping their count.'
+          : ' The columns are swept as listed at every station; the backend does not measure the reach per station.');
         if (stationsPlanned < MIN_STATIONS_FOR_PARALLAX) {
           console.error(` WARNING: ${stationsPlanned} station has no translational baseline — a dome from one spot is pure`);
           console.error(' rotation and registered 3 of 17 images in COLMAP. Use --stations 3..5.)');
@@ -448,9 +515,16 @@ async function main() {
       try {
         gridRes = await fetch(`${BACKEND_URL}/api/grid-capture`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: backendHeaders(true),
           body: JSON.stringify({
-            pans,
+            // The centre/span, not the columns it produced, whenever no explicit list was given.
+            // The backend measures the reach at each station and re-derives the columns from this
+            // spec, keeping their count. Posting the columns instead (as this used to) put every
+            // CLI run on the explicit-list branch, where the backend never probes, so
+            // --no-probe-arc had nothing to turn off.
+            ...(panSpec
+              ? { panCenterDeg: panSpec.centerDeg, panSpanDeg: panSpec.spanDeg, panStepDeg: panSpec.stepDeg }
+              : { pans }),
             tilts,
             stations: stationsPlanned,
             ...(stationLabels ? { stationLabels } : {}),
@@ -485,12 +559,37 @@ async function main() {
         throw new Error(`${rejected.error || `HTTP ${gridRes.status}`}${rejected.remediation ? `\n  ${rejected.remediation}` : ''}`);
       }
 
+      // Ctrl-C stops the capture, not just this client. The run deliberately outlives its HTTP
+      // caller, so killing the client used to leave the backend sweeping with nobody watching, or
+      // parked until its 30-minute cap. The first interrupt posts /api/grid-stop and keeps reading
+      // until the backend's `done`, which is what lets manifest.json say how far the run got. A
+      // second interrupt exits at once.
+      let stopping = false;
+      /** Resolves a pending "press Enter" wait, so a stop while parked does not hang on stdin. */
+      let releasePrompt = null;
+      const onInterrupt = (signal) => {
+        if (stopping) {
+          console.error('\n  Second interrupt: exiting without waiting. The backend finishes stopping on its own.');
+          process.exit(130);
+        }
+        stopping = true;
+        releasePrompt?.();
+        console.error(`\n  ${signal}: asking the backend to stop the capture (POST /api/grid-stop)…`);
+        api('POST', '/api/grid-stop')
+          .then((r) => console.error(`  ${r.note ?? (r.stopped ? 'Stopping.' : 'No capture was running.')}`))
+          .catch((err) => console.error(`  Could not stop it: ${err.message}\n  It may still be running on the backend. Stop it with: node server/cli.mjs stop`))
+          .finally(() => console.error('  Waiting for the run to end so manifest.json is complete. Press Ctrl-C again to exit now.'));
+      };
+      process.on('SIGINT', onInterrupt);
+      process.on('SIGTERM', onInterrupt);
+
       const files = [];
       let total = grid.length * stationsPlanned;
       let final = null;
       /** Stations already prompted for, so the 5-second heartbeats do not re-ask. */
       const prompted = new Set();
       let buf = '';
+      try {
       for await (const chunk of gridRes.body) {
         buf += Buffer.from(chunk).toString('utf8');
         let nl;
@@ -523,16 +622,27 @@ async function main() {
                 console.error('  (--yes: advancing without waiting. Every station from the same spot is the degenerate case.)');
               } else if (!process.stdin.isTTY) {
                 // Printed once, not on every 5-second heartbeat: a non-interactive caller is
-                // usually a log, and the instruction does not get truer by repetition.
-                console.error(`  Not a terminal — advance with:  curl -XPOST ${BACKEND_URL}/api/grid-advance`);
+                // usually a log, and the instruction does not get truer by repetition. The token
+                // is named by its variable, never printed.
+                const auth = BACKEND_TOKEN ? ' -H "Authorization: Bearer $OSMO_BACKEND_TOKEN"' : '';
+                console.error(`  Not a terminal — advance with:  curl -XPOST${auth} ${BACKEND_URL}/api/grid-advance`);
                 continue;
               } else {
                 console.error('  Press Enter when it is down and level (Ctrl-C to stop here — the stations already captured are complete).');
                 await new Promise((resolve) => {
+                  const done = () => {
+                    process.stdin.off('data', done);
+                    process.stdin.pause();
+                    releasePrompt = null;
+                    resolve();
+                  };
+                  releasePrompt = done;
                   process.stdin.resume();
-                  process.stdin.once('data', () => { process.stdin.pause(); resolve(); });
+                  process.stdin.once('data', done);
                 });
               }
+              // A stop while parked releases the backend's gate itself; an advance now would be a 409.
+              if (stopping) continue;
               await api('POST', '/api/grid-advance');
             } catch (err) {
               // A refused advance is recoverable (a dropped BLE link is the expected cause), so
@@ -608,6 +718,11 @@ async function main() {
             console.error(`\n  Backend reported a fault: ${event.error}`);
           }
         }
+      }
+      } finally {
+        // The run is over (or the stream broke): an interrupt from here on is an ordinary exit.
+        process.off('SIGINT', onInterrupt);
+        process.off('SIGTERM', onInterrupt);
       }
 
       manifest.finishedAt = new Date().toISOString();
