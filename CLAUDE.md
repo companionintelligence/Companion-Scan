@@ -22,7 +22,7 @@ npm run typecheck:tests      # type-check tests/*.spec.ts — `tsc --noEmit` doe
 deno task test                # Deno unit tests
 npm run test:viewport        # pinch-zoom must stay on (WCAG 1.4.4): viewport tags, root touch-action, iOS gesture* handlers, 16px text fields on touch screens. Local only: both workflows are manual
 npm run qr -- "/scanner.html?world=default"   # QR code for on-device testing
-npm run logs:watch           # stream a phone's console over the wire (?debug=remote)
+npm run logs:watch           # stream a phone's console (?debug=remote on the page, CLIENT_LOGS_BROADCAST=1 on the server)
 ```
 
 **`npx tsc --noEmit` covers `src/` only** — `tsconfig.json`'s `include` is `["src"]`, and
@@ -113,9 +113,10 @@ about to create this codebase's third `ScanManifest` — don't.
   `docs/factory/foundation-updates/0001-reconcile-license-contradiction.md`, but
   don't assume every doc in the repo agrees; grep before trusting a license claim.
 - Hostname resolution (`TAILSCALE_HOSTNAME`/`ALLOWED_ORIGIN_PREFIX`) must stay in sync
-  between `vite.config.ts`'s `resolveHostname()` and `server/main.ts`'s copy of the same
-  algorithm — they're deliberately parallel implementations (different runtimes), not
-  a shared module. See
+  between `vite.config.ts`'s `resolveHostname()` and `server/origin.ts`'s
+  `resolveHostnameWith()` (`server/main.ts` only supplies its probes) — they're
+  deliberately parallel implementations (different runtimes), not a shared module. Both
+  fall back to `localhost` with a warning. See
   `docs/factory/foundation-updates/0002-fix-allowed-origin-prefix-autodetect.md`.
 - **Both npm and Deno materialise `node_modules`.** `deno.json:2` sets
   `"nodeModulesDir": "auto"`, so `deno install` / any `deno task` builds its own
@@ -150,7 +151,7 @@ persisted user data or an external integration instead of erroring.
 | IndexedDB database name `'ci-xr-projects'` | `src/project/project-store.ts` | Orphans every Place on the device: its projects, scan assignments, calibration reference photos and the frame waiting for the server. The browser opens a fresh, empty database under the new name. Adding a store behind a version bump is safe; renaming is not. |
 | sessionStorage key `'ci-xr-geo-fix'` | `src/geo/geo-tracker.ts` | Breaks in-flight geo-anchoring state for any tab that already wrote the old key. |
 | localStorage key `'companion-scan-onboarded'` | `src/main.ts` | Every existing user sees the onboarding flow again on next launch. |
-| Service-worker cache/queue names `'companion-scan-offline-queue'`, `'companion-scan-v3'`, `'companion-scan-flush'` | `public/sw.js` (also referenced from `src/pwa.ts`) | Breaks the offline upload queue for anyone with a stale service worker still installed — queued uploads become unreachable under the new name. |
+| Service-worker cache/queue names `'companion-scan-offline-queue'`, `'companion-scan-v3'`, `'companion-scan-flush'` | `public/sw.js` (also referenced from `src/pwa.ts`); the IndexedDB name `'companion-scan-offline-queue'` is also opened by the apps' page queue, `src/page-upload-queue.ts` (`OFFLINE_QUEUE_DB_NAME` in `src/shared/storage-keys.ts`) | Breaks the offline upload queue for anyone with a stale service worker still installed — queued uploads become unreachable under the new name. |
 | GHCR image name `ghcr.io/companionintelligence/ci-web-xr-scan` | `.github/workflows/docker-publish.yml` | Breaks every existing deploy pointing at that image tag — pulls start 404ing. |
 | OIDC client id `'ci-web-xr-scan'` | `server/portal_auth.ts` | Must exactly match the client registration in the CI-Portal identity provider — "Sign in with Companion Account" breaks until the IdP registration is updated too. |
 | memory-push `sourceSystem` `'companion-scan'` | `server/memory_push.ts` | Namespaces the idempotency keys sent to CI-Server — renaming it makes every previously-pushed memory look new, so re-pushes duplicate instead of deduping. |
