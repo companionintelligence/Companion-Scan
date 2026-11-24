@@ -22,6 +22,7 @@ import type { GeoFix } from '../geo/geo-tracker'
 import { apiUrl } from '../shared/api-base.ts'
 import { pathLengthM as walkedM } from '../shared/pose-math.ts'
 import { isServerSessionId } from '../shared/session-id.ts'
+import { isQueuedOffline } from '../shared/offline-queue.ts'
 
 export interface SummaryData {
   store: DetectionStore
@@ -307,7 +308,10 @@ async function uploadSummary(content: string, filename: string, store: Detection
   try {
     const form = summaryUploadForm(content, filename, store.sessionId)
     const resp = await fetch(apiUrl('/upload-summary'), { method: 'POST', body: form })
-    if (resp.ok) {
+    if (isQueuedOffline(resp)) {
+      // Stored by the offline queue, not delivered: there is no saved filename to read yet.
+      console.log('[summary] Offline: the summary is queued and goes to the server when the connection returns')
+    } else if (resp.ok) {
       const body = await resp.json() as { filename: string }
       console.log(`[summary] Uploaded to server: ${body.filename}`)
     } else {

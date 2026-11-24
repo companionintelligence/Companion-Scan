@@ -490,7 +490,7 @@ async function downloadFile(path: string, expectedBytes: number, onFileProgress:
 /**
  * Downloads every file the model needs, in order, reporting progress
  * through the same `{stage, pct}` shape webgpu.worker.ts's progress
- * messages and src/ui/overlay.ts's setProgress already use (Pinned
+ * messages and the scanner's setProgress (setupStatusOverlay in src/main.ts) already use (Pinned
  * Conventions — reused, not a second progress surface). Safe to call again
  * after a failure or interruption: already-complete files are skipped, and
  * partial files resume.

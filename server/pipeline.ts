@@ -122,7 +122,7 @@ let readIoPromise: Promise<NodeIO> | null = null
  * KHR_mesh_quantization on the very accessor it reads.
  *
  * One per process, shared by the stages that only read a scan GLB
- * (panoptic_lift.ts; world_export.ts holds the last copy of this setup). The
+ * (panoptic_lift.ts, world_export.ts). The
  * optimizer itself uses the encoder-and-decoder IO below.
  */
 export function getGltfReadIO(): Promise<NodeIO> {

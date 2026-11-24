@@ -39,11 +39,12 @@
  * is a tracked file and `scans/` churn under the checkout is what vite.config.ts:126-133
  * already guards against. Seeding into /tmp keeps the capture from dirtying the repo.
  *
- * `TAILSCALE_HOSTNAME` is NOT optional. vite.config.ts:96 sets
- * `server.allowedHosts: [HOSTNAME]`, and HOSTNAME is resolved (vite.config.ts:17-45)
- * from the Tailscale CLI, falling back to the hard-coded `liambook.capybara-ulmer.ts.net`.
- * Without the override, Vite rejects a `localhost` Host header outright and every
- * shot fails on a blocked-request page rather than a timeout.
+ * `TAILSCALE_HOSTNAME` is NOT optional. vite.config.ts sets
+ * `server.allowedHosts: [HOSTNAME]`, and HOSTNAME is resolved (resolveHostname() in
+ * vite.config.ts) from the env, then the Tailscale CLI, then a cert file, and only
+ * then falls back to `localhost`. On a machine where Tailscale answers, HOSTNAME is
+ * its tailnet name, Vite rejects a `localhost` Host header outright, and every shot
+ * fails on a blocked-request page rather than a timeout. The override pins it.
  *
  * ── Determinism hazards found in this app ────────────────────────────────────
  * Shots are committed, so a rerun on unchanged UI must produce identical bytes.

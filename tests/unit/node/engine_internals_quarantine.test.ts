@@ -68,6 +68,10 @@ function isExempt(path: string): boolean {
     path === 'public/xr-slam.js' ||
     path === 'public/xr-face.js' ||
     path.startsWith('public/resources/') ||
+    // `npx cap sync` copies the built web bundle, engine files included, into the native projects. Both copies are
+    // git-ignored (mobile/android/.gitignore, mobile/ios/.gitignore), so nothing in them can reach the repository.
+    path.startsWith('mobile/android/app/src/main/assets/public/') ||
+    path.startsWith('mobile/ios/App/App/public/') ||
     path.startsWith('docs/audits/') ||
     path === 'package-lock.json' ||
     path.endsWith('/package-lock.json')

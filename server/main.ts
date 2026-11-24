@@ -3880,23 +3880,16 @@ function sleepUnlessOverdue(ms: number, signal: AbortSignal | undefined): Promis
 
 /**
  * The runners that cannot take the pump's signal (F-27). Each waits on a driver in another module whose options have no
- * `signal` today: a child process under that driver's own budget (run_with_deadline.ts), or an HTTP service under its
- * own timeouts. For these the pump's deadline only records the outcome (failOverdueWorldJob), and the next job may start
- * while the overdue one winds down. The drivers are server-runners' (wave 14 ticket 0002); when one gains a `signal`
- * option, pass it at its call site and take its type off this list.
+ * `signal`: all three compute in this process rather than in a child or a remote service, so there is nothing for a
+ * signal to kill. For these the pump's deadline only records the outcome (failOverdueWorldJob), and the next job may
+ * start while the overdue one winds down. The drivers are server-runners' (wave 14 ticket 0002). Every driver that
+ * spawns a child or calls a service takes `signal` since that ticket, and is passed it at its call site below: its
+ * child is killed (run_with_deadline.ts) or its requests are cut short, and the driver reports the run as failed, which
+ * the runner records as its own outcome.
  */
 const RUNNERS_WITHOUT_SIGNAL: readonly WorldJobType[] = [
-  'lingbot-map-reconstruct', // server/lingbot-map/lingbot_map.ts
-  'colmap-poses', // server/colmap/colmap_poses.ts
-  'splat-train', // server/splat/splat_train.ts, server/splat/spirula_train.ts
   'splat-align', // server/splat/splat_align.ts
-  'splat-detect', // server/splat/splat_detect.ts
-  'splat-finish', // server/splat/splat_finish.ts
-  'sensenova-vision', // server/sensenova_vision.ts
-  'panoptic-scan', // server/panoptic/panoptic_scan.ts
   'panoptic-lift', // server/panoptic/panoptic_lift.ts
-  'person-4d-reconstruct', // server/person4d/person_4d.ts
-  'thing-interactive-asset', // server/physag3d/physag3d.ts
   'place-register', // server/register/place_register.ts
 ]
 
@@ -3954,17 +3947,17 @@ async function _dispatchWorldJob(slug: string, jobId: string, signal?: AbortSign
     }
 
     if (job.type === 'lingbot-map-reconstruct') {
-      await _runLingBotMapJob(slug, jobId)
+      await _runLingBotMapJob(slug, jobId, signal)
       return
     }
 
     if (job.type === 'colmap-poses') {
-      await _runColmapPosesJob(slug, jobId)
+      await _runColmapPosesJob(slug, jobId, signal)
       return
     }
 
     if (job.type === 'splat-train') {
-      await _runSplatTrainJob(slug, jobId)
+      await _runSplatTrainJob(slug, jobId, signal)
       return
     }
 
@@ -3974,22 +3967,22 @@ async function _dispatchWorldJob(slug: string, jobId: string, signal?: AbortSign
     }
 
     if (job.type === 'splat-detect') {
-      await _runSplatDetectJob(slug, jobId)
+      await _runSplatDetectJob(slug, jobId, signal)
       return
     }
 
     if (job.type === 'splat-finish') {
-      await _runSplatFinishJob(slug, jobId)
+      await _runSplatFinishJob(slug, jobId, signal)
       return
     }
 
     if (job.type === 'sensenova-vision') {
-      await _runSenseNovaVisionJob(slug, jobId)
+      await _runSenseNovaVisionJob(slug, jobId, signal)
       return
     }
 
     if (job.type === 'panoptic-scan') {
-      await _runPanopticScanJob(slug, jobId)
+      await _runPanopticScanJob(slug, jobId, signal)
       return
     }
 
@@ -3999,12 +3992,12 @@ async function _dispatchWorldJob(slug: string, jobId: string, signal?: AbortSign
     }
 
     if (job.type === 'person-4d-reconstruct') {
-      await _runPerson4DJob(slug, jobId)
+      await _runPerson4DJob(slug, jobId, signal)
       return
     }
 
     if (job.type === 'thing-interactive-asset') {
-      await _runThingInteractiveAssetJob(slug, jobId)
+      await _runThingInteractiveAssetJob(slug, jobId, signal)
       return
     }
 
@@ -4475,7 +4468,7 @@ async function _runSplatAlignJob(slug: string, jobId: string): Promise<void> {
   }
 }
 
-async function _runColmapPosesJob(slug: string, jobId: string): Promise<void> {
+async function _runColmapPosesJob(slug: string, jobId: string, signal?: AbortSignal): Promise<void> {
   try {
     const start = await claimSessionJob(slug, jobId)
     if (!start) return
@@ -4499,6 +4492,7 @@ async function _runColmapPosesJob(slug: string, jobId: string): Promise<void> {
 
     const result = await runColmapPoses({
       sessionDir: sessionPath,
+      signal,
       ...(scanGlbExists ? {} : {
         glbOutPath: scanGlbPath,
         // `capturedAt` is nullable on the manifest; the builder falls back to
@@ -4607,7 +4601,7 @@ async function _runColmapPosesJob(slug: string, jobId: string): Promise<void> {
   }
 }
 
-async function _runLingBotMapJob(slug: string, jobId: string): Promise<void> {
+async function _runLingBotMapJob(slug: string, jobId: string, signal?: AbortSignal): Promise<void> {
   try {
     const start = await claimSessionJob(slug, jobId)
     if (!start) return
@@ -4620,6 +4614,7 @@ async function _runLingBotMapJob(slug: string, jobId: string): Promise<void> {
       scriptPath: LINGBOT_MAP_SCRIPT,
       glbSidecarPath,
       glbExtras: { sessionId, scanId: scan.scanId },
+      signal,
     })
 
     await commitWorldJob(slug, jobId, (currentJob, current) => {
@@ -4678,7 +4673,7 @@ async function _runLingBotMapJob(slug: string, jobId: string): Promise<void> {
   }
 }
 
-async function _runSenseNovaVisionJob(slug: string, jobId: string): Promise<void> {
+async function _runSenseNovaVisionJob(slug: string, jobId: string, signal?: AbortSignal): Promise<void> {
   try {
     const start = await claimSessionJob(slug, jobId)
     if (!start) return
@@ -4686,7 +4681,7 @@ async function _runSenseNovaVisionJob(slug: string, jobId: string): Promise<void
     const task = senseNovaTask(payload?.['task'])
     const query = asString(payload?.['query']) ?? undefined
     const outputDir = `${SCANS_DIR}/.sensenova/${safeSlug(jobId)}`
-    const result = await runSenseNovaVision({ sessionDir: sessionPath, outputDir, task, query })
+    const result = await runSenseNovaVision({ sessionDir: sessionPath, outputDir, task, query, signal })
 
     await commitWorldJob(slug, jobId, (currentJob, current) => {
       currentJob.progress = 1
@@ -4746,13 +4741,14 @@ async function _runSenseNovaVisionJob(slug: string, jobId: string): Promise<void
  * `stuffCount` split is surfaced in the artifact because they are handled
  * differently downstream (see server/panoptic/panoptic_segments.ts).
  */
-async function _runPanopticScanJob(slug: string, jobId: string): Promise<void> {
+async function _runPanopticScanJob(slug: string, jobId: string, signal?: AbortSignal): Promise<void> {
   try {
     const start = await claimSessionJob(slug, jobId)
     if (!start) return
     const { scan, sessionId, sessionPath, payload } = start
     const result = await runPanopticScan({
       sessionDir: sessionPath,
+      signal,
       model: asString(payload?.['model']) ?? undefined,
       maxFrames: typeof payload?.['maxFrames'] === 'number' ? payload['maxFrames'] as number : undefined,
       sessionId: scan.sessionId ?? undefined,
@@ -4894,7 +4890,7 @@ async function _runPanopticLiftJob(slug: string, jobId: string): Promise<void> {
   }
 }
 
-async function _runPerson4DJob(slug: string, jobId: string): Promise<void> {
+async function _runPerson4DJob(slug: string, jobId: string, signal?: AbortSignal): Promise<void> {
   try {
     const start = await claimJobScan(slug, jobId)
     if (!start) return
@@ -4946,6 +4942,7 @@ async function _runPerson4DJob(slug: string, jobId: string): Promise<void> {
       clips,
       sequenceDir,
       manifestPath,
+      signal,
       syncResidualMs: worstResidual,
       provenance: { sessionId: scan.sessionId ?? undefined, scanId: scan.scanId },
       onProgress: (fraction) => {
@@ -5031,7 +5028,7 @@ async function _runPerson4DJob(slug: string, jobId: string): Promise<void> {
  * the keyframe is still on disk is the driver's question. Nothing is recorded on the scan: an asset of one Thing says
  * nothing about the scan's geometry, so applyCompletedJobToWorld has no branch for it.
  */
-async function _runThingInteractiveAssetJob(slug: string, jobId: string): Promise<void> {
+async function _runThingInteractiveAssetJob(slug: string, jobId: string, signal?: AbortSignal): Promise<void> {
   try {
     const claimed = await claimJobScan(slug, jobId)
     if (!claimed) return
@@ -5049,6 +5046,7 @@ async function _runThingInteractiveAssetJob(slug: string, jobId: string): Promis
       assetDir: `${SCANS_DIR}/${folder}`,
       assetId: jobId,
       maxGlbBytes: UPLOAD_MAX_SCAN_BYTES,
+      signal,
       // Three steps, so three commits; each one rewrites the world file under its lock (ADR 0004).
       onProgress: (fraction) => {
         commitWorldJob(slug, jobId, (currentJob) => {
@@ -5139,7 +5137,7 @@ async function removeSessionDataElsewhere(sessionId: string): Promise<number> {
   return copies + await removeSessionSummaries(SUMMARIES_DIR, sessionId)
 }
 
-async function _runSplatTrainJob(slug: string, jobId: string): Promise<void> {
+async function _runSplatTrainJob(slug: string, jobId: string, signal?: AbortSignal): Promise<void> {
   try {
     const start = await claimSessionJob(slug, jobId)
     if (!start) return
@@ -5159,6 +5157,7 @@ async function _runSplatTrainJob(slug: string, jobId: string): Promise<void> {
       outputCompressedPlyPath,
       manifestPath,
       provenance: { sessionId, scanId: scan.scanId },
+      signal,
     }
     const result = SPLAT_BACKEND === 'spirula'
       ? await runSpirulaTrain(trainOpts)
@@ -5250,7 +5249,7 @@ async function _runSplatTrainJob(slug: string, jobId: string): Promise<void> {
   }
 }
 
-async function _runSplatDetectJob(slug: string, jobId: string): Promise<void> {
+async function _runSplatDetectJob(slug: string, jobId: string, signal?: AbortSignal): Promise<void> {
   try {
     const claimed = await claimJobScan(slug, jobId)
     if (!claimed) return
@@ -5279,6 +5278,7 @@ async function _runSplatDetectJob(slug: string, jobId: string): Promise<void> {
       sessionDir: sessionPath,
       outputInteractionsPath,
       manifestPath,
+      signal,
       prompt,
       quality: payloadStr('quality'),
       scoreThreshold: payloadStr('scoreThreshold'),
@@ -5430,7 +5430,7 @@ function _runPlaceRegisterJob(slug: string, jobId: string): Promise<void> {
   }, slug, jobId)
 }
 
-async function _runSplatFinishJob(slug: string, jobId: string): Promise<void> {
+async function _runSplatFinishJob(slug: string, jobId: string, signal?: AbortSignal): Promise<void> {
   try {
     const claimed = await claimJobScan(slug, jobId)
     if (!claimed) return
@@ -5446,6 +5446,7 @@ async function _runSplatFinishJob(slug: string, jobId: string): Promise<void> {
       outputSogPath,
       outputCompressedPlyPath,
       manifestPath,
+      signal,
       provenance: { sessionId: scan.sessionId ?? undefined, scanId: scan.scanId },
     })
 
