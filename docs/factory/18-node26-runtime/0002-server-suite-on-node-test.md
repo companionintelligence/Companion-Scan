@@ -7,9 +7,9 @@
 
 ## Goal
 
-The 199 files of `tests/unit/deno/` move to `tests/unit/server/`, and run under `node --test` on
-Node 26. Every `Deno.test` becomes a `node:test` test, and each test asserts what it asserted
-before.
+The files of `tests/unit/deno/` (199 at `0de2afa`, and the four that #303 added) move to
+`tests/unit/server/`, and run under `node --test` on Node 26. Every `Deno.test` becomes a
+`node:test` test, and each test asserts what it asserted before.
 
 ## Non-goals
 
