@@ -302,6 +302,7 @@ The everyday user must understand there are **four distinct capture pipelines**,
     - **Scene layers** (`#layer-list`);
     - **Previous reference**;
     - **LingBot-Map**;
+    - **Floor plan**;
     - **SenseNova Vision**;
     - **Placed objects**;
     - **Splat tools**.
@@ -396,16 +397,17 @@ The two senses of "4D" are distinguished in ADR 0006.
   - It keeps its own surface: transient scan-status text ("Optimization queued…" / "Optimizing (quantize/draco/LODs)…").
   - It is filtered *out* of the job list, so upload bursts cannot crowd out the reconstruction jobs.
 
-**World job types (23):** the `WorldJobType` union in `src/world/types.ts`; [`../architecture.md`](../architecture.md) § World Job Types & Processing describes them.
+**World job types (24):** the `WorldJobType` union in `src/world/types.ts`; [`../architecture.md`](../architecture.md) § World Job Types & Processing describes them.
 - **The Advanced queue's `#job-type` select** offers 13 of them (`POST /worlds/:slug/jobs`): `ingest`, `extract-layers`, `merge-points`, `semantic-pass`, `depth-reconstruct`, `thing-correspondence`, `lingbot-map-reconstruct`, `splat-train`, `splat-detect`, `splat-finish`, `sensenova-vision`, `export-world` and `place-register`.
   - A job that reads one scan needs a selected scan (`SCAN_REQUIRED_JOB_TYPES`, `src/world/job-types.ts`). The line under the select says whether the chosen job runs on the selected scan or the whole Place, and **Queue Job** refuses a scan-backed job with no scan selected.
 - **Other surfaces:**
   - Splat tools queue `splat-train` and `splat-detect` with their own payload.
+  - The Floor plan section queues `floor-plan`, which a successful `lingbot-map-reconstruct` also queues.
   - The SenseNova panel queues `sensenova-vision`.
   - The Publish step queues `memory-push` and `export-world`.
   - `optimize-scan` runs on upload.
 - **The rest** are queued by the server or reached through the API.
-- **Not this queue:** the **sync `/process-scan` actions** (`object-count`, `scene-description`, `floor-plan`) are a different route and pipeline, on the phone panel's `Server Processing` block.
+- **Not this queue:** the **sync `/process-scan` actions** (`object-count`, `scene-description`, `floor-plan`) are a different route and pipeline, on the phone panel's `Server Processing` block. Its `floor-plan` action lists the detected object types; it is not the `floor-plan` job.
 
 **Screens/controls today:**
 - **Guided Processing** (Project tab): each stage queues its jobs for the selected scan.
@@ -417,6 +419,10 @@ The two senses of "4D" are distinguished in ADR 0006.
   - the task (`#sensenova-task`), optional labels and **Run SenseNova**;
   - the panel shows the selected scan's latest SenseNova job: queued, running, failed, skipped (with the runtime hint), or completed with its result and the names of its output files;
   - the files stay on the server, which has no route to open them from the editor yet.
+- **Floor plan** (Layers, `#floor-plan-section`): the selected scan's plan from its LingBot-Map points.
+  - `#btn-floor-plan` "Generate floor plan", and "Download SVG" and "Download JSON" once there is a plan;
+  - the walls, rooms, area and ceiling height, in the point cloud's own units, and the drawing as a preview;
+  - a skip says why and what fixes it (no LingBot-Map cloud yet, no numpy), and a read that fails says the answer is not known.
 - **Placed objects** (Layers): what panoptic-lift placed in the scan, with firm and unsure markers.
   - It says "nothing has looked for things" only when the lift has not run.
   - When the server does not serve the record, or the read fails, it says that is not known.
@@ -438,6 +444,7 @@ The two senses of "4D" are distinguished in ADR 0006.
 | `semantic-pass` | ⚠ | `semantic-report`; job list only |
 | `depth-reconstruct` | ⚠ | `depth-plan`; job list only |
 | `lingbot-map-reconstruct` | ✅ | `lingbot-map.manifest.json` + `.point-cloud.ply` + `.poses.json` + `.lingbot.glb`; **Layers → LingBot-Map** |
+| `floor-plan` | ✅ | `.floor-plan.json` + `.svg` + manifest, from the LingBot-Map cloud, in its own units; auto-chains after `lingbot-map-reconstruct` unless `FLOORPLAN_AUTO=0`; **Layers → Floor plan** (numbers, the drawing, two downloads) |
 | `splat-train` | ✅ | `.splat.ply` (+ `.compressed.ply` + manifest); **Splat tools**: "Trained splat ready — N gaussians", toggle, Download .ply |
 | `splat-detect` | ✅ | `.interactions.json` (+ manifest); **Splat tools → Detect objects**; 3D boxes and their captions in the viewport |
 | `splat-finish` | ✅ | `.sog` + `.compressed.ply` (+ manifest); auto-chains after `splat-train` unless `SPLAT_FINISH_AUTO=0`; Download .sog |
@@ -449,7 +456,7 @@ The two senses of "4D" are distinguished in ADR 0006.
 
 **Guidance signals:**
 - On the `/events` WebSocket, a `world-job-update` refreshes the job list.
-- A completed LingBot-Map, splat or panoptic-lift job re-reads the scan's layer, so Layers updates without a reload.
+- A completed LingBot-Map, splat or panoptic-lift job re-reads the scan's layer, and a finished floor-plan job (completed or failed) the selected scan's Floor plan section, so Layers updates without a reload.
 - Failure reasons (`jobFailureReason`) are sentences.
 - A missing GPU tool writes a **`skipped` manifest with a remediation hint**, and the job still shows `completed`.
 

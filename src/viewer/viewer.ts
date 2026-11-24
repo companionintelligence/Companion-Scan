@@ -36,6 +36,14 @@ import {
 } from './panoptic-layer'
 import type { ArtifactRead } from './artifact-read'
 import { buildTrainJobRequest, buildDetectJobRequest } from './splat-toolbox'
+import {
+  buildFloorPlanJobRequest,
+  floorPlanDownloadName,
+  floorPlanJsonUrl,
+  floorPlanPanelView,
+  floorPlanSvgUrl,
+  readFloorPlanManifest,
+} from './floor-plan-layer'
 import { buildThingObservationIndex, resolveThingTagsForScan, type ResolvedThingTag } from '../shared/thing_tags'
 import { accessTokenFrom, addAccessToken, mediaUrl } from '../shared/access-token'
 import { PlacesPanel } from './places'
@@ -549,7 +557,7 @@ function onResize(): void {
 
 /** The idle line each per-scan overlay panel starts with (its "select a scan" text in viewer.html). */
 const scanPanelIdleText = new Map(
-  ['lingbot-map-status', 'panoptic-objects-status', 'splat-layer-status', 'splat-detect-status'].map(
+  ['lingbot-map-status', 'panoptic-objects-status', 'splat-layer-status', 'splat-detect-status', 'floor-plan-status'].map(
     (id) => [id, document.getElementById(id)?.textContent?.trim() ?? ''] as const,
   ),
 )
@@ -561,9 +569,11 @@ function resetScanOverlayPanels(): void {
     if (el && idle) el.textContent = idle
   }
   // The detail lines under those statuses, and the splat tooltip, describe the Place that was left too.
-  for (const id of ['lingbot-map-stats', 'splat-layer-stats', 'panoptic-objects-reasons']) setText(id, '')
+  for (const id of ['lingbot-map-stats', 'splat-layer-stats', 'panoptic-objects-reasons', 'floor-plan-stats']) setText(id, '')
   const splatStats = document.getElementById('splat-layer-stats')
   if (splatStats) splatStats.title = ''
+  floorPlanPanelScanId = null
+  showFloorPlanFiles(null)
 }
 
 function initWorldScene(): void {
@@ -2393,6 +2403,7 @@ function selectScan(scanId: string, focus: boolean, openEdit = true): void {
   }
   void refreshQualityPanel(scanId)
   void refreshLingBotMapPanel(scanId)
+  void refreshFloorPlanPanel(scanId)
   void refreshSplatLayerPanel(scanId)
   void refreshPanopticPanel(scanId)
   renderSenseNovaPanel()
@@ -2657,6 +2668,97 @@ function setLingBotPointsVisible(visible: boolean): void {
 function setLingBotPathVisible(visible: boolean): void {
   lingbotShowPath = visible
   for (const overlay of lingbotOverlays.values()) overlay.pathGroup.visible = visible
+}
+
+// ─── Floor plan (floor-plan job output) ───────────────────────────────────────
+
+/** The scan the Floor plan section describes, so a switch to another scan clears it before that scan's read. */
+let floorPlanPanelScanId: string | null = null
+/**
+ * Counts the section's reads, so only the latest one is shown. A finished job's refresh can start after a selection's
+ * and land before it, and a pick in the scene changes the selected scan without starting a read at all.
+ */
+let floorPlanReads = 0
+
+/**
+ * The Floor plan section for the selected scan: the manifest's numbers, the drawing as a preview, and the two
+ * downloads (./floor-plan-layer.ts says what each answer reads as). A scan with no plan yet is the ordinary state, and
+ * Generate queues one.
+ */
+async function refreshFloorPlanPanel(scanId: string): Promise<void> {
+  const status = document.getElementById('floor-plan-status')
+  if (!status) return
+  const scan = world?.scans.find(s => s.scanId === scanId)
+  if (!scan) {
+    floorPlanPanelScanId = null
+    floorPlanReads++
+    status.textContent = scanPanelIdleText.get('floor-plan-status') ?? ''
+    setText('floor-plan-stats', '')
+    showFloorPlanFiles(null)
+    return
+  }
+  if (floorPlanPanelScanId !== scanId) {
+    // The last scan's plan must not stand under this one while its read is in flight.
+    floorPlanPanelScanId = scanId
+    status.textContent = 'Reading this scan\'s floor plan…'
+    setText('floor-plan-stats', '')
+    showFloorPlanFiles(null)
+  }
+  const gen = worldGen
+  const readNumber = ++floorPlanReads
+  // Revalidated rather than taken from the copy the route lets a browser keep for five minutes: this runs again when a
+  // floor-plan job finishes, and must show that run.
+  const read = await readFloorPlanManifest(scan, (url) => fetch(withAccessToken(url), { cache: 'no-cache' }))
+  // A later read, or a Place switch, has superseded this one.
+  if (gen !== worldGen || readNumber !== floorPlanReads) return
+  const view = floorPlanPanelView(read)
+  status.textContent = view.status
+  setText('floor-plan-stats', view.stats)
+  showFloorPlanFiles(view.planVersion !== null ? { scan, version: view.planVersion } : null)
+}
+
+/** Show a scan's plan drawing and its two downloads, or hide all three. */
+function showFloorPlanFiles(plan: { scan: ScanManifest; version: string } | null): void {
+  const preview = document.getElementById('floor-plan-preview')
+  const image = document.getElementById('floor-plan-preview-img') as HTMLImageElement | null
+  const svgLink = document.getElementById('floor-plan-download-svg') as HTMLAnchorElement | null
+  const jsonLink = document.getElementById('floor-plan-download-json') as HTMLAnchorElement | null
+  if (preview) preview.hidden = !plan
+  if (svgLink) svgLink.hidden = !plan
+  if (jsonLink) jsonLink.hidden = !plan
+  if (!plan) {
+    image?.removeAttribute('src')
+    return
+  }
+  const svgUrl = mediaUrl(floorPlanSvgUrl(plan.scan, plan.version), accessToken)
+  if (image) image.src = svgUrl
+  if (svgLink) {
+    svgLink.href = svgUrl
+    svgLink.setAttribute('download', floorPlanDownloadName(plan.scan, 'svg'))
+  }
+  if (jsonLink) {
+    jsonLink.href = mediaUrl(floorPlanJsonUrl(plan.scan, plan.version), accessToken)
+    jsonLink.setAttribute('download', floorPlanDownloadName(plan.scan, 'json'))
+  }
+}
+
+async function queueFloorPlanJob(): Promise<void> {
+  if (!world) return
+  if (!selectedScanId) {
+    setText('floor-plan-status', 'Select a scan first, then generate its floor plan.')
+    return
+  }
+  const response = await fetch(withAccessToken(`/worlds/${encodeURIComponent(world.shareSlug)}/jobs`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildFloorPlanJobRequest(selectedScanId)),
+  })
+  if (!response.ok) throw new Error(await response.text())
+  const job = await response.json() as WorldJob
+  if (!world.jobs.some((existing) => existing.jobId === job.jobId)) world.jobs.unshift(job)
+  renderWorldPanel()
+  flashButton('btn-floor-plan', 'Queued')
+  setTimeout(() => { void refreshJobs() }, 1000)
 }
 
 // ─── Trained splat layer (splat-train job output) ─────────────────────────────
@@ -5493,6 +5595,13 @@ document.getElementById('btn-splat-detect')?.addEventListener('click', () => {
     flashButton('btn-splat-detect', 'Failed')
   })
 })
+document.getElementById('btn-floor-plan')?.addEventListener('click', () => {
+  void queueFloorPlanJob().catch((error) => {
+    console.error('[viewer] floor-plan queue failed:', error)
+    setText('floor-plan-status', `Could not queue the floor plan: ${errorMessage(error)}`)
+    flashButton('btn-floor-plan', 'Failed', 'error')
+  })
+})
 document.getElementById('btn-sensenova-run')?.addEventListener('click', () => {
   void queueSenseNovaJob().catch((error) => {
     setText('sensenova-status', `Could not queue SenseNova: ${errorMessage(error)}`)
@@ -5644,6 +5753,11 @@ function connectServerEvents(): void {
         if (t === 'lingbot-map-reconstruct' && wj.status === 'completed' && wj.scanId) {
           lingbotOverlays.delete(wj.scanId)
           if (selectedScanId === wj.scanId) void refreshLingBotMapPanel(wj.scanId)
+        }
+        // A failed run writes its manifest too, and the section says why it failed.
+        if (t === 'floor-plan' && (wj.status === 'completed' || wj.status === 'failed') && wj.scanId
+          && selectedScanId === wj.scanId) {
+          void refreshFloorPlanPanel(wj.scanId)
         }
         if ((t === 'splat-train' || t === 'splat-finish') && wj.status === 'completed' && wj.scanId) {
           const existing = scanSplatLayers.get(wj.scanId)

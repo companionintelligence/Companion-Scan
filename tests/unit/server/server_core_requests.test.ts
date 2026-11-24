@@ -71,12 +71,14 @@ test('job rules: the jobs API takes every type it took before, and says which ar
     'lingbot-map-reconstruct', 'colmap-poses', 'splat-train', 'splat-align', 'splat-detect', 'splat-finish', 'sensenova-vision',
     'panoptic-scan', 'panoptic-lift', 'person-4d-reconstruct', 'thing-interactive-asset', 'memory-push', 'export-world',
     'place-register', 'keyframe-purge',
+    // Added since: the floor plan from a LingBot-Map cloud (PR #273's port).
+    'floor-plan',
   ]
   assertEquals([...REQUESTABLE_JOB_TYPES].sort(), [...before].sort())
   for (const type of ['panoptic-scan', 'person-4d-reconstruct', 'thing-interactive-asset', 'memory-push', 'sensenova-vision']) {
     assert(REQUEST_ONLY_JOB_TYPES.includes(type as never), `${type} is request-only`)
   }
-  for (const type of ['panoptic-lift', 'splat-finish', 'splat-align', 'lingbot-map-reconstruct', 'keyframe-purge', 'optimize-scan']) {
+  for (const type of ['panoptic-lift', 'splat-finish', 'splat-align', 'lingbot-map-reconstruct', 'keyframe-purge', 'optimize-scan', 'floor-plan']) {
     assertFalse(REQUEST_ONLY_JOB_TYPES.includes(type as never), `${type} has a starter in the server`)
   }
 })

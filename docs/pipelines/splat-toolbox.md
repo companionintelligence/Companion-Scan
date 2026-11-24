@@ -10,7 +10,8 @@ the **editor UI**, from a **scanner/session**, and from **curl**.
 All the trained/derived artifacts land next to the scan in `SCANS_DIR` as
 sidecars (`<base>.splat.ply`, `<base>.splat-train.manifest.json`,
 `<base>.interactions.json`, `<base>.splat-detect.manifest.json`,
-`<base>.splat-align.manifest.json`), and are served back through the
+`<base>.splat-align.manifest.json`, the floor plan's `<base>.floor-plan.*`),
+and are served back through the
 `/scans/:filename` routes the Spatial Editor already understands. Pose-solving
 outputs are the exception — they belong to the *session*, not the scan, and
 stay in `scans/sessions/<id>/`.
@@ -32,6 +33,7 @@ stay in `scans/sessions/<id>/`.
 | **Finish** | [@playcanvas/splat-transform](https://github.com/playcanvas/splat-transform) | `splat-finish` world job (auto-chained after train) | `<base>.sog` + `<base>.compressed.ply` (+ manifest) |
 | **Align** | Umeyama 7-DoF similarity fit (pure TS) | `splat-align` world job (**queued explicitly**) | `<base>.splat-align.manifest.json` — the metric scale |
 | **Detect** | [splat_analyzer](#detect--splat_analyzer) + OWLv2 | `splat-detect` world job | `<base>.interactions.json` (+ manifest) |
+| **Floor plan** | [`scripts/floor_plan_worker.py`](#floor-plan--walls-and-area-from-a-lingbot-map-cloud-cpu) (numpy, CPU) | `floor-plan` world job (auto-chained after `lingbot-map-reconstruct`) | `<base>.floor-plan.json` + `.svg` (+ manifest), in the cloud's own units |
 | **Ingest video** | ffmpeg (+ adaptive fps + blur gate) | `scripts/ingest-video.mjs` / `POST /ingest-video` | keyframe session (pose-less) |
 | **Ingest photos** | sharp/jimp (+ EXIF ordering + blur gate) | `scripts/ingest-photos.mjs` / `POST /ingest-photos` | keyframe session(s) (pose-less) |
 
@@ -338,6 +340,91 @@ while looking fine.
 > **Unverified end to end.** The fit and every refusal path are unit-tested,
 > but no run against a real calibrated capture is recorded. See
 > **[splat-align.md](splat-align.md)**.
+
+---
+
+## Floor plan — walls and area from a LingBot-Map cloud (CPU)
+
+**What:** a 2D plan of the room: its walls, an outline and the outline's
+area. `server/floor_plan.ts` runs `scripts/floor_plan_worker.py` (the standard
+library and numpy: no torch, no GPU) on the session's
+`lingbot-map.point-cloud.ply`, with the interpreter `LINGBOT_MAP_PYTHON` names:
+
+1. a height histogram → floor and ceiling heights (the up axis is taken to be
+   the cloud's narrowest extent),
+2. the wall band (floor + 0.4 to ceiling − 0.3) rasterised into a 2 cm
+   occupancy grid (wider cells past 4096 a side),
+3. a morphological clean-up, then seeded-RANSAC line fits → wall segments,
+   snapped to the dominant frame when within about 7°,
+4. an outline: a rectangle from the outermost snapped walls, else the convex
+   hull of the wall cells → area, perimeter, ceiling height.
+
+> **Not metres unless the cloud was.** A LingBot-Map reconstruction is in its
+> own units, like every stage above Align, and nothing here scales it. The
+> plan's numbers are in those units, the drawing's labels carry no unit, and
+> the worker's thresholds (the 2 cm grid, the band margins, the 0.5 shortest
+> wall) are written for a metric cloud, so on another they scale with its
+> units. The field names (`areaM2`, `lengthM`, `ceilingHeightM`) are the
+> worker's. Derived, not survey-grade, either way: every file says so in its
+> `disclaimer`.
+
+Deterministic (a fixed RNG seed, no timestamps in the outputs). On a synthetic
+4 × 3 box room of 3.65 million points it took 0.6 s on a development machine;
+PR #273 reported about 4 s on a 3.65-million-point garden capture, which it
+called a degenerate outdoor scene (32 walls, closed by convex hull). The
+files land beside the scan, and go with it when it is deleted:
+
+- `<base>.floor-plan.json`: `walls: [{x1, y1, x2, y2, lengthM}]`,
+  `rooms: [{polygon, areaM2, method}]`, `floorZ`/`ceilingZ`/`ceilingHeightM`,
+  `areaM2`, `perimeterM`, `wallCount`, `gridCellM`, `upAxis` and `disclaimer`.
+- `<base>.floor-plan.svg`: the plan drawn: walls, a mint room fill, the
+  longest walls' lengths, a grid and a scale bar of one unit, a north-arrow
+  placeholder (the plan is not geo-referenced) and the disclaimer. Served
+  under a policy that lets it run nothing.
+- `<base>.floor-plan.manifest.json`: `status` (`ok`/`skipped`/`error`),
+  `areaM2`, `wallCount`, `roomCount`, `ceilingHeightM`, `disclaimer`, params
+  and timing (`FloorPlanManifest`, `src/world/manifests.ts`). This is what the
+  editor and report tooling read.
+
+**In the editor:** Layers → **Floor plan** shows the selected scan's numbers,
+the drawing, **Download SVG** and **Download JSON**, and **Generate floor
+plan**, which queues the job. It is a section of the Layers tab, not a scene
+layer: the plan is in the LingBot-Map cloud's own frame and units, not the
+scan's, so it adds no Scene layers row and no View menu switch.
+
+**When:** automatically after every successful `lingbot-map-reconstruct` of
+the scan (kill switch: `FLOORPLAN_AUTO=0`), from the editor, or through the
+jobs API.
+
+**How**
+- **Editor:** Layers → Floor plan → **Generate floor plan**.
+- **curl:**
+  ```sh
+  curl -X POST $BASE/worlds/default/jobs \
+    -H 'authorization: Bearer <editor-token>' \
+    -H 'content-type: application/json' \
+    -d '{"type":"floor-plan","scanId":"scan-<id>","payload":{"minWallM":0.5}}'
+  ```
+- **CLI (box-side smoke):**
+  ```sh
+  "${LINGBOT_MAP_PYTHON:-python3}" scripts/floor_plan_worker.py \
+    --ply scans/sessions/<sess>/lingbot-map.point-cloud.ply \
+    --out-json plan.json --out-svg plan.svg
+  ```
+
+**Env:** `LINGBOT_MAP_PYTHON` (the interpreter; it needs numpy, which the
+LingBot-Map venv has), `FLOORPLAN_AUTO` (default on; `0` stops the chain),
+`FLOORPLAN_MIN_WALL_M` (shorter segments are dropped, in the cloud's units,
+default 0.5; a job's `payload.minWallM` wins), `FLOORPLAN_WORKER` (another copy
+of the script), `FLOORPLAN_TIMEOUT_MS` (default 600000). No cloud, a cloud its
+LingBot run judged degenerate, an interpreter that is not found, a missing
+worker or an interpreter without numpy → a `skipped` manifest with the fix; a
+worker crash, a timeout or a run that wrote no plan → an `error` manifest with
+the stderr tail. A failed run leaves the plan already there. `GET /capabilities`
+lists the stage as `floor-plan`, on the `lingbot-map-python` row.
+
+**Limits:** one outline per scan; the up axis is a guess that a long, narrow
+room can defeat; the north arrow is a placeholder.
 
 ---
 

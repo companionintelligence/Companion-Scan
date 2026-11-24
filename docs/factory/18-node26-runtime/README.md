@@ -54,6 +54,11 @@ Counted on main at `0de2afa`, before this wave changed anything:
   - 33 files under `docs/` outside the wave folders and audits, and the README.
   - The atlas (22 mentions).
 
+Main moved on while the wave was built. #303 (the floor plan, `76912d5`) added `server/floor_plan.ts`
+and four files to the Deno suite: 93 more uses of the `Deno` namespace, 9 of them in the server. The
+wave's branch merged it, and the merge moves that code and those tests to Node the way the tickets
+move the rest.
+
 ## Tickets
 
 | # | Ticket | Status | Depends on |
@@ -69,7 +74,8 @@ run it, and the Deno suite stops type-checking. So the wave lands as one PR. Its
 - this plan;
 - the move itself (0001 to 0004, which share `package.json` and cannot build apart);
 - the docs and the atlas (0005);
-- the fixes that the full gate on Node 26 and a review found after them.
+- the fixes that the full gate on Node 26 and a review found after them;
+- the merge of main at `76912d5`, which brings #303's floor plan onto Node 26.
 
 The tickets run in order:
 

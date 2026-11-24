@@ -65,6 +65,8 @@ export const WORLD_JOB_RULES: Record<WorldJobType, JobRule> = {
   'panoptic-scan': { needsScan: true, startedBy: ['jobs-api'], dedupe: 'target' },
   // After a panoptic-scan that found objects, and after a splat-align when segments are on disk.
   'panoptic-lift': { needsScan: true, startedBy: ['jobs-api', 'chain'], dedupe: 'target' },
+  // After a lingbot-map-reconstruct that succeeded (FLOORPLAN_AUTO=0 turns that off), and the editor's Generate button.
+  'floor-plan': { needsScan: true, startedBy: ['jobs-api', 'chain'], dedupe: 'target' },
   // Delegates to the off-box 4d-capture service (ADR 0006). Request-only: a take is complete when a person says so.
   'person-4d-reconstruct': { needsScan: true, startedBy: ['jobs-api'], dedupe: 'target' },
   // Sends a keyframe to the PhysAg3D agent service. Request-only, and needs a credential on an open install.
@@ -120,6 +122,15 @@ export function dedupeKeyFor(job: Pick<WorldJob, 'type' | 'scanId' | 'payload'>)
  */
 export function panopticLiftFollowsScan(result: { status: string; thingCount?: number | null }): boolean {
   return result.status === 'ok' && (result.thingCount ?? 0) > 0
+}
+
+/**
+ * Whether a finished lingbot-map-reconstruct queues a floor-plan: when it succeeded and the operator has not turned the
+ * chain off (`FLOORPLAN_AUTO=0`). The plan is drawn from the cloud that run wrote. A run that skipped wrote none, and
+ * one whose cloud was judged degenerate reports `error`, so neither queues one.
+ */
+export function floorPlanFollowsReconstruct(result: { status: string }, auto: boolean): boolean {
+  return auto && result.status === 'ok'
 }
 
 // ── A request to queue a job ─────────────────────────────────────────────────

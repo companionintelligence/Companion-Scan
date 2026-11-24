@@ -85,6 +85,9 @@ COPY scripts/lingbot_map_worker.py ./scripts/lingbot_map_worker.py
 # 'skipped' with a copy hint at run time, which reads like a missing GPU tool
 # rather than a missing file. Keep it beside the workers.
 COPY scripts/_torch_device.py ./scripts/_torch_device.py
+# The floor-plan job runs this on LINGBOT_MAP_PYTHON over the cloud LingBot-Map wrote. It needs only numpy and
+# imports no sibling.
+COPY scripts/floor_plan_worker.py ./scripts/floor_plan_worker.py
 COPY scripts/ingest-video.mjs ./scripts/ingest-video.mjs
 COPY scripts/ingest-photos.mjs ./scripts/ingest-photos.mjs
 COPY scripts/ingest-quality.mjs ./scripts/ingest-quality.mjs
