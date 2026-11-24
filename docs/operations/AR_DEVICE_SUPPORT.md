@@ -179,8 +179,8 @@ This pass found two things wrong in `src/ar/preflight.ts`, a file it did not own
 
 1. The module header stated as established fact that on the Beam Pro "the pipeline never emits
    a frame". It does: about two starts in eight succeed, and the rest stall. Fixed in wave 14,
-   ticket 0004 (#286): the header now says the stall happens on some starts. It gives the rate
-   the wrong way round, though, as the stall happening on "about two starts in eight".
+   ticket 0004 (#286): the header now says the stall happens on some starts. Its rate, first
+   given the wrong way round, was corrected in #294: six of the eight starts measured stalled.
 2. `firstFrameVerdict()`'s no-frame branch said **"This device cannot run the live scanner"**
    and set `routeToUpload: true`, a permanent claim about the device where the measurement above
    says retrying is the right advice. That is fixed: the branch now reports "AR did not start

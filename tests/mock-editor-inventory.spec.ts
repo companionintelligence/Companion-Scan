@@ -13,6 +13,12 @@
  */
 import { test, expect, type Page } from '@playwright/test'
 
+// The world API is mocked with page.route, which cannot see a request the editor's service worker makes. Once the
+// worker controls the page, the Show button's POST went through it to the real test server, which has no such world
+// and answered 404 (F-03), and the spec failed about eight times in ten. Block the worker, as the other mock specs
+// that route the API do.
+test.use({ serviceWorkers: 'block' })
+
 const SLUG = 'inventory-fixture'
 const TOKEN = 'inventory-test-token'
 const NOW = '2026-11-20T10:00:00.000Z'
