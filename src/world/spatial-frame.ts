@@ -108,16 +108,24 @@ type MustBe<T extends true> = T
 export type SpatialFrameMethodsMatchTheType = MustBe<Equal<SpatialFrameMethod, ProjectSpatialFrame['method']>>
 
 /**
- * Whether a calibration method defines a frame of the Place: a scan calibrated with it has its
- * `sessionToProject`, and so its `localToWorld`, in the Place's frame, and the Place can hold a stored frame of
- * that method. True for the methods a stored frame may carry (`SPATIAL_FRAME_METHODS`): a tier added to the frame
- * type is added to that list, and the type checks in this file say what else has to follow. `'known-distance'` is
- * not one: its matrix carries the camera solve's own coordinates and fixes a size, not where the scan stands in
- * the Place. Neither is a scan that has no calibration (`undefined`).
+ * Whether a Place's stored frame may be of this method: true for the methods in `SPATIAL_FRAME_METHODS`, which is what
+ * `validateSpatialFrame` checks a stored frame's `method` against. A tier added to the frame type is added to that
+ * list, and the type checks in this file say what else has to follow. `'known-distance'` is not one: its matrix carries
+ * the camera solve's own coordinates and fixes a size, not where a scan stands in the Place.
  *
- * This is the question "can this scan's placement be compared with the Place's other scans". It is not "does
- * this scan have a landmark and a heading marker to draw": the editor's red pins and the scanner's alignment
- * line ask about the two-point tier alone, and keep asking it by name.
+ * It is NOT "is this scan in the Place frame". That question has one answer, `isInPlaceFrame`
+ * (./frame-generations.ts): a two-point scan whose commit wrote or matched the Place's frame. A one-point scan's frame
+ * is the compass-aligned frame of its own tap, with no generation, so a one-point scan is not in the Place frame even in
+ * a Place whose stored frame is one-point (owner decision D6). The server's frame counts, Thing matching and every
+ * chip in the editor ask `isInPlaceFrame` (F-25: the editor's scan row used to ask both, and showed "Different frame
+ * from this Place" beside "not in Place frame").
+ *
+ * The place-register job (server/register/place_register.ts, `isPlaceCalibrated`) still asks this one for which scans
+ * to compare, so it compares one-point scans and two-point scans placed by their own pair, which `isInPlaceFrame`
+ * would leave out. That is the server's choice to make, not a meaning of this function.
+ *
+ * Nor is it "does this scan have a landmark and a heading marker to draw": the editor's red pins and the scanner's
+ * alignment line ask about the two-point tier alone, and keep asking it by name.
  */
 export function isPlaceFrameMethod(method: unknown): method is SpatialFrameMethod {
   return typeof method === 'string' && (SPATIAL_FRAME_METHODS as readonly string[]).includes(method)

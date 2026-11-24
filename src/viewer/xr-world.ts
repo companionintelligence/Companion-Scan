@@ -7,16 +7,16 @@
  * committed change is POSTed to /worlds/:slug/patches, the endpoint and body the desktop editor uses:
  * a relabel is { scope: 'thing', label }, a move is { scope: 'thing', transform: { position } }.
  *
- * The decisions (label order, stick steps, the move, the slug) live in ./xr-world-model.ts.
- * ?mock=webxr installs the iwer emulator (src/test/webxr-emulation.ts); tests/mock-xr-world.spec.ts
- * drives it.
+ * The decisions (label order, stick steps, the move) live in ./xr-world-model.ts. The rules it shares with
+ * the desktop editor (the world slug, the placement, the GLB lookup) live in ./world-rules.ts.
+ * ?mock=webxr installs the iwer emulator (src/test/webxr-emulation.ts) in a dev build only;
+ * tests/mock-xr-world.spec.ts drives it.
  */
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js'
-import { apiUrl } from '../shared/api-base'
-import { accessTokenFrom, accessTokenHeaders, addAccessToken } from '../shared/access-token'
+import { accessTokenFrom, addAccessToken } from '../shared/access-token'
 import { resolveThingEditsForWorld, type ResolvedThingEdit } from '../shared/thing_tags'
 import type {
   EditPatch,
@@ -27,7 +27,8 @@ import type {
   Vec3,
   WorldProject,
 } from '../world/types.ts'
-import { cycleLabel, moveThing, thumbstickStep, worldSlugFrom, type StickLatch } from './xr-world-model'
+import { cycleLabel, moveThing, thumbstickStep, type StickLatch } from './xr-world-model'
+import { applyLocalToWorld, fetchOptimizationManifest, fullScanGlbPath, worldSlugFrom } from './world-rules'
 
 const IDLE_COLOR = 0x72ddd4
 const SELECTED_COLOR = 0xffd166
@@ -74,10 +75,6 @@ interface PatchResponse {
   world: WorldProject
 }
 
-interface OptimizationManifest {
-  artifacts?: { optimized?: { filename: string } }
-}
-
 function element(id: string): HTMLElement {
   const found = document.getElementById(id)
   if (!found) throw new Error(`xr-world.html has no #${id}`)
@@ -91,13 +88,6 @@ function errorMessage(error: unknown): string {
 
 function distance(a: Vec3, b: Vec3): number {
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)
-}
-
-/** Same placement rule as the desktop viewer's applyMatrix(): the scan's localToWorld, column-major. */
-function applyLocalToWorld(obj: THREE.Object3D, localToWorld: number[] | undefined): void {
-  if (!localToWorld || localToWorld.length !== 16) return
-  new THREE.Matrix4().fromArray(localToWorld).decompose(obj.position, obj.quaternion, obj.scale)
-  obj.updateMatrixWorld(true)
 }
 
 function observationFor(thing: Thing, observations: ThingObservation[]): ThingObservation | undefined {
@@ -355,7 +345,7 @@ class HeadsetWorldEditor {
         const slug = this.world?.shareSlug ?? ''
         const response = await fetch(addAccessToken(`/worlds/${encodeURIComponent(slug)}/patches`, this.token), {
           method: 'POST',
-          headers: accessTokenHeaders(this.token, { 'Content-Type': 'application/json' }),
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         })
         if (!response.ok) throw new Error(`the Scan server answered ${response.status}`)
@@ -379,9 +369,7 @@ class HeadsetWorldEditor {
   }
 
   private async loadWorld(slug: string): Promise<WorldProject> {
-    const response = await fetch(addAccessToken(`/worlds/${encodeURIComponent(slug)}`, this.token), {
-      headers: accessTokenHeaders(this.token),
-    })
+    const response = await fetch(addAccessToken(`/worlds/${encodeURIComponent(slug)}`, this.token))
     if (!response.ok) throw new Error(`the Scan server answered ${response.status}`)
     return await response.json() as WorldProject
   }
@@ -390,24 +378,12 @@ class HeadsetWorldEditor {
     const root = new THREE.Group()
     root.name = scan.name || scan.filename
     applyLocalToWorld(root, scan.localToWorld)
-    const gltf = await this.loader.loadAsync(apiUrl(await this.fullScanUrl(scan)))
+    // The GLB the desktop editor shows at full quality, by the same rule (./world-rules.ts), and with the token on both
+    // requests like every other this page makes.
+    const manifest = await fetchOptimizationManifest(scan.filename, (path) => fetch(addAccessToken(path, this.token)))
+    const gltf = await this.loader.loadAsync(addAccessToken(fullScanGlbPath(scan, manifest), this.token))
     root.add(gltf.scene)
     this.scanRoots.add(root)
-  }
-
-  /** The GLB the desktop viewer loads for a scan: its optimized artifact when there is one, else the raw GLB. */
-  private async fullScanUrl(scan: ScanManifest): Promise<string> {
-    try {
-      const response = await fetch(apiUrl(`/scans/${encodeURIComponent(scan.filename)}/manifest`))
-      if (response.ok) {
-        const manifest = await response.json() as OptimizationManifest
-        const optimized = manifest.artifacts?.optimized
-        if (optimized) return `/scans/${encodeURIComponent(optimized.filename)}`
-      }
-    } catch {
-      // No readable manifest: the raw GLB is the scan.
-    }
-    return scan.glbUrl
   }
 
   private addMarker(thing: Thing, observation: ThingObservation | undefined): void {
@@ -524,7 +500,9 @@ function reportFailure(message: string): void {
 async function boot(): Promise<void> {
   // The emulator goes in before the renderer is built: three reads the XRWebGLBinding global when a
   // WebXR manager is constructed, and the emulator changes that global. src/main.ts does the same.
-  if (new URLSearchParams(location.search).get('mock') === 'webxr') {
+  // Dev builds only, like the desktop editor's ?mock=editor hooks: import.meta.env.DEV is a build-time
+  // constant, so a production bundle drops this branch and the emulator with it (FN-095).
+  if (import.meta.env.DEV && new URLSearchParams(location.search).get('mock') === 'webxr') {
     const emulation = await import('../test/webxr-emulation')
     await emulation.installWebXREmulation()
   }

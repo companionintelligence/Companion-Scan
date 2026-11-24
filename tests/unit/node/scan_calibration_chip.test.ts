@@ -32,6 +32,7 @@ import {
   type ScanCalibrationChip,
 } from '../../../src/viewer/scan-calibration-chip.ts'
 import { NOT_CHECKED_METRES, NOT_CHECKED_SPOTS, twoPointToleranceM } from '../../../src/world/frame-fit.ts'
+import { frameChipFor, NOT_IN_FRAME_TEXT } from '../../../src/viewer/frame-banner.ts'
 import type { ProjectSpatialFrame, ScanCalibration, ScanManifest } from '../../../src/world/types.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
@@ -219,15 +220,23 @@ test("a scan whose only calibration record is the one splat-align wrote has no c
 
 // ── A scan in another frame ──────────────────────────────────────────────────────────────────
 
-test("a scan whose tier differs from the Place's stored frame is said to be in a different frame", () => {
-  const oneInTwo = chipOf({ calibrationMethod: 'ground-tap-compass', calibrationStatus: 'provisional' }, 'two-point-ground')
-  assert.equal(oneInTwo.frameWarning, 'Different frame from this Place')
-  assert.match(oneInTwo.title, /one-point method and this Place's frame was made with the two-point method/)
+test("a scan in a Place frame whose tier differs from the Place's stored frame is said to be in a different frame", () => {
   const twoInOne = chipOf(twoPoint(), 'ground-tap-compass')
   assert.equal(twoInOne.frameWarning, 'Different frame from this Place')
   assert.match(twoInOne.title, /two-point method and this Place's frame was made with the one-point method/)
+})
+
+test('a scan in no Place frame gets no frame warning: its row says "not in Place frame" instead (F-25)', () => {
+  // One predicate decides both chips (isInPlaceFrame). "Different frame from this Place" beside "not in Place frame"
+  // told the person the scan was in a frame and in none.
+  const oneInTwo = chipOf({ calibrationMethod: 'ground-tap-compass', calibrationStatus: 'provisional' }, 'two-point-ground')
+  assert.equal(oneInTwo.frameWarning, null)
+  assert.doesNotMatch(oneInTwo.title, /this Place's frame was made with/)
   const known = chipOf({ calibrationMethod: 'known-distance', calibrationStatus: 'provisional' }, 'two-point-ground')
-  assert.equal(known.frameWarning, 'Different frame from this Place')
+  assert.equal(known.frameWarning, null)
+  // A two-point scan placed by its own pair alone (a bypassed floor check) is in no frame either.
+  const bypassed = chipOf(twoPoint({ calibrationOutsidePlaceFrame: true }), 'ground-tap-compass')
+  assert.equal(bypassed.frameWarning, null)
 })
 
 test('the same tier as the Place, or a Place with no stored frame, is not a different frame', () => {
@@ -252,7 +261,9 @@ test("a Place whose frame was made with a method this editor has no name for is 
 })
 
 test('the frame warning says only that the tiers differ, not how far apart the frames are', () => {
-  const chip = chipOf({ calibrationMethod: 'ground-tap-compass', calibrationStatus: 'provisional' }, 'two-point-ground')
+  // A first calibration (residual 0) carries no figure of its own, so every number in these words would be the warning's.
+  const chip = chipOf(twoPoint({ calibrationStatus: 'provisional', calibrationResidualM: 0 }), 'ground-tap-compass')
+  assert.equal(chip.frameWarning, 'Different frame from this Place')
   assert.doesNotMatch(`${chip.frameWarning} ${chip.title}`, /\d+(\.\d+)?\s*(m|cm|°|deg)/i, 'the data does not hold a distance or an angle')
 })
 
@@ -322,7 +333,9 @@ test('the list shows the chip in place of the GPS accuracy for a calibrated scan
 test('the caveat and the frame warning are visible lines, not only a tooltip, and the warning is flagged', () => {
   const html = scanMetaMarkup({ calibrationMethod: 'ground-tap-compass', calibrationStatus: 'provisional', accuracyM: null }, 'Nov 12, 10:00', 'two-point-ground', mark)
   assert.match(html, /<div class="scan-calibration-note" data-tone="plain">«Aligns only at the same spot»<\/div>/)
-  assert.match(html, /<div class="scan-calibration-note" data-tone="warn">«Different frame from this Place»<\/div>/)
+  assert.doesNotMatch(html, /Different frame/, 'a one-point scan is in no Place frame, and its row says so elsewhere')
+  const warned = scanMetaMarkup({ ...twoPoint(), accuracyM: null }, 'Nov 12, 10:00', 'ground-tap-compass', mark)
+  assert.match(warned, /<div class="scan-calibration-note" data-tone="warn">«Different frame from this Place»<\/div>/)
   const kept = scanMetaMarkup({ ...twoPoint({ calibrationStatus: 'provisional', calibrationResidualM: 0.2 }), accuracyM: null }, 'Nov 12, 10:00', 'two-point-ground', mark)
   assert.match(kept, /data-tone="warn">«Kept after a mismatch/)
 })
@@ -381,10 +394,10 @@ test('redrawing replaces the lines of every listed scan that has a row, and only
   assert.match(rows.get('scan-a')!.innerHTML, /«two-point · verified · spacing 2 cm off»/)
   assert.doesNotMatch(rows.get('scan-a')!.innerHTML, /Different frame/)
   assert.match(rows.get('scan-b')!.innerHTML, /«one-point · provisional»/)
-  assert.match(rows.get('scan-b')!.innerHTML, /«Different frame from this Place»/, 'the Place frame it is compared with is the one the redraw is given')
+  assert.doesNotMatch(rows.get('scan-b')!.innerHTML, /Different frame/, 'a one-point scan is in no Place frame (F-25)')
   // A Place whose frame changed under an open editor: the same rows, drawn again against the new frame.
   redrawScanMeta(scans, (scanId) => rows.get(scanId), 'ground-tap-compass', mark)
-  assert.match(rows.get('scan-a')!.innerHTML, /«Different frame from this Place»/)
+  assert.match(rows.get('scan-a')!.innerHTML, /«Different frame from this Place»/, 'the Place frame it is compared with is the one the redraw is given')
   assert.doesNotMatch(rows.get('scan-b')!.innerHTML, /Different frame/)
 })
 
@@ -652,4 +665,28 @@ test('a record that names a fit and carries no figure for it is otherwise read a
 test('the one-point tier never shows a fit, even from a record that claims one (ADR 0005 rule 3)', () => {
   const chip = chipOf({ ...fitted(), calibrationMethod: 'ground-tap-compass' })
   assert.doesNotMatch(`${chip.text} ${chip.note} ${chip.title}`, /points .* cm off|fitted/)
+})
+
+// ── One predicate for both chips (F-25) ─────────────────────────────────────────────────────────────────────
+
+test('no scan row shows "Different frame from this Place" beside the frame chip\'s "not in Place frame"', () => {
+  const frameOf = (method: ProjectSpatialFrame['method']): ProjectSpatialFrame => (method === 'two-point-ground'
+    ? { version: 1, createdAt: '2026-11-01T10:00:00.000Z', method, landmark: { x: 0, y: 0, z: 0 }, headingMarker: { x: 0, y: 0, z: 2 }, separationM: 2, toleranceM: 0.15 }
+    : { version: 1, createdAt: '2026-11-01T10:00:00.000Z', method }) as unknown as ProjectSpatialFrame
+  let compared = 0
+  for (const placeMethod of ['two-point-ground', 'ground-tap-compass'] as const) {
+    for (const calibrationMethod of ['two-point-ground', 'ground-tap-compass', 'known-distance'] as const) {
+      for (const calibrationStatus of ['verified', 'provisional'] as const) {
+        for (const outside of [false, true]) {
+          const scan = { ...twoPoint({ calibrationMethod, calibrationStatus }), ...(outside ? { calibrationOutsidePlaceFrame: true as const } : {}) }
+          const chip = scanCalibrationChip(scan, placeMethod)
+          const frame = frameChipFor(scan, { spatialFrame: frameOf(placeMethod) })
+          const label = `${calibrationMethod}/${calibrationStatus}${outside ? '/outside' : ''} in a ${placeMethod} Place`
+          if (frame?.text === NOT_IN_FRAME_TEXT) assert.equal(chip?.frameWarning ?? null, null, label)
+          compared++
+        }
+      }
+    }
+  }
+  assert.equal(compared, 24)
 })

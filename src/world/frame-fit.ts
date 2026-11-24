@@ -122,6 +122,9 @@ import { composeYUpTransform, transformPoint, twoPointHeadingDeg } from './geo.t
 import { MAX_FIT_POINTS, MIN_FIT_POINTS, type CheckedBy, type FitMethod, type FitSummary, type PointResidual } from './calibration-evidence.ts'
 import type { Vec3 } from './types.ts'
 import { wrapDeg } from '../capture/pose-delta.ts'
+import type { ScaleKind } from './scale-mode.ts'
+import { ANCHOR_RADIUS_M } from './anchor-placement.ts'
+import { formatCm, wholeCentimetres } from './distance-text.ts'
 
 const RAD_TO_DEG = 180 / Math.PI
 
@@ -236,12 +239,12 @@ export const MIN_PERPENDICULAR_OFFSET_M = 0.2
 /**
  * Two points closer than this, in the ground plane, count as one spot.
  *
- * It is `ANCHOR_RADIUS_M` in `./anchor-marker.ts`: the radius within which the
+ * It is `ANCHOR_RADIUS_M` (./anchor-placement.ts): the radius within which the
  * calibration flow already treats a tap as selecting an existing marker instead of
- * placing a new one. That file imports three.js, so the value is repeated here and a
- * test pins the two together. **Adopted from the existing flow, not measured.**
+ * placing a new one. One value, read from there (FN-086). **Adopted from the existing
+ * flow, not measured.**
  */
-export const DUPLICATE_POINT_GAP_M = 0.35
+export const DUPLICATE_POINT_GAP_M = ANCHOR_RADIUS_M
 
 /**
  * Size ratios outside this range are not the same points at a different unit: the
@@ -391,11 +394,11 @@ export interface FrameUncertainty {
 }
 
 /**
- * What the phone's session units are. The same three names the units policy (WP-06)
- * will give `ARProvider.scaleKind()`: metres from the runtime, metres estimated by
- * the engine once ready, or the engine's own arbitrary unit.
+ * What the phone's session units are: the units policy's `ScaleKind` (./scale-mode.ts), the three names
+ * `ARProvider.scaleKind()` gives (metres from the runtime, metres estimated by the engine once ready, or the engine's
+ * own arbitrary unit). One union under two names, so the two cannot drift apart (FN-086).
  */
-export type UnitsMode = 'metric' | 'estimated-metric' | 'arbitrary'
+export type UnitsMode = ScaleKind
 export type VerdictStatus = 'verified' | 'provisional' | 'mismatch'
 /** What a verdict actually compared: the stored points with the visit's, only the distance between two, or nothing. */
 export type Compared = 'points' | 'distance' | 'nothing'
@@ -483,14 +486,11 @@ function isFinitePoint(p: Vec3 | null | undefined): p is Vec3 {
 }
 
 /**
- * Centimetres for a sentence: one decimal below a metre, so 17.0 against 16.8 does not read as 17 against 17.
- * Exported so that every line that quotes a figure from a check (the capture flow's readout, the scanner's status
- * line, the editor's chip) writes it as the verdict does.
+ * The two ways a distance is written in a sentence, `formatCm` and `wholeCentimetres`: defined in ./distance-text.ts,
+ * which has no import, so the server's place-register job can use them without loading this file and the capture code
+ * it imports (the server image copies src/world/ and src/shared/ only). Re-exported here for this file's importers.
  */
-export function formatCm(metres: number): string {
-  const cm = metres * 100
-  return Math.abs(cm) < 100 ? cm.toFixed(1) : cm.toFixed(0)
-}
+export { formatCm, wholeCentimetres }
 
 function centroid(points: readonly Vec3[]): Vec3 {
   let x = 0

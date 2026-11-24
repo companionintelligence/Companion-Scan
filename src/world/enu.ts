@@ -26,6 +26,48 @@
  * can land 8 m from where it is (tests/unit/deno/world_registration.test.ts).
  * No rotation can fix a mirror.
  *
+ * ## Which placements are mirrored today (F-42, read from the code 2026-11-23)
+ *
+ *  - **The server's GPS fallback: mirrored.** A scan with no stored calibration
+ *    (`projectTransform`) is placed by
+ *    `composeYUpTransform(geoToEnu(origin, fix), fix.bearing)` in
+ *    `scanManifestFromStored` (server/main.ts). That covers a scan exported
+ *    uncalibrated, one whose transform the server refused, and a GPS outlier
+ *    (on the grid). The world it is placed in declares `z: 'north'`
+ *    (`synthesizeWorld`). That is a rotation alone into (east, up, north), so the
+ *    scan's content is mirrored east–west against the GPS layout of the world.
+ *    - The bearing it gets is also not the bearing of session +Z. It is the
+ *      phone's compass heading when the scan was exported (`geoBearing`,
+ *      src/export/gltf.ts, from `GeoTracker.snapshot()` in src/geo/), with no
+ *      pose paired to it, so the turn is wrong as well.
+ *    - So fixing the handedness alone gains nothing on this path.
+ *  - **The one-point calibration: not mirrored.** `oneTapToProjectTransform`
+ *    (./geo.ts) turns the session by its true +Z bearing into a right-handed
+ *    frame whose +Z is north, so its +X is west. That holds under the current
+ *    bearing rule; a record from before audit F53 used the legacy rule, which put
+ *    +Z at twice the compass bearing, and a scan row does not say which rule it
+ *    was made under. A scan's geometry is right in this frame. Three things
+ *    disagree with it:
+ *    - the `x: 'east'` label;
+ *    - the editor's coordinate readout, which reads x as east (`enuToGeo`);
+ *    - a GPS-placed scan beside it.
+ *  - **The two-point calibration: not mirrored.** Its +Z is the landmark → marker
+ *    baseline, and no compass enters it (ADR 0005). `projectBearingDeg` records
+ *    the baseline's bearing, and nothing reads it yet. Neither axis label holds
+ *    for this frame, and the compass needle names the baseline north, but that is
+ *    a turn, not a mirror.
+ *  - **Nothing stores a reflection.** A placement with a negative determinant is
+ *    refused (`checkPlacementMatrix`, ./scan-placement.ts). Patches, copies and
+ *    alignment proposals keep whatever frame they are handed.
+ *
+ * Fixing the fallback takes work on the server and the capture side, both
+ * outside src/world:
+ *  - a session-frame bearing sampled with its pose;
+ *  - a right-handed composition: `sceneFromEnu` with `sceneYawForBearingDeg`
+ *    below.
+ *
+ * Using that composition is the owner decision this note already names.
+ *
  * The right-handed choice is **x east, y up, z south**. Like three.js, WebXR
  * and the AR session frames it is right-handed with +Y up, and a camera
  * looking along −z faces north with east on its right. So a session whose +Z

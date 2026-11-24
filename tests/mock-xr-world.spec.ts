@@ -107,13 +107,21 @@ function worldFixture(): Record<string, unknown> {
  * Mocks the world API the page reads and writes. The POST answers like the server does: the saved
  * patch plus the world. With `refuseSaves`, every POST is refused, to test the revert path.
  */
+/** The URLs of the scan requests the page made: its optimization-manifest and GLB fetches. */
+const scanRequests = new WeakMap<Page, string[]>()
+
 async function mockWorldApi(page: Page, options: { refuseSaves?: boolean } = {}): Promise<CapturedPatch[]> {
   const captured: CapturedPatch[] = []
-  await page.route('**/scans/**', (route) => route.fulfill({
-    status: 404,
-    contentType: 'text/plain',
-    body: 'no geometry in this fixture',
-  }))
+  const scans: string[] = []
+  scanRequests.set(page, scans)
+  await page.route('**/scans/**', (route) => {
+    scans.push(route.request().url())
+    return route.fulfill({
+      status: 404,
+      contentType: 'text/plain',
+      body: 'no geometry in this fixture',
+    })
+  })
   await page.route('**/worlds/**', async (route) => {
     const request = route.request()
     if (request.method() === 'POST') {
@@ -221,13 +229,18 @@ test.describe('headset world editor on the emulated Quest', () => {
     expect(move.transform?.position?.y).toBeCloseTo(1.2, 3)
     expect(move.transform?.position?.z).toBeCloseTo(-1.5, 3)
 
-    // Every save goes to the world's patch endpoint under the page's access token.
+    // Every save goes to the world's patch endpoint under the page's access token: once, in the URL. The page sets no
+    // Authorization header of its own; in a native shell that header carries the session (src/shared/access-token.ts).
     for (const patch of captured) {
       const url = new URL(patch.url)
       expect(url.pathname).toBe(`/worlds/${SLUG}/patches`)
-      expect(url.searchParams.get('token')).toBe(TOKEN)
-      expect(patch.authorization).toBe(`Bearer ${TOKEN}`)
+      expect(url.searchParams.getAll('token')).toEqual([TOKEN])
+      expect(patch.authorization).toBeNull()
     }
+    // The scan's optimization manifest and GLB carry it too (F-10): they used to go out with none.
+    const scans = scanRequests.get(page) ?? []
+    expect(scans.length, 'the page asked for the scan').toBeGreaterThan(0)
+    for (const url of scans) expect(new URL(url).searchParams.getAll('token'), url).toEqual([TOKEN])
   })
 
   test('a refused save says so and reverts the change', async ({ page }) => {

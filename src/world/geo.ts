@@ -7,8 +7,9 @@ const RAD_TO_DEG = 180 / Math.PI
 /**
  * Spatial-frame capture parameters for the `'two-point-ground'` calibration
  * tier. They live here rather than in `src/world/types.ts` because that file is
- * types-only (zero runtime exports) and this module already owns the frame math
- * these values parameterise — `anchorToProjectTransform` below.
+ * meant for types (its one runtime export is `DEFAULT_SYNC_TOLERANCE_MS`) and this
+ * module already owns the frame math these values parameterise —
+ * `anchorToProjectTransform` below.
  *
  * Both are **adopted defaults, not measured values** — ticket 0006 shipped its
  * benchmark instrument but was closed without anyone running it, so nothing is

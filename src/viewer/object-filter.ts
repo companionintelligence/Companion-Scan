@@ -2,7 +2,7 @@
  * Text filter for the editor's object labels.
  *
  * Split from viewer.ts so the matching rules can be tested without a WebGL
- * context, a loaded world, or a browser — viewer.ts is ~4000 lines of scene
+ * context, a loaded world, or a browser — viewer.ts is thousands of lines of scene
  * wiring and none of it is needed to decide whether "chair 79%" matches "chair".
  *
  * Syntax, in the order a reader discovers it:

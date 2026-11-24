@@ -3,7 +3,7 @@
  *
  * Seeds three homes through the real upload+optimize pipeline, then drives
  * the editor: scan list population, progressive load status, layer panel,
- * and the measurement tool via the window.__measureTool hook.
+ * and the measurement tool via the window.__measureTool hook (dev build, ?mock=editor).
  *
  * NOTE: the measurement test below does NOT assert against expected.json
  * dimensions — an earlier version of this comment said it did. It clicks two
@@ -64,7 +64,8 @@ test.describe('editor with test-home data', () => {
   })
 
   test('measurement tool measures real distances in the scene', async ({ page }) => {
-    await page.goto('/viewer.html?world=default')
+    // ?mock=editor: window.__measureTool exists only in a dev build opened with it (src/viewer/viewer.ts).
+    await page.goto('/viewer.html?world=default&mock=editor')
     await expect(page.locator('.scan-status', { hasText: /Ready/ }).first())
       .toBeVisible({ timeout: 60_000 })
 

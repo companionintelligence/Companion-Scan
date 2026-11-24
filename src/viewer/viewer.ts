@@ -23,17 +23,20 @@ import { attachSparkRenderer, loadSplat, disposeSplat, type LoadedSplat } from '
 import { fetchScanSplatLayer, disposeScanSplatLayer, splatPlyUrl, splatManifestUrl, splatSogUrl, formatFinishStats, formatAlignmentStatus, type ScanSplatLayer } from './splat-layer'
 import { fetchScanDetectLayer, type ScanDetectLayer } from './splat-detect-layer'
 import {
-  fetchScanPanopticLayer,
+  placementVerdictForRead,
   placementVerdictOf,
+  readScanPanopticLayer,
   summarizePanopticLayer,
   unplacedReasonLine,
   type PlacementVerdict,
   type ScanPanopticLayer,
 } from './panoptic-layer'
+import type { ArtifactRead } from './artifact-read'
 import { buildTrainJobRequest, buildDetectJobRequest } from './splat-toolbox'
 import { buildThingObservationIndex, resolveThingTagsForScan, type ResolvedThingTag } from '../shared/thing_tags'
-import { accessTokenHeaders, addAccessToken } from '../shared/access-token'
+import { accessTokenFrom, addAccessToken, mediaUrl } from '../shared/access-token'
 import { PlacesPanel } from './places'
+import { escapeHtml } from './html'
 import { PLACE_TYPE_LABELS } from '../project/new-place-type'
 import { mountRegisterProposals, type RegisterProposals } from './register-proposal'
 import {
@@ -44,7 +47,7 @@ import {
   QUALITY_TIER_BLURBS,
   type QualityTier,
 } from './quality-tier'
-import { fetchReconstructionQuality, formatReconstructionVerdict } from './reconstruction-quality'
+import { readReconstructionQuality, reconstructionVerdictFor } from './reconstruction-quality'
 import { redrawScanMeta, scanMetaHtmlFor } from './scan-calibration-chip'
 import { createFrameReference } from './frame-banner'
 import { jobRowMarkup } from './job-row'
@@ -70,8 +73,23 @@ import type {
   WorldJobType,
   WorldProject,
 } from '../world/types'
-import { apiCredentials, apiUrl, shellSessionToken, withSessionToken, wsUrl } from '../shared/api-base.ts'
+import { apiCredentials, apiUrl, wsUrl } from '../shared/api-base.ts'
 import { mountShellMenu } from './shell-menu'
+import { arrangeEditorLayout } from './editor-layout'
+import { applyLocalToWorld, fetchOptimizationManifest, fullScanGlbPath, previewScanGlb, worldSlugFrom } from './world-rules'
+import {
+  FRAME_LAYER_TYPES,
+  hiddenObjects,
+  layerCountText,
+  layersWithContent,
+  listedLayerTypes,
+  unhidePatch,
+  visibilitySaveKey,
+  type HiddenObject,
+  type LayerContent,
+} from './layer-rows'
+import { senseNovaFilesLine, senseNovaSummary, worldExportLink } from './job-results'
+import { jobRequiresScan } from '../world/job-types'
 import { requestRevert } from './patch-revert'
 import { createStitchTools, type StitchTools } from './stitch-tools'
 
@@ -79,6 +97,9 @@ import { createStitchTools, type StitchTools } from './stitch-tools'
 // is refined. The static HTML stays hidden unless this build-time flag is set.
 const PLACE_COMPOSER_ENABLED = import.meta.env?.VITE_ENABLE_PLACE_COMPOSER === 'true'
 
+// The drawer layout first: the right drawer takes the Project, Layers and Edit panels before anything reads them
+// (./editor-layout.ts, formerly inline in viewer.html).
+arrangeEditorLayout()
 registerPWA()
 // Inside a native shell: the Scan server entry in the Navigate menu, and a prompt when none is set.
 mountShellMenu()
@@ -147,34 +168,18 @@ interface ShareLinksResponse {
   links: Record<string, string>
 }
 
-/** Optimization manifest written by the server's optimize-scan job */
-interface OptimizationManifest {
-  artifacts: {
-    optimized: { filename: string; bytes: number; draco: boolean; quantized: boolean }
-    /** Coarsest first — lods[0] is the instant preview */
-    lods: Array<{ filename: string; bytes: number; points: number; voxelM: number }>
-  }
-}
-
 const query = new URLSearchParams(location.search)
-const accessToken = query.get('token') || ''
+const accessToken = accessTokenFrom(location.search)
 let activeProjectId = query.get('project') || null
-// `?project=` has to pick the world, not just filter within one. The `default` world
-// carries projectId null, and belongsToWorldProject() only admits scans whose own meta
-// projectId is also null — so every scan captured with a Place selected is excluded from
-// it by construction. Landing on `default` and filtering therefore always yields nothing,
-// which is exactly what happened: four real room scans sat in
-// `project-proj-…` while the editor showed an empty default world. Each project's world
-// slug is `project-<projectId>` (see synthesizeWorld / GET /projects/:id/world).
-const initialWorldSlug = query.get('world')
-  || (activeProjectId ? `project-${activeProjectId}` : 'default')
+// `?project=` picks the world, not just a filter within one: the rule both editors share (./world-rules.ts).
+const initialWorldSlug = worldSlugFrom(location.search)
 
+/**
+ * A server path to fetch, with the access token as its one `token` parameter. The token rides in the URL and never in
+ * an Authorization header of the editor's own: that header is the session's (src/shared/access-token.ts).
+ */
 function withAccessToken(url: string): string {
   return addAccessToken(url, accessToken)
-}
-
-function accessHeaders(extra: HeadersInit = {}): HeadersInit {
-  return accessTokenHeaders(accessToken, extra)
 }
 
 async function refreshAccountChip(): Promise<void> {
@@ -206,8 +211,13 @@ dracoLoader.setDecoderPath('/draco/')
 loader.setDRACOLoader(dracoLoader)
 const editor = new SceneEditor()
 const measure = new MeasureTool(() => scene, document.getElementById('viewport')!)
+/**
+ * The test hooks' gate: a dev build (`import.meta.env.DEV` is a build-time constant, so a production bundle drops every
+ * hook behind it) opened with `?mock=editor`. `__editorTest` below and `__stitchTest` (stitch-tools.ts) use the same.
+ */
+const TEST_HOOKS_ENABLED = import.meta.env.DEV && query.get('mock') === 'editor'
 // Test hook: lets Playwright assert measured distances against expected.json
-;(window as unknown as { __measureTool: MeasureTool }).__measureTool = measure
+if (TEST_HOOKS_ENABLED) (window as unknown as { __measureTool: MeasureTool }).__measureTool = measure
 const geoMap = new GeoMap()
 let liveFeed: LiveFeed | null = null
 const labelContainer = document.getElementById('viewport')!
@@ -259,12 +269,17 @@ let scene: THREE.Scene | null = null
 let worldGroup: THREE.Group | null = null
 let groundGrid: THREE.GridHelper | null = null
 let labels: Label3D[] = []
-let labelsVisible = true
 /** Active object-label filter from the Views panel. Empty admits everything. */
 let objectFilter = parseObjectFilter('')
-let cloudVisible = true
+// The point cloud, the labels and the detection bounds each have one switch: globalLayerVisible.points, .labels and
+// .detections. The HUD buttons, the Views toggles and the Layers rows all write it through setLayerVisible() (F-41).
 let detectionBoundsObjects: THREE.Object3D[] = []
-let detectionBoundsVisible = false
+/**
+ * What each scan's frame set gave its camera layers: 'none' when the scan has no frame set or an empty one, 'failed'
+ * when it could not be read, else how many frames were drawn. A scan with no usable frames draws no camera path and no
+ * frustums; the Layers rows say "no frames" instead of a made-up trail (F-21).
+ */
+const scanFrames = new Map<string, 'none' | 'failed' | number>()
 let world: WorldProject | null = null
 // Bumped by every Place switch. A world load or refresh that resolves after a newer one
 // started checks this and returns, so it cannot write into the Place now on screen.
@@ -324,7 +339,7 @@ async function ensureSplat4DLayer(scanId: string, scan: ScanManifest) {
       const root = ensureScanRootInWorld(scan)
       if (root && mesh.mesh.parent !== root) root.add(mesh.mesh)
     },
-  })
+  }, withAccessToken)
   // A Place switch while the sequence loaded: it belongs to the Place that was left.
   if (gen !== worldGen) {
     layer?.dispose()
@@ -518,6 +533,7 @@ function initWorldScene(): void {
   scanItems.clear()
   // Loads queued for the Place being replaced must not run behind the new scene's loads.
   scanLoadChains.clear()
+  scanFrames.clear()
   // selectActiveProject() asks before a switch that would drop edits, so anything still
   // unsaved here was dropped on purpose. The Edit panel says so until the next save.
   if (editSaves.pendingCount > 0) droppedEdits = editSaves.pendingCount
@@ -533,6 +549,7 @@ function initWorldScene(): void {
   scanSplat4DLayers.clear()
   scanPanopticLayers.clear()
   panopticProbed.clear()
+  panopticUnreadable.clear()
   for (const loaded of loadedSplats.values()) disposeSplat(loaded)
   loadedSplats.clear()
   renderSplatList()
@@ -763,7 +780,10 @@ function updateLabels(): void {
 }
 
 function isLabelVisible(label: Label3D): boolean {
-  if (!labelsVisible || !globalLayerVisible.labels) return false
+  if (!globalLayerVisible.labels) return false
+  // A hidden object's chip goes with it. This reads the patch state, not the node's `visible`, so it does not latch the
+  // way gating a chip on its own object would (see Label3D.visibilityGate).
+  if (label.object && hiddenByPatch(label.object)) return false
   // The Views-panel text filter. Applied here rather than at label creation so
   // typing re-filters the existing scene instead of forcing a world reload.
   if (!matchesObjectFilter(label.text, objectFilter)) return false
@@ -1135,7 +1155,7 @@ async function saveProjectHierarchy(): Promise<void> {
   try {
     const response = await fetch(withAccessToken(`/projects/${encodeURIComponent(currentProject.projectId)}`), {
       method: 'PUT',
-      headers: accessHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...currentProject,
         name: nextName,
@@ -1591,23 +1611,24 @@ async function loadScanIntoWorld(scan: ScanManifest, target: THREE.Scene): Promi
   setScanStatus(scan.scanId, 'Loading GLB...')
 
   try {
-    const optimization = await fetchOptimizationManifest(scan.filename)
+    // The manifest, preview and full GLB rules are the headset editor's too (./world-rules.ts).
+    const optimization = await fetchOptimizationManifest(
+      scan.filename,
+      (path) => withTransientRetry(() => fetch(withAccessToken(path))),
+    )
     if (isStale()) return
-    const preview = optimization?.artifacts.lods[0]
+    const preview = previewScanGlb(optimization)
     const optimized = optimization?.artifacts.optimized
 
     if (preview) {
       setScanStatus(scan.scanId, `Preview ${formatKB(preview.bytes)}...`)
-      const previewRoot = await loadGlbRoot(`/scans/${encodeURIComponent(preview.filename)}`)
+      const previewRoot = await loadGlbRoot(preview.path)
       if (isStale()) { disposeDetachedRoot(previewRoot); return }
       integrateScanRoot(scan, previewRoot)
       setScanStatus(scan.scanId, 'Preview shown - loading full quality...')
     }
 
-    const fullUrl = optimized
-      ? `/scans/${encodeURIComponent(optimized.filename)}`
-      : scan.glbUrl
-    const fullRoot = await loadGlbRoot(fullUrl)
+    const fullRoot = await loadGlbRoot(fullScanGlbPath(scan, optimization))
     if (isStale()) { disposeDetachedRoot(fullRoot); return }
     integrateScanRoot(scan, fullRoot)
     setScanStatus(scan.scanId, optimized
@@ -1651,17 +1672,6 @@ async function loadScanIntoWorld(scan: ScanManifest, target: THREE.Scene): Promi
   }
 }
 
-async function fetchOptimizationManifest(filename: string): Promise<OptimizationManifest | null> {
-  try {
-    const resp = await withTransientRetry(() => fetch(apiUrl(`/scans/${encodeURIComponent(filename)}/manifest`)))
-    if (!resp.ok) return null
-    const manifest = await resp.json() as OptimizationManifest
-    return manifest.artifacts?.optimized ? manifest : null
-  } catch {
-    return null
-  }
-}
-
 // A scan only flips to "Ready" once its GLB loads, so this fetch is the gate the
 // mock-editor tests wait on — retry the transient burst drop that would strand
 // it. GLTFLoader forwards fetch's TypeError to onError, so withTransientRetry
@@ -1669,7 +1679,7 @@ async function fetchOptimizationManifest(filename: string): Promise<Optimization
 // surfaced immediately.
 function loadGlbRoot(url: string): Promise<THREE.Group> {
   return withTransientRetry(() => new Promise<THREE.Group>((resolve, reject) => {
-    loader.load(apiUrl(url), (gltf) => {
+    loader.load(withAccessToken(url), (gltf) => {
       const g = gltf as { scene?: THREE.Group; scenes?: THREE.Group[] }
       const root = g.scene ?? g.scenes?.[0]
       if (root) resolve(root)
@@ -1803,6 +1813,8 @@ function integrateScanRoot(scan: ScanManifest, root: THREE.Group): void {
     })
   }
   renderItemsPanel()
+  // The hidden list names an object by its label, which only a loaded scan has.
+  renderHiddenObjects()
 }
 
 function removeLabelsForScan(scanId: string): void {
@@ -1898,7 +1910,12 @@ function applyStoredPatches(root: THREE.Object3D, scan: ScanManifest): void {
     if (patch.category) target.userData['tag'] = patch.category
     if (patch.label !== undefined) setObjectLabel(target, patch.label)
     if (patch.notes) target.userData['notes'] = patch.notes
-    if (typeof patch.visible === 'boolean') target.visible = patch.visible
+    // The patch state is kept on the node, so no visibility writer below shows a hidden object behind its back. Not on
+    // the scan root: its visibility is the scan's checkbox and the timeline, and a patch naming it is not replayed.
+    if (typeof patch.visible === 'boolean' && target !== root) {
+      target.userData['hidden'] = !patch.visible
+      target.visible = patch.visible
+    }
   }
 
   for (const [targetId, tag] of thingTags) {
@@ -1960,50 +1977,25 @@ function addLayerNode(
   obj.userData['layerType'] = type
 }
 
+/**
+ * The camera layers of a scan: its path, frustums and RGB thumbnails, from its frame set. A scan with no frame set, an
+ * empty one or one that cannot be read draws none of them. It used to get a hard-coded four-point path and four
+ * frustums, drawn by default as if they were the capture trajectory (F-21); its Layers rows now say "no frames".
+ */
 function addDerivedCameraLayers(
   root: THREE.Object3D,
   scan: ScanManifest,
   layers: Map<LayerType, Set<THREE.Object3D>>,
 ): void {
-  if (scan.frameSetUrl) {
-    void addFrameObservationLayers(root, scan, layers).catch((error) => {
-      console.warn(`[viewer] Frame observation load failed for ${scan.name}:`, error)
-      addPlaceholderCameraLayers(root, scan, layers)
-    })
+  if (!scan.frameSetUrl) {
+    scanFrames.set(scan.scanId, 'none')
     return
   }
-  addPlaceholderCameraLayers(root, scan, layers)
-}
-
-function addPlaceholderCameraLayers(
-  root: THREE.Object3D,
-  scan: ScanManifest,
-  layers: Map<LayerType, Set<THREE.Object3D>>,
-): void {
-  const pathPoints = [
-    new THREE.Vector3(-0.8, 0.35, -0.8),
-    new THREE.Vector3(-0.35, 0.5, -0.35),
-    new THREE.Vector3(0.05, 0.6, 0.1),
-    new THREE.Vector3(0.5, 0.55, 0.35),
-  ]
-  const pathGeometry = new THREE.BufferGeometry().setFromPoints(pathPoints)
-  const path = new THREE.Line(pathGeometry, cameraPathMaterial.clone())
-  path.name = `${scan.name} camera path`
-  path.userData['scanId'] = scan.scanId
-  root.add(path)
-  addLayerNode(layers, 'cameraPath', path)
-
-  const frustumGroup = new THREE.Group()
-  frustumGroup.name = `${scan.name} camera frustums`
-  frustumGroup.userData['scanId'] = scan.scanId
-  for (let i = 0; i < pathPoints.length; i += 1) {
-    const frustum = createCameraFrustumMesh(0.22 + i * 0.015, 0.35)
-    frustum.position.copy(pathPoints[i]!)
-    frustum.rotation.y = i * 0.35
-    frustumGroup.add(frustum)
-  }
-  root.add(frustumGroup)
-  addLayerNode(layers, 'cameraFrustums', frustumGroup)
+  void addFrameObservationLayers(root, scan, layers).catch((error) => {
+    console.warn(`[viewer] Frame observation load failed for ${scan.name}:`, error)
+    scanFrames.set(scan.scanId, 'failed')
+    renderLayerPanel()
+  })
 }
 
 async function addFrameObservationLayers(
@@ -2016,9 +2008,11 @@ async function addFrameObservationLayers(
   const payload = await response.json() as { frames?: FrameObservation[] }
   const frames = payload.frames ?? []
   if (frames.length === 0) {
-    addPlaceholderCameraLayers(root, scan, layers)
+    scanFrames.set(scan.scanId, 'none')
+    renderLayerPanel()
     return
   }
+  scanFrames.set(scan.scanId, frames.length)
 
   const frameGroup = new THREE.Group()
   frameGroup.name = `${scan.name} frame observations`
@@ -2062,7 +2056,7 @@ async function addFrameObservationLayers(
   const thumbStride = Math.max(1, Math.ceil(frames.length / 12))
   for (let i = 0; i < frames.length; i += thumbStride) {
     const frame = frames[i]!
-    const texture = textureLoader.load(withSessionToken(withAccessToken(frame.rgbUrl), shellSessionToken()))
+    const texture = textureLoader.load(mediaUrl(frame.rgbUrl, accessToken))
     texture.colorSpace = THREE.SRGBColorSpace
     const aspect = frame.intrinsics.width / Math.max(1, frame.intrinsics.height)
     const plane = new THREE.Mesh(
@@ -2081,6 +2075,7 @@ async function addFrameObservationLayers(
   addLayerNode(layers, 'rgbFrames', rgbGroup)
 
   applyLayerVisibility()
+  renderLayerPanel()
 }
 
 function createCameraFrustumMesh(size: number, depth: number): THREE.LineSegments {
@@ -2341,6 +2336,8 @@ function selectScan(scanId: string, focus: boolean, openEdit = true): void {
   void refreshLingBotMapPanel(scanId)
   void refreshSplatLayerPanel(scanId)
   void refreshPanopticPanel(scanId)
+  renderSenseNovaPanel()
+  renderJobTypeHint()
   if (PLACE_COMPOSER_ENABLED) renderPlacesPanel()
   renderItemsPanel()
 }
@@ -2407,7 +2404,7 @@ async function renderReconstructionVerdict(scan: ScanManifest): Promise<void> {
   const hide = () => { box.hidden = true; box.removeAttribute('data-tone') }
   if (!scan.sessionId) return hide()
 
-  const manifest = await fetchReconstructionQuality(
+  const read = await readReconstructionQuality(
     scan.sessionId,
     (url) => fetch(withAccessToken(url)),
   )
@@ -2416,10 +2413,11 @@ async function renderReconstructionVerdict(scan: ScanManifest): Promise<void> {
   // over scan B.
   if (selectedScanId !== scan.scanId) return
 
-  const verdict = formatReconstructionVerdict(manifest)
   // No manifest is the ordinary case, not a failure: a scan whose poses came
-  // from the device's own tracker never runs the solver. Show nothing rather
-  // than an absence.
+  // from the device's own tracker never runs the solver, and gets no line. A
+  // server with no route for the manifest, or a read that failed, gets one that
+  // says nothing is known, rather than passing for that ordinary case (F-22).
+  const verdict = reconstructionVerdictFor(read)
   if (!verdict) return hide()
 
   headline.textContent = verdict.headline
@@ -2506,25 +2504,28 @@ function renderQualityProcessing(scanId: string): void {
 }
 
 // Test hook: lets Playwright inject a queued job and re-render the headline
-// without spinning up a GPU trainer.
-;(window as unknown as { __quality: { injectJob: (type: WorldJobType, scanId: string | null) => void } })
-  .__quality = {
-    injectJob(type, scanId) {
-      if (!world) return
-      world.jobs.unshift({
-        jobId: `test-${Date.now()}`,
-        worldId: world.worldId,
-        type,
-        status: 'queued',
-        scanId: scanId ?? undefined,
-        capabilities: [],
-        payload: {},
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      })
-      renderWorldPanel()
-    },
-  }
+// without spinning up a GPU trainer. It writes a fake job into the world on
+// screen, so it exists only behind the dev-and-?mock=editor gate.
+if (TEST_HOOKS_ENABLED) {
+  (window as unknown as { __quality: { injectJob: (type: WorldJobType, scanId: string | null) => void } })
+    .__quality = {
+      injectJob(type, scanId) {
+        if (!world) return
+        world.jobs.unshift({
+          jobId: `test-${Date.now()}`,
+          worldId: world.worldId,
+          type,
+          status: 'queued',
+          scanId: scanId ?? undefined,
+          capabilities: [],
+          payload: {},
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+        renderWorldPanel()
+      },
+    }
+}
 
 async function refreshLingBotMapPanel(scanId: string): Promise<void> {
   const status = document.getElementById('lingbot-map-status')
@@ -2709,24 +2710,22 @@ async function refreshSplatLayerPanel(scanId: string): Promise<void> {
     status.textContent = 'Loading trained splat…'
     stats.textContent = ''
     try {
-      const fetched = await fetchScanSplatLayer(scan, (url) => fetch(withAccessToken(url)))
+      const fetched = await fetchScanSplatLayer(scan, (url) => fetch(withAccessToken(url)), withAccessToken)
       if (gen !== worldGen) {
         // Loaded for the Place that was left: free its mesh rather than leave it on the GPU.
         if (fetched) disposeScanSplatLayer(fetched)
         return
       }
-      if (!fetched) {
-        status.textContent = 'No photoreal splat for this scan yet — use “Train splat” below to build one.'
-        stats.textContent = ''
-        if (toggle) toggle.checked = false
-        return
-      }
-      layer = fetched
-      scanSplatLayers.set(scanId, layer)
-      if (layer.loaded) {
-        const root = ensureScanRootInWorld(scan)
-        if (root) root.add(layer.loaded.mesh)
-        layer.loaded.mesh.visible = scanSplatVisible
+      // No static splat is not the end of this panel: a person capture can have a 4D sequence and no static splat, and
+      // the 4D person row can only drive a sequence that was attached below (F-19).
+      if (fetched) {
+        layer = fetched
+        scanSplatLayers.set(scanId, layer)
+        if (layer.loaded) {
+          const root = ensureScanRootInWorld(scan)
+          if (root) root.add(layer.loaded.mesh)
+          layer.loaded.mesh.visible = scanSplatVisible
+        }
       }
     } catch (e) {
       if (gen !== worldGen) return
@@ -2741,7 +2740,7 @@ async function refreshSplatLayerPanel(scanId: string): Promise<void> {
   // makes integrateScanRoot swap the scan root out, taking the cached splat
   // mesh with it. The check is a pointer comparison, so the common case (root
   // unchanged) costs nothing.
-  if (layer.loaded) {
+  if (layer?.loaded) {
     const root = ensureScanRootInWorld(scan)
     if (root && layer.loaded.mesh.parent !== root) root.add(layer.loaded.mesh)
   }
@@ -2753,17 +2752,25 @@ async function refreshSplatLayerPanel(scanId: string): Promise<void> {
     const fourD = await ensureSplat4DLayer(scanId, scan)
     if (gen !== worldGen) return
     if (fourD) {
-      fourD.setVisible(scanSplatVisible)
-      if (!fourD.playing) fourD.play()
+      // The 4D person row of Scene layers is this layer's one switch (F-19); "Show trained splat" is the static splat's.
+      applySplat4DVisibility(fourD)
+      renderLayerPanel()
       const missing = fourD.missingFrames > 0 ? ` · ${fourD.missingFrames} frame(s) missing` : ''
       status.textContent =
         `4D person ready — ${fourD.frameCount} frames at ${fourD.fps}fps (${fourD.durationSec.toFixed(1)}s)${missing}.`
-      stats.textContent = ''
+      stats.textContent = globalLayerVisible.splat4d ? '' : 'Turn on 4D person under Scene layers to play it.'
       return
     }
   } catch (e) {
     if (gen !== worldGen) return
     console.error('[viewer] 4D layer failed:', e)
+  }
+
+  if (!layer) {
+    status.textContent = 'No photoreal splat for this scan yet — use “Train splat” below to build one.'
+    stats.textContent = ''
+    if (toggle) toggle.checked = false
+    return
   }
 
   const m = layer.manifest
@@ -2816,7 +2823,7 @@ function setSplatDownloadLink(scan: ScanManifest | null, layer?: ScanSplatLayer)
     if (!scan) {
       link.hidden = true
     } else {
-      link.href = withSessionToken(withAccessToken(splatPlyUrl(scan)), shellSessionToken())
+      link.href = mediaUrl(splatPlyUrl(scan), accessToken)
       link.setAttribute('download', `${scan.name || scan.scanId}.splat.ply`)
       link.hidden = false
     }
@@ -2827,27 +2834,30 @@ function setSplatDownloadLink(scan: ScanManifest | null, layer?: ScanSplatLayer)
     if (!finishOk || !scan) {
       sogLink.hidden = true
     } else {
-      sogLink.href = withSessionToken(withAccessToken(splatSogUrl(scan)), shellSessionToken())
+      sogLink.href = mediaUrl(splatSogUrl(scan), accessToken)
       sogLink.setAttribute('download', `${scan.name || scan.scanId}.sog`)
       sogLink.hidden = false
     }
   }
 }
 
+/** "Show trained splat": the static splat of every scan. The 4D person row drives the 4D sequences. */
 function setScanSplatVisible(visible: boolean): void {
   scanSplatVisible = visible
   for (const layer of scanSplatLayers.values()) {
     if (layer.loaded) layer.loaded.mesh.visible = visible
   }
-  // 4D sequences follow the same toggle — from the user's point of view it is
-  // one "show the splat" control, not two.
-  for (const layer of scanSplat4DLayers.values()) {
-    layer.setVisible(visible)
-    // Pause a hidden sequence: an invisible playhead still evicts and reloads
-    // meshes every frame, which is pure cost.
-    if (visible) layer.play()
-    else layer.pause()
-  }
+}
+
+/**
+ * Show or hide a 4D sequence by the 4D person row, its one switch (`globalLayerVisible.splat4d`). A hidden sequence is
+ * paused: an invisible playhead still evicts and reloads meshes every frame, which is pure cost.
+ */
+function applySplat4DVisibility(layer: import('./splat4d-layer').Splat4DLayer): void {
+  const visible = globalLayerVisible.splat4d
+  layer.setVisible(visible)
+  if (visible && !layer.playing) layer.play()
+  else if (!visible && layer.playing) layer.pause()
 }
 
 // ─── Splat-detect object boxes (splat-detect job output) ──────────────────────
@@ -2884,7 +2894,9 @@ async function refreshSplatDetectPanel(scanId: string): Promise<void> {
         if (loadedScan) loadedScan.root.add(layer.boxesGroup)
         layer.boxesGroup.visible = scanDetectVisible
         for (const marker of layer.labels) {
-          createLabel(marker.text, marker.position, { scanId, layerType: 'labels' })
+          // Gated on the boxes' group, so #splat-detect-toggle hides the captions with the boxes (FN-066), as the
+          // panoptic chips are gated on theirs.
+          createLabel(marker.text, marker.position, { scanId, layerType: 'labels', visibilityGate: layer.boxesGroup })
         }
       }
     } catch (e) {
@@ -2939,11 +2951,20 @@ let panopticVisible = true
 const panopticProbed = new Set<string>()
 
 /**
+ * A probe's answer when it was neither a layer nor "not run": no route for the sidecar here, or a read that failed
+ * (./artifact-read.ts). Those cannot say whether the lift ran, so the Things list and the panel say that instead of
+ * "nothing has looked yet" (F-22). Cleared with the probe.
+ */
+const panopticUnreadable = new Map<string, ArtifactRead<ScanPanopticLayer>>()
+
+/**
  * Why this scan shows no placed objects, or null when it shows some (or when
  * nothing has looked yet, which is not a claim we are entitled to make).
  */
 function placementVerdictFor(scanId: string): PlacementVerdict | null {
   if (!panopticProbed.has(scanId)) return null
+  const unreadable = panopticUnreadable.get(scanId)
+  if (unreadable) return placementVerdictForRead(unreadable)
   return placementVerdictOf(scanPanopticLayers.get(scanId) ?? null)
 }
 
@@ -2984,7 +3005,8 @@ async function ensureScanPanopticLayer(scanId: string): Promise<ScanPanopticLaye
   if (!scan) return null
 
   const gen = worldGen
-  const layer = await fetchScanPanopticLayer(scan, (url) => fetch(withAccessToken(url)))
+  const read = await readScanPanopticLayer(scan, (url) => fetch(withAccessToken(url)))
+  const layer = read.state === 'found' ? read.value : null
   // A Place switch while the probe was in flight: its answer is for the Place that was left.
   if (gen !== worldGen) {
     if (layer) disposeOverlayGeometry(layer.markerGroup)
@@ -2992,8 +3014,11 @@ async function ensureScanPanopticLayer(scanId: string): Promise<ScanPanopticLaye
   }
   // Record the probe before the null return: "asked and got nothing" is the
   // finding the Things list renders as "nothing has looked yet", and it is only
-  // sound because we got here.
+  // sound because we got here. An answer that cannot say (no route, a failed
+  // read) is kept apart, so it is not rendered as that finding.
   panopticProbed.add(scanId)
+  if (read.state === 'not-served' || read.state === 'error') panopticUnreadable.set(scanId, read)
+  else panopticUnreadable.delete(scanId)
   if (layer) scanPanopticLayers.set(scanId, layer)
   // Every outcome of this probe — including "objects were placed", which
   // RETRACTS a note the synchronous render already drew — changes what the
@@ -3056,7 +3081,7 @@ async function refreshPanopticPanel(scanId: string): Promise<void> {
   if (!layer) {
     // Same sentence the Things list shows for this scan — one wording for one
     // state, rather than a second copy of it that can drift (ADR 0001).
-    const verdict = placementVerdictOf(null)!
+    const verdict = placementVerdictFor(scanId) ?? placementVerdictOf(null)!
     status.textContent = `${verdict.headline} ${verdict.detail}`
     if (reasons) reasons.textContent = ''
     if (toggle) toggle.checked = panopticVisible
@@ -3090,6 +3115,7 @@ function discardPanopticLayer(scanId: string): void {
   // Ahead of the early return: a scan probed and found to have no result at all
   // still has to be re-probed after a re-lift, and it never had a cached layer.
   panopticProbed.delete(scanId)
+  panopticUnreadable.delete(scanId)
   const layer = scanPanopticLayers.get(scanId)
   if (!layer) return
   const markers = new Set(layer.markers.map(marker => marker.object))
@@ -3115,7 +3141,7 @@ async function queueSplatToolboxJob(kind: 'train' | 'detect'): Promise<void> {
     : buildDetectJobRequest(selectedScanId, prompt)
   const response = await fetch(withAccessToken(`/worlds/${encodeURIComponent(world.shareSlug)}/jobs`), {
     method: 'POST',
-    headers: accessHeaders({ 'Content-Type': 'application/json' }),
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
   })
   if (!response.ok) throw new Error(await response.text())
@@ -3136,7 +3162,7 @@ async function queueSenseNovaJob(): Promise<void> {
   const query = (document.getElementById('sensenova-query') as HTMLInputElement | null)?.value.trim() ?? ''
   const response = await fetch(withAccessToken(`/worlds/${encodeURIComponent(world.shareSlug)}/jobs`), {
     method: 'POST',
-    headers: accessHeaders({ 'Content-Type': 'application/json' }),
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       type: 'sensenova-vision',
       scanId: selectedScanId,
@@ -3150,6 +3176,102 @@ async function queueSenseNovaJob(): Promise<void> {
   renderWorldPanel()
   flashButton('btn-sensenova-run', 'Queued')
   setTimeout(() => { void refreshJobs() }, 1000)
+}
+
+/** The idle line the SenseNova panel starts with in viewer.html, put back for a scan that has no SenseNova job. */
+const senseNovaIdleText = document.getElementById('sensenova-status')?.textContent?.trim() ?? ''
+
+/**
+ * The SenseNova panel's status and file lines for the selected scan's latest SenseNova job (./job-results.ts). Before
+ * this, a finished run reached no screen: the panel only ever said it was queued (F-23).
+ */
+function renderSenseNovaPanel(): void {
+  const status = document.getElementById('sensenova-status')
+  const filesLine = document.getElementById('sensenova-files')
+  if (!status) return
+  const summary = senseNovaSummary(world?.jobs, selectedScanId)
+  status.textContent = summary.state === 'none' ? senseNovaIdleText : summary.text
+  status.dataset['state'] = summary.state
+  if (filesLine) {
+    filesLine.textContent = summary.files.length ? `Output: ${senseNovaFilesLine(summary.files)}.` : ''
+    filesLine.hidden = summary.files.length === 0
+  }
+}
+
+/** The world GLB link in the Project tab, once an export-world job has completed (./job-results.ts, F-23). */
+function renderWorldExportLink(): void {
+  const section = document.getElementById('world-export-section')
+  const link = document.getElementById('world-export-link') as HTMLAnchorElement | null
+  const detail = document.getElementById('world-export-detail')
+  if (!link || !world) return
+  const found = worldExportLink(world.jobs, world.shareSlug)
+  if (section) section.hidden = !found
+  if (detail) {
+    detail.textContent = found?.detail ?? ''
+    detail.hidden = !found
+  }
+  if (!found) {
+    link.removeAttribute('href')
+    return
+  }
+  // A download link sends no header, so its one token is the world's own: GET /worlds/:slug/export.glb checks it.
+  link.href = mediaUrl(found.path, accessToken)
+  link.setAttribute('download', `${world.shareSlug}.world.glb`)
+}
+
+/**
+ * The Edit tab's list of objects a patch hid, each with a Show button (F-20). A hidden object cannot be picked in the
+ * scene, so this list is the one way back: Show posts the Hide button's patch with `visible: true`.
+ */
+function renderHiddenObjects(): void {
+  const section = document.getElementById('hidden-objects-section')
+  const list = document.getElementById('hidden-objects-list')
+  if (!section || !list || !world) return
+  const scansById = new Map(world.scans.map(scan => [scan.scanId, scan] as const))
+  // A patch naming a scan root (its object id is the scan id) is not replayed, so that scan is not hidden and is not listed.
+  const hidden = hiddenObjects(world.editPatches)
+    .filter(item => !item.scanId || scansById.has(item.scanId))
+    .filter(item => item.targetId !== item.scanId)
+  section.hidden = hidden.length === 0
+  list.replaceChildren(...hidden.map((item) => {
+    const row = document.createElement('div')
+    row.className = 'hidden-object-row'
+    const loaded = item.scanId ? loadedScans.get(item.scanId) : undefined
+    const node = loaded?.loaded ? findObjectByTargetId(loaded.root, item.targetId) : null
+    const label = node ? String(node.userData['label'] ?? node.name ?? '') : ''
+    const name = document.createElement('span')
+    name.className = 'hidden-object-name'
+    name.textContent = label || item.targetId
+    const where = document.createElement('small')
+    where.textContent = item.scanId ? (scansById.get(item.scanId)?.name ?? item.scanId) : 'every scan'
+    const show = document.createElement('button')
+    show.type = 'button'
+    show.className = 'job-btn'
+    show.textContent = 'Show'
+    show.setAttribute('aria-label', `Show ${label || item.targetId} again`)
+    show.addEventListener('click', () => unhideObject(item, show))
+    row.append(name, where, show)
+    return row
+  }))
+}
+
+/** Show a hidden object again: clear its patch state on the node and post `visible: true`. */
+function unhideObject(item: HiddenObject, button: HTMLButtonElement): void {
+  for (const loaded of loadedScans.values()) {
+    if (!loaded.loaded || (item.scanId && loaded.manifest.scanId !== item.scanId)) continue
+    const node = findObjectByTargetId(loaded.root, item.targetId)
+    if (!node) continue
+    node.userData['hidden'] = false
+    node.visible = true
+  }
+  applyLayerVisibility()
+  button.disabled = true
+  const gen = worldGen
+  void editSaves.save(visibilitySaveKey(item), () => postEditPatch(unhidePatch(item))).then((saved) => {
+    if (gen !== worldGen) return
+    // A save that did not reach the server leaves the row, and its button, for another try.
+    if (!saved) button.disabled = false
+  })
 }
 
 // ─── Gaussian splats (Spark) ──────────────────────────────────────────────────
@@ -3261,6 +3383,8 @@ function clearSelection(): void {
   const selectedInfo = document.getElementById('edit-selected-info')!
   noSelection.style.display = 'block'
   selectedInfo.style.display = 'none'
+  renderSenseNovaPanel()
+  renderJobTypeHint()
   renderItemsPanel()
 }
 
@@ -3402,7 +3526,7 @@ function firstLod(root: THREE.Object3D): THREE.LOD | null {
 // cannot reach it. The ?mock=... query check on top is the same convention
 // src/test/webxr-emulation.ts uses for ?mock=webxr, so it still doesn't fire in an
 // ordinary `vite dev` session either.
-if (import.meta.env.DEV && query.get('mock') === 'editor') {
+if (TEST_HOOKS_ENABLED) {
   (window as unknown as {
     __editorTest: {
       selectFirstLod: (scanId: string) => { name: string; objectId: string; filename: string; gizmoAttached: boolean } | null
@@ -3487,7 +3611,7 @@ async function postEditPatch(body: Partial<EditPatch> & { targetId: string; scop
   const gen = worldGen
   const response = await fetch(withAccessToken(`/worlds/${encodeURIComponent(world.shareSlug)}/patches`), {
     method: 'POST',
-    headers: accessHeaders({ 'Content-Type': 'application/json' }),
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
   if (!response.ok) throw await httpError(response)
@@ -3513,7 +3637,7 @@ async function postPatchRevert(scanId: string, patchId: string): Promise<void> {
   await requestRevert({
     post: (body) => fetch(withAccessToken(path), {
       method: 'POST',
-      headers: accessHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
       body,
     }),
     refused: httpError,
@@ -3881,7 +4005,7 @@ async function addReviewComment(): Promise<void> {
   try {
     const response = await fetch(withAccessToken(`/worlds/${encodeURIComponent(world.shareSlug)}/comments`), {
       method: 'POST',
-      headers: accessHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ body, scanId: selectedScanId ?? null }),
     })
     if (!response.ok) throw new Error(await response.text())
@@ -3907,12 +4031,14 @@ function renderWorldPanel(): void {
   // with the list capped at 8, crowd out the reconstruction jobs this panel
   // exists to show.
   const queueJobs = world.jobs.filter(job => job.type !== 'optimize-scan')
-  setText('world-scan-count', String(world.scans.length))
-  setText('world-layer-count', String(LAYER_ORDER.length))
-  setText('world-job-count', String(queueJobs.length))
-  setText('world-origin-label', hasGeoPose(world.originGeoPose) ? 'GPS' : 'Local')
+  // The World tab's four tiles (scans, layers, jobs, origin) are gone from viewer.html; the toolbar carries the counts,
+  // so their four writes went with them (F-19).
   renderToolbarSummary(queueJobs)
   renderJobs(queueJobs)
+  renderJobTypeHint()
+  renderWorldExportLink()
+  renderSenseNovaPanel()
+  renderHiddenObjects()
   registerProposals ??= mountRegisterProposals(registerProposalHost)
   registerProposals.render()
   renderItemsPanel()
@@ -3939,17 +4065,16 @@ function renderLayerPanel(): void {
   if (!list) return
   list.innerHTML = ''
 
-  for (const type of LAYER_ORDER) {
-    // The Gaussian-splat surface lives in the dedicated Splat Toolbox section
-    // below; keep it out of this generic sidecar-layer list.
-    if (type === 'splat') continue
+  // The rows: every layer the editor draws, without the static splat (Splat tools has its controls) and without
+  // Depth and Semantic masks, which nothing draws yet (./layer-rows.ts, F-19).
+  for (const type of listedLayerTypes()) {
     const row = document.createElement('label')
     row.className = 'layer-item'
     row.dataset['layer'] = type
 
     const left = document.createElement('div')
     left.style.minWidth = '0'
-    const count = layerCount(type)
+    const count = layerCountText(type, layerContent(type))
     const source = layerSource(type)
     left.innerHTML = `
       <div class="layer-name">${escHtml(LAYER_LABELS[type])}</div>
@@ -3961,16 +4086,12 @@ function renderLayerPanel(): void {
     toggle.id = `layer-toggle-${type}`
     toggle.className = 'layer-toggle'
     toggle.checked = globalLayerVisible[type]
-    toggle.addEventListener('change', () => {
-      globalLayerVisible[type] = toggle.checked
-      if (type === 'labels') labelsVisible = toggle.checked
-      if (type === 'points') cloudVisible = toggle.checked
-      applyLayerVisibility()
-    })
+    toggle.addEventListener('change', () => setLayerVisible(type, toggle.checked))
 
     row.append(left, toggle)
     list.appendChild(row)
   }
+  if (world) renderToolbarSummary(world.jobs.filter(job => job.type !== 'optimize-scan'))
 }
 
 function renderPlacesPanel(): void {
@@ -3978,7 +4099,7 @@ function renderPlacesPanel(): void {
   if (!root) return
   placesPanel ??= new PlacesPanel(
     root,
-    accessHeaders,
+    withAccessToken,
     () => selectedScanId && world ? world.scans.find(scan => scan.scanId === selectedScanId) ?? null : null,
     () => { void refreshWorldScans() },
   )
@@ -4181,7 +4302,7 @@ async function queueJob(type: WorldJobType): Promise<void> {
   if (!world) return
   const response = await fetch(withAccessToken(`/worlds/${encodeURIComponent(world.shareSlug)}/jobs`), {
     method: 'POST',
-    headers: accessHeaders({ 'Content-Type': 'application/json' }),
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       type,
       scanId: selectedScanId ?? undefined,
@@ -4195,10 +4316,35 @@ async function queueJob(type: WorldJobType): Promise<void> {
 
 async function queueSelectedJob(): Promise<void> {
   const select = document.getElementById('job-type') as HTMLSelectElement
-  await queueJob(select.value as WorldJobType)
+  const type = select.value as WorldJobType
+  // A job that reads one scan's files has nothing to read without one, and the server refuses it (F-24).
+  if (jobRequiresScan(type) && !selectedScanId) {
+    renderJobTypeHint()
+    flashButton('btn-queue-job', 'Select a scan first', 'error')
+    return
+  }
+  await queueJob(type)
   renderWorldPanel()
   flashButton('btn-queue-job', 'Queued')
   setTimeout(() => { void refreshJobs() }, 1000)
+}
+
+/** The line under the Advanced queue's job select: whether the job runs on the selected scan or the whole Place. */
+function renderJobTypeHint(): void {
+  const select = document.getElementById('job-type') as HTMLSelectElement | null
+  const hint = document.getElementById('job-type-hint')
+  if (!select || !hint) return
+  const scan = selectedScanId ? world?.scans.find(candidate => candidate.scanId === selectedScanId) ?? null : null
+  if (!jobRequiresScan(select.value)) {
+    hint.textContent = 'Runs for the whole Place.'
+    hint.dataset['tone'] = 'plain'
+  } else if (scan) {
+    hint.textContent = `Runs on the selected scan, ${scan.name || scan.scanId}.`
+    hint.dataset['tone'] = 'plain'
+  } else {
+    hint.textContent = 'Needs a selected scan. Select one under Scans first.'
+    hint.dataset['tone'] = 'warn'
+  }
 }
 
 const GUIDED_WORKFLOWS: Record<string, WorldJobType[]> = {
@@ -4230,16 +4376,30 @@ async function refreshJobs(): Promise<void> {
   renderWorldPanel()
 }
 
-function layerCount(type: LayerType): string {
+/** What the Place's scans hold for one layer: the counts their manifests report, and the objects loaded in the scene. */
+function layerContent(type: LayerType): LayerContent {
   const manifestCounts = world?.scans
     .map(scan => scan.layerIndex.find(layer => layer.type === type)?.count)
     .filter((count): count is number => typeof count === 'number') ?? []
-  const manifestTotal = manifestCounts.reduce((sum, count) => sum + count, 0)
-  if (manifestCounts.length > 0) return `${manifestTotal.toLocaleString()} items`
-
   let objectCount = 0
   for (const scan of loadedScans.values()) objectCount += scan.layerNodes.get(type)?.size ?? 0
-  return objectCount > 0 ? `${objectCount.toLocaleString()} objects` : 'planned'
+  // A 4D sequence hangs under its scan's root rather than in a layer map: each attached sequence is one object.
+  if (type === 'splat4d') objectCount += scanSplat4DLayers.size
+  // The camera layers are counted from what the frame sets drew (./layer-rows.ts), for the scans loaded now.
+  let frames: LayerContent['frames']
+  if (FRAME_LAYER_TYPES.has(type)) {
+    frames = { drawn: 0, unreadable: 0 }
+    for (const [scanId, state] of scanFrames) {
+      if (!loadedScans.get(scanId)?.loaded) continue
+      if (typeof state === 'number') frames.drawn += state
+      else if (state === 'failed') frames.unreadable += 1
+    }
+  }
+  return {
+    manifestCount: manifestCounts.length > 0 ? manifestCounts.reduce((sum, count) => sum + count, 0) : null,
+    objectCount,
+    ...(frames ? { frames } : {}),
+  }
 }
 
 function layerSource(type: LayerType): string {
@@ -4258,14 +4418,14 @@ function syncViewMenu(): void {
     if (control) control.checked = checked
   }
   setChecked('view-toggle-map', geoMap.isOpen)
-  setChecked('view-toggle-points', cloudVisible && globalLayerVisible.points)
+  setChecked('view-toggle-points', globalLayerVisible.points)
   setChecked('view-toggle-floor', globalLayerVisible.floor)
   setChecked('view-toggle-mesh', globalLayerVisible.mesh)
   setChecked('view-toggle-path', globalLayerVisible.cameraPath)
   setChecked('view-toggle-frustums', globalLayerVisible.cameraFrustums)
   setChecked('view-toggle-images', globalLayerVisible.rgbFrames)
   setChecked('view-toggle-grid', groundGrid?.visible ?? true)
-  setChecked('view-toggle-labels', labelsVisible && globalLayerVisible.labels)
+  setChecked('view-toggle-labels', globalLayerVisible.labels)
   setChecked('view-toggle-anchors', globalLayerVisible.anchor)
 }
 
@@ -4274,7 +4434,8 @@ function renderToolbarSummary(queueJobs: WorldJob[]): void {
   const activeJobs = queueJobs.filter(job => job.status === 'queued' || job.status === 'processing')
   setText('toolbar-project-name', world.name)
   setText('toolbar-scan-count', String(world.scans.length))
-  setText('toolbar-layer-count', String(LAYER_ORDER.length))
+  // How many layer rows have something to show in this Place, not the number of layer types there are (F-19).
+  setText('toolbar-layer-count', String(layersWithContent(layerContent)))
   setText('toolbar-job-count', `${activeJobs.length}/${queueJobs.length}`)
   document.getElementById('toolbar-jobs')?.classList.toggle('is-active', activeJobs.length > 0)
 }
@@ -4290,23 +4451,18 @@ function applyLayerVisibility(): void {
     for (const [type, nodes] of loaded.layerNodes) {
       for (const node of nodes) {
         const visible = scanRendered(loaded) && layerVisibilityFor(type, pointsAllowedByMode, meshesAllowedByMode)
-        node.visible = visible
+        // A node hidden by a patch stays hidden whatever its layer says (F-20).
+        node.visible = visible && node.userData['hidden'] !== true
       }
     }
   }
+  for (const layer of scanSplat4DLayers.values()) applySplat4DVisibility(layer)
 
   // The Place's stored (white) anchor pins hang off worldGroup, not off a scan
   // root, so no scan's layerNodes holds them and the loop above never reaches
   // them. They are half of the red/white pair, so they follow its one switch.
   for (const child of worldGroup?.children ?? []) {
     if (child.name === EXPECTED_PINS_NAME) child.visible = globalLayerVisible.anchor
-  }
-
-  for (const obj of detectionBoundsObjects) {
-    const scanId = String(obj.userData['scanId'] ?? '')
-    obj.visible = detectionBoundsVisible
-      && globalLayerVisible.detections
-      && (scanRendered(loadedScans.get(scanId)) || !loadedScans.has(scanId))
   }
 
   for (const label of labels) {
@@ -4316,7 +4472,7 @@ function applyLayerVisibility(): void {
     // only hid the caption would leave the boxes on screen and read as broken.
     // Guarded on the filter being active so this never fights the layer
     // toggles, which own object visibility the rest of the time.
-    if (!objectFilter.isEmpty && label.object) label.object.visible = visible
+    if (!objectFilter.isEmpty && label.object) label.object.visible = visible && !hiddenByPatch(label.object)
   }
 
   // OFF is 0.6, not 0.4. At 0.4 the label measured 2.88:1 against the HUD
@@ -4336,21 +4492,39 @@ function applyLayerVisibility(): void {
   stitch?.reapplyCompare()
   frameReference.apply()
 
-  setToggle('btn-toggle-cloud', cloudVisible && globalLayerVisible.points)
-  setToggle('btn-toggle-labels', labelsVisible && globalLayerVisible.labels)
+  setToggle('btn-toggle-cloud', globalLayerVisible.points)
+  setToggle('btn-toggle-labels', globalLayerVisible.labels)
   // `active-hud` had no rule anywhere in viewer.html — a typo for `active`, so
   // the teal on-state this line was meant to apply had never once rendered.
-  setToggle('btn-toggle-bounds', detectionBoundsVisible)
+  setToggle('btn-toggle-bounds', globalLayerVisible.detections)
   syncViewMenu()
 }
 
 function layerVisibilityFor(type: LayerType, pointsAllowedByMode: boolean, meshesAllowedByMode: boolean): boolean {
   if (!globalLayerVisible[type]) return false
-  if (type === 'points') return cloudVisible && pointsAllowedByMode
-  if (type === 'mesh' || type === 'floor') return meshesAllowedByMode
-  if (type === 'detections') return detectionBoundsVisible && meshesAllowedByMode
-  if (type === 'labels') return labelsVisible
+  if (type === 'points') return pointsAllowedByMode
+  if (type === 'mesh' || type === 'floor' || type === 'detections') return meshesAllowedByMode
   return true
+}
+
+/**
+ * The one way a layer is switched (F-41). The HUD's Cloud, Labels and Bounds buttons, the Views toggles and the Layers
+ * rows all call this, so each layer has one variable (`globalLayerVisible`) and every control shows it: the row's
+ * checkbox here, the HUD buttons and the Views menu in applyLayerVisibility().
+ */
+function setLayerVisible(type: LayerType, visible: boolean): void {
+  globalLayerVisible[type] = visible
+  const row = document.getElementById(`layer-toggle-${type}`) as HTMLInputElement | null
+  if (row) row.checked = visible
+  applyLayerVisibility()
+}
+
+/** Whether a patch hid `obj` or one of its ancestors (`userData.hidden`, written from the patch log). */
+function hiddenByPatch(obj: THREE.Object3D): boolean {
+  for (let node: THREE.Object3D | null = obj; node; node = node.parent) {
+    if (node.userData['hidden'] === true) return true
+  }
+  return false
 }
 
 // ─── Geomap and live metadata ────────────────────────────────────────────────
@@ -4699,14 +4873,11 @@ function clearLabels(): void {
 function clearDetectionBounds(): void {
   for (const obj of detectionBoundsObjects) obj.removeFromParent()
   detectionBoundsObjects = []
-  detectionBoundsVisible = false
 }
 
+/** Place an object by a column-major 4x4: the rule both editors share (./world-rules.ts). */
 function applyMatrix(obj: THREE.Object3D, matrixArray: number[]): void {
-  if (matrixArray.length !== 16) return
-  const matrix = new THREE.Matrix4().fromArray(matrixArray)
-  matrix.decompose(obj.position, obj.quaternion, obj.scale)
-  obj.updateMatrixWorld(true)
+  applyLocalToWorld(obj, matrixArray)
 }
 
 function findObjectByTargetId(root: THREE.Object3D, targetId: string): THREE.Object3D | null {
@@ -4756,12 +4927,9 @@ function rowHtml(label: string, value: string): string {
   return `<div class="inspector-row"><span class="inspector-label">${label}</span><span class="inspector-value">${value}</span></div>`
 }
 
+/** The editor's one HTML escape (./html.ts), under the name the rest of this file uses. A declaration, so it is hoisted. */
 function escHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+  return escapeHtml(value)
 }
 
 function safeObjectToken(value: string): string {
@@ -4823,7 +4991,7 @@ async function httpError(response: Response): Promise<Error> {
 /** GET + parse JSON, riding out transient network drops during load. */
 function fetchJson<T>(url: string): Promise<T> {
   return withTransientRetry(async () => {
-    const response = await fetch(withAccessToken(url), { headers: accessHeaders() })
+    const response = await fetch(withAccessToken(url))
     if (!response.ok) throw await httpError(response)
     return await response.json() as T
   })
@@ -4903,6 +5071,8 @@ function switchSidebarTab(name: string): void {
   }
   const isDetailsTab = ['scans', 'things', 'world', 'layers', 'edit'].includes(name)
   const detailsPanelId = name === 'scans' || name === 'things' ? 'details-items' : `tab-${name}`
+  // One drawer panel serves the Scans and the Things tab, so it is labelled by whichever of the two opened it (FN-074).
+  if (name === 'scans' || name === 'things') document.getElementById('details-items')?.setAttribute('aria-labelledby', `tab-btn-${name}`)
   const layerInfo = document.getElementById('sidebar-layer-info')
   const hierarchyEditor = document.getElementById('project-hierarchy-editor')
   const projectSwitcher = document.getElementById('project-switcher')
@@ -5027,22 +5197,15 @@ document.getElementById('btn-reset-camera')!.addEventListener('click', () => {
 })
 
 document.getElementById('btn-toggle-cloud')!.addEventListener('click', () => {
-  cloudVisible = !cloudVisible
-  globalLayerVisible.points = cloudVisible
-  renderLayerPanel()
-  applyLayerVisibility()
+  setLayerVisible('points', !globalLayerVisible.points)
 })
 
 document.getElementById('btn-toggle-labels')!.addEventListener('click', () => {
-  labelsVisible = !labelsVisible
-  globalLayerVisible.labels = labelsVisible
-  renderLayerPanel()
-  applyLayerVisibility()
+  setLayerVisible('labels', !globalLayerVisible.labels)
 })
 
 document.getElementById('btn-toggle-bounds')!.addEventListener('click', () => {
-  detectionBoundsVisible = !detectionBoundsVisible
-  applyLayerVisibility()
+  setLayerVisible('detections', !globalLayerVisible.detections)
 })
 
 document.getElementById('btn-flush-tags')!.addEventListener('click', () => {
@@ -5067,6 +5230,8 @@ document.getElementById('edit-save-transform')?.addEventListener('click', () => 
 document.getElementById('transform-translate')?.addEventListener('click', () => setTransformMode('translate'))
 document.getElementById('transform-rotate')?.addEventListener('click', () => setTransformMode('rotate'))
 document.getElementById('transform-scale')?.addEventListener('click', () => setTransformMode('scale'))
+
+document.getElementById('job-type')?.addEventListener('change', renderJobTypeHint)
 
 document.getElementById('btn-queue-job')?.addEventListener('click', () => {
   void queueSelectedJob().catch(error => {
@@ -5155,53 +5320,26 @@ viewToggle('view-toggle-map')?.addEventListener('change', (event) => {
   syncViewMenu()
 })
 
-viewToggle('view-toggle-points')?.addEventListener('change', (event) => {
-  cloudVisible = (event.target as HTMLInputElement).checked
-  globalLayerVisible.points = cloudVisible
-  renderLayerPanel()
-  applyLayerVisibility()
-})
-
-viewToggle('view-toggle-floor')?.addEventListener('change', (event) => {
-  globalLayerVisible.floor = (event.target as HTMLInputElement).checked
-  renderLayerPanel()
-  applyLayerVisibility()
-})
-
-viewToggle('view-toggle-mesh')?.addEventListener('change', (event) => {
-  globalLayerVisible.mesh = (event.target as HTMLInputElement).checked
-  renderLayerPanel()
-  applyLayerVisibility()
-})
-
-viewToggle('view-toggle-path')?.addEventListener('change', (event) => {
-  globalLayerVisible.cameraPath = (event.target as HTMLInputElement).checked
-  renderLayerPanel()
-  applyLayerVisibility()
-})
-
-viewToggle('view-toggle-frustums')?.addEventListener('change', (event) => {
-  globalLayerVisible.cameraFrustums = (event.target as HTMLInputElement).checked
-  renderLayerPanel()
-  applyLayerVisibility()
-})
-
-viewToggle('view-toggle-images')?.addEventListener('change', (event) => {
-  globalLayerVisible.rgbFrames = (event.target as HTMLInputElement).checked
-  renderLayerPanel()
-  applyLayerVisibility()
-})
+// Each Views toggle is one layer's switch, through the same setLayerVisible() the HUD and the Layers rows use.
+const VIEW_LAYER_TOGGLES: Array<[string, LayerType]> = [
+  ['view-toggle-points', 'points'],
+  ['view-toggle-floor', 'floor'],
+  ['view-toggle-mesh', 'mesh'],
+  ['view-toggle-path', 'cameraPath'],
+  ['view-toggle-frustums', 'cameraFrustums'],
+  ['view-toggle-images', 'rgbFrames'],
+  ['view-toggle-labels', 'labels'],
+  ['view-toggle-anchors', 'anchor'],
+]
+for (const [id, type] of VIEW_LAYER_TOGGLES) {
+  viewToggle(id)?.addEventListener('change', (event) => {
+    setLayerVisible(type, (event.target as HTMLInputElement).checked)
+  })
+}
 
 viewToggle('view-toggle-grid')?.addEventListener('change', (event) => {
   if (groundGrid) groundGrid.visible = (event.target as HTMLInputElement).checked
   syncViewMenu()
-})
-
-viewToggle('view-toggle-labels')?.addEventListener('change', (event) => {
-  labelsVisible = (event.target as HTMLInputElement).checked
-  globalLayerVisible.labels = labelsVisible
-  renderLayerPanel()
-  applyLayerVisibility()
 })
 
 // Object text filter. `input` rather than `change` so the scene narrows while
@@ -5216,15 +5354,10 @@ document.getElementById('view-filter-objects')?.addEventListener('input', (event
   // longer exists.
   if (wasActive && objectFilter.isEmpty) {
     for (const label of labels) {
-      if (label.object) label.object.visible = true
+      // An object a patch hid stays hidden: only the Show button in the Edit tab brings it back (F-20).
+      if (label.object) label.object.visible = !hiddenByPatch(label.object)
     }
   }
-  applyLayerVisibility()
-})
-
-viewToggle('view-toggle-anchors')?.addEventListener('change', (event) => {
-  globalLayerVisible.anchor = (event.target as HTMLInputElement).checked
-  renderLayerPanel()
   applyLayerVisibility()
 })
 
@@ -5245,6 +5378,13 @@ document.getElementById('btn-measure')?.addEventListener('click', () => {
 document.getElementById('edit-hide-object')?.addEventListener('click', () => {
   const obj = editor.selectedObject
   if (!obj) return
+  // A whole scan's switch is its checkbox in the Scans list. A Hide patch on the scan root was never kept: every load sets
+  // the root's visibility from that checkbox and the timeline, so it came back on the next redraw (F-20).
+  if (obj.userData['scope'] === 'scan-root') {
+    flashButton('edit-hide-object', 'Untick the scan to hide it', 'error')
+    return
+  }
+  obj.userData['hidden'] = true
   obj.visible = false
   const body = {
     targetId: stableObjectId(obj),
@@ -5253,10 +5393,12 @@ document.getElementById('edit-hide-object')?.addEventListener('click', () => {
     visible: false,
   }
   const gen = worldGen
-  void editSaves.save(`hide:${obj.uuid}`, () => postEditPatch(body)).then((saved) => {
+  // One key per object for Hide and Show, so a Show pressed before this saved replaces it rather than racing it.
+  void editSaves.save(visibilitySaveKey(body), () => postEditPatch(body)).then((saved) => {
     if (saved && gen === worldGen) flashButton('edit-hide-object', 'Hidden')
   })
   clearSelection()
+  applyLayerVisibility()
 })
 
 function setTransformMode(mode: 'translate' | 'rotate' | 'scale'): void {

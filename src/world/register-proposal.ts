@@ -30,6 +30,8 @@
  * `composeYUpTransform` in ./geo.ts uses.
  */
 import type { EditPatch, EditPatchProvenance, Quat, ScanManifest, Vec3, WorldJob } from './types.ts'
+import { decomposeMat4, isMatrix16, matricesAgree, multiplyMat4 } from './mat4.ts'
+import { wholeCentimetres } from './distance-text.ts'
 
 /** `EditPatchProvenance.source` for a patch applied from a place-register proposal. */
 export const PLACE_REGISTER_SOURCE = 'place-register' as const
@@ -207,100 +209,26 @@ export interface PlaceRegisterResult {
 }
 
 // ─── Matrices ────────────────────────────────────────────────────────────────
+//
+// One copy of each, in ./mat4.ts (F-41). Re-exported here, where the server's place-register job and the editor's
+// proposal cards already import them from.
+
+export { isMatrix16, matricesAgree, multiplyMat4 }
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
-/** True for exactly 16 finite numbers. Indexed, so a sparse array's holes do not slip through. */
-export function isMatrix16(value: unknown): value is number[] {
-  if (!Array.isArray(value) || value.length !== 16) return false
-  for (let i = 0; i < 16; i++) {
-    if (!isFiniteNumber(value[i])) return false
-  }
-  return true
-}
-
-/**
- * The column-major product `a · b`: the matrix that applies `b` first and `a` second.
- * Both are 4x4. The caller checks them with {@link isMatrix16}.
- */
-export function multiplyMat4(a: readonly number[], b: readonly number[]): number[] {
-  const out = new Array<number>(16)
-  for (let col = 0; col < 4; col++) {
-    for (let row = 0; row < 4; row++) {
-      let sum = 0
-      for (let k = 0; k < 4; k++) sum += a[k * 4 + row]! * b[col * 4 + k]!
-      out[col * 4 + row] = sum
-    }
-  }
-  return out
-}
-
-/** Both are 16 finite numbers and no entry differs by more than `tolerance`. */
-export function matricesAgree(a: unknown, b: unknown, tolerance = 1e-9): boolean {
-  if (!isMatrix16(a) || !isMatrix16(b)) return false
-  for (let i = 0; i < 16; i++) {
-    if (Math.abs(a[i]! - b[i]!) > tolerance) return false
-  }
-  return true
-}
-
 /**
  * Position, rotation and scale of a column-major affine matrix, as the Edit
- * gizmo's `serializeTransform` writes them beside `matrix`. This is
- * `Matrix4.decompose` from three.js (MIT, already a dependency; see
- * THIRD_PARTY.md), ported so the module needs no THREE: a Node test cross-checks
- * it against the real one. Null for a singular matrix.
+ * gizmo's `serializeTransform` writes them beside `matrix`: three.js's
+ * `Matrix4.decompose`, ported once in ./mat4.ts. Null for a matrix that is not
+ * 16 finite numbers or has an axis of length 0.
  */
 export function decomposeMatrix(m: readonly number[]): { position: Vec3; rotation: Quat; scale: Vec3 } | null {
   if (!isMatrix16(m)) return null
-  let sx = Math.hypot(m[0]!, m[1]!, m[2]!)
-  const sy = Math.hypot(m[4]!, m[5]!, m[6]!)
-  const sz = Math.hypot(m[8]!, m[9]!, m[10]!)
-  if (!(sx > 0 && sy > 0 && sz > 0)) return null
-  const det = m[0]! * (m[5]! * m[10]! - m[9]! * m[6]!) -
-    m[4]! * (m[1]! * m[10]! - m[9]! * m[2]!) +
-    m[8]! * (m[1]! * m[6]! - m[5]! * m[2]!)
-  if (det < 0) sx = -sx
-
-  // The rotation block with the scale divided out, named by row then column as three.js names it.
-  const m11 = m[0]! / sx, m21 = m[1]! / sx, m31 = m[2]! / sx
-  const m12 = m[4]! / sy, m22 = m[5]! / sy, m32 = m[6]! / sy
-  const m13 = m[8]! / sz, m23 = m[9]! / sz, m33 = m[10]! / sz
-
-  const trace = m11 + m22 + m33
-  let x: number, y: number, z: number, w: number
-  if (trace > 0) {
-    const s = 0.5 / Math.sqrt(trace + 1)
-    w = 0.25 / s
-    x = (m32 - m23) * s
-    y = (m13 - m31) * s
-    z = (m21 - m12) * s
-  } else if (m11 > m22 && m11 > m33) {
-    const s = 2 * Math.sqrt(1 + m11 - m22 - m33)
-    w = (m32 - m23) / s
-    x = 0.25 * s
-    y = (m12 + m21) / s
-    z = (m13 + m31) / s
-  } else if (m22 > m33) {
-    const s = 2 * Math.sqrt(1 + m22 - m11 - m33)
-    w = (m13 - m31) / s
-    x = (m12 + m21) / s
-    y = 0.25 * s
-    z = (m23 + m32) / s
-  } else {
-    const s = 2 * Math.sqrt(1 + m33 - m11 - m22)
-    w = (m21 - m12) / s
-    x = (m13 + m31) / s
-    y = (m23 + m32) / s
-    z = 0.25 * s
-  }
-  return {
-    position: { x: m[12]!, y: m[13]!, z: m[14]! },
-    rotation: { x, y, z, w },
-    scale: { x: sx, y: sy, z: sz },
-  }
+  if (!(Math.hypot(m[0]!, m[1]!, m[2]!) > 0 && Math.hypot(m[4]!, m[5]!, m[6]!) > 0 && Math.hypot(m[8]!, m[9]!, m[10]!) > 0)) return null
+  return decomposeMat4(m)
 }
 
 // ─── Reading a proposal back out of a job ────────────────────────────────────
@@ -505,10 +433,8 @@ export function refusalText(reason: RegistrationRefusal | 'no-geometry' | null):
   return reason ? REFUSAL_TEXT[reason] : 'No move was proposed.'
 }
 
-/** Whole centimetres for a distance, or null for a number that does not exist. Never prints "NaN cm". */
-function centimetres(metres: number | null | undefined): string | null {
-  return typeof metres === 'number' && Number.isFinite(metres) ? Math.abs(metres * 100).toFixed(0) : null
-}
+/** Whole centimetres for a distance, or null for a number that does not exist: the one reading (./distance-text.ts). */
+const centimetres = wholeCentimetres
 
 function percent(fraction: number): string {
   return `${Math.round(Math.min(1, Math.max(0, fraction)) * 100)}%`

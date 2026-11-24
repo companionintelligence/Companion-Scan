@@ -37,8 +37,8 @@ import type * as THREE from 'three'
 import { isInPlaceFrame } from '../world/frame-generations.ts'
 import { frameIdOf } from '../world/frame-replacement.ts'
 import { isFrameId } from '../world/spatial-frame.ts'
-import type { FrameHistoryEntry, FrameReplaceReason, ProjectSpatialFrame, ScanManifest } from '../world/types'
-import { appliedStyle, applyCompareStyle, PLAIN_STYLE, type CompareStyle } from './compare-style'
+import type { FrameHistoryEntry, FrameReplaceReason, ProjectSpatialFrame, ScanManifest } from '../world/types.ts'
+import { appliedStyle, applyCompareStyle, PLAIN_STYLE, type CompareStyle } from './compare-style.ts'
 
 // ── Chips ────────────────────────────────────────────────────────────────────────────────────────────
 

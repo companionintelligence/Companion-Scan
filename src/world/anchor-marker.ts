@@ -1,14 +1,17 @@
 /**
  * Shared calibration-anchor decal — a ring + crosshair (+ north tick,
  * when a compass bearing is known) marking where a project's calibration
- * anchor sits. Built once, used by both the live AR capture view
- * (src/ar/eighthwall.ts, src/ar/webxr.ts) and the World Editor
+ * anchor sits. Built once, used by the capture side's calibration flow
+ * (src/ar/project-calibration.ts, src/ar/constellation-ghosts.ts, and the ring
+ * of src/ar/calibration-guides.ts) and by the World Editor
  * (src/viewer/viewer.ts), so the same visual represents the same concept in
  * both places.
  */
 import * as THREE from 'three'
+import { ANCHOR_RADIUS_M } from './anchor-placement.ts'
 
-export const ANCHOR_RADIUS_M = 0.35
+/** The anchor's radius (./anchor-placement.ts), re-exported where the decal's importers read it. */
+export { ANCHOR_RADIUS_M }
 const ANCHOR_RING_SEGMENTS = 48
 
 const anchorRingMaterial = new THREE.LineBasicMaterial({ color: 0x72ddd4, transparent: true, opacity: 0.85 })
@@ -120,15 +123,7 @@ export function buildAnchorPin(color: number, name: string): THREE.Group {
 
   const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 })
 
-  const baseVerts: number[] = []
-  for (let i = 0; i < ANCHOR_PIN_BASE_SEGMENTS; i++) {
-    const a0 = (i / ANCHOR_PIN_BASE_SEGMENTS) * Math.PI * 2
-    const a1 = ((i + 1) / ANCHOR_PIN_BASE_SEGMENTS) * Math.PI * 2
-    baseVerts.push(
-      Math.cos(a0) * ANCHOR_PIN_BASE_RADIUS_M, 0, Math.sin(a0) * ANCHOR_PIN_BASE_RADIUS_M,
-      Math.cos(a1) * ANCHOR_PIN_BASE_RADIUS_M, 0, Math.sin(a1) * ANCHOR_PIN_BASE_RADIUS_M,
-    )
-  }
+  const baseVerts = ringVertices(ANCHOR_PIN_BASE_RADIUS_M, ANCHOR_PIN_BASE_SEGMENTS)
   const baseGeometry = new THREE.BufferGeometry()
   baseGeometry.setAttribute('position', new THREE.Float32BufferAttribute(baseVerts, 3))
   const base = new THREE.LineSegments(baseGeometry, material.clone())

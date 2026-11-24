@@ -10,7 +10,7 @@
  *   VITE_URL=https://localhost:5174 API_URL=http://localhost:8100 \
  *     npx playwright test --project=chromium-mock mock-ui-desktop
  */
-import { test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -21,10 +21,17 @@ test.use({ viewport: { width: 1440, height: 900 } })
 async function openEditor(page: import('@playwright/test').Page): Promise<void> {
   await page.goto('/viewer.html?world=default')
   await page.locator('#viewer-canvas').waitFor({ state: 'visible', timeout: 30_000 })
-  // Wait for the world to populate the scan list, then let GLBs stream + camera fit.
-  await page.waitForFunction(() => document.querySelectorAll('.scan-item').length > 0,
-    { timeout: 30_000 }).catch(() => {})
+  // Wait for the world to populate the scan list, then let GLBs stream + camera fit. A world with no scans is the
+  // missing seed this spec's header names, and fails here by name rather than screenshotting an empty editor.
+  await page.waitForFunction(() => document.querySelectorAll('.scan-item').length > 0, undefined, { timeout: 30_000 })
   await page.waitForTimeout(3500)
+}
+
+/** Open the toolbar's Views menu, where the render mode and the GIS map live (viewer.html #view-menu). */
+async function openViews(page: import('@playwright/test').Page): Promise<void> {
+  const menu = page.locator('#view-menu')
+  if (!(await menu.evaluate((node) => (node as HTMLDetailsElement).open))) await page.click('#view-menu > summary')
+  await expect(page.locator('#view-mode-select')).toBeVisible()
 }
 
 async function tab(page: import('@playwright/test').Page, name: string): Promise<void> {
@@ -67,7 +74,7 @@ test.describe('desktop editor flow screenshots', () => {
   test('05 Splat Toolbox', async ({ page }) => {
     await openEditor(page)
     await tab(page, 'layers')
-    await page.locator('#splat-toolbox-section').scrollIntoViewIfNeeded().catch(() => {})
+    await page.locator('#splat-toolbox-section').scrollIntoViewIfNeeded()
     await page.waitForTimeout(400)
     await page.screenshot({ path: join(SHOTS, '05-splat-toolbox.png') })
   })
@@ -87,27 +94,37 @@ test.describe('desktop editor flow screenshots', () => {
     }
   })
 
+  // The render modes are the Views menu's select now (#view-mode-select), not the old #mode-* buttons, which the
+  // page no longer has: clicking them waited out the test (FN-054, FN-089).
   test('07 render modes (points, semantic)', async ({ page }) => {
     await openEditor(page)
-    await page.click('#mode-points').catch(() => {})
+    await openViews(page)
+    await page.selectOption('#view-mode-select', 'points')
+    await expect(page.locator('#view-mode-select')).toHaveValue('points')
     await page.waitForTimeout(800)
     await page.screenshot({ path: join(SHOTS, '07-render-points.png') })
-    await page.click('#mode-semantic').catch(() => {})
+    await page.selectOption('#view-mode-select', 'semantic')
+    await expect(page.locator('#view-mode-select')).toHaveValue('semantic')
     await page.waitForTimeout(800)
     await page.screenshot({ path: join(SHOTS, '08-render-semantic.png') })
-    await page.click('#mode-solid').catch(() => {})
+    await page.selectOption('#view-mode-select', 'solid')
+    await expect(page.locator('#view-mode-select')).toHaveValue('solid')
   })
 
   test('09 Measure tool', async ({ page }) => {
     await openEditor(page)
-    await page.click('#btn-measure').catch(() => {})
+    await page.click('#btn-measure')
+    await expect(page.locator('#btn-measure')).toHaveClass(/active/)
     await page.waitForTimeout(600)
     await page.screenshot({ path: join(SHOTS, '09-measure.png') })
   })
 
+  // The map is the Views menu's "GIS map" toggle (#view-toggle-map), not the old #btn-geomap.
   test('10 Geomap drawer', async ({ page }) => {
     await openEditor(page)
-    await page.click('#btn-geomap').catch(() => {})
+    await openViews(page)
+    await page.check('#view-toggle-map')
+    await expect(page.locator('#geomap-drawer')).toHaveClass(/geomap-open/)
     await page.waitForTimeout(1200)
     await page.screenshot({ path: join(SHOTS, '10-geomap.png') })
   })

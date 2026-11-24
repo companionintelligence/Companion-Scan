@@ -24,6 +24,7 @@
  *   headroom, not the choice of 1e-6.
  */
 import type { EditPatch, ScanManifest, TransformPatch, WorldProject } from './types.ts'
+import { decomposeMat4 } from './mat4.ts'
 
 /** Smallest size a scan placement may carry. Adopted, not measured (ADR 0005 rule 5). */
 export const PLACEMENT_SCALE_MIN = 0.5
@@ -167,57 +168,15 @@ export function normaliseZeros(matrix: readonly number[]): number[] {
  * unchanged, which is what makes a reset to a stored placement exact.
  */
 export function placementTransform(matrix: readonly number[]): TransformPatch {
-  const m = [...matrix] as [
-    number, number, number, number, number, number, number, number,
-    number, number, number, number, number, number, number, number,
-  ]
-  const stats = axisStats(m)
-  const sx = stats.det < 0 ? -stats.s0 : stats.s0
-  const sy = stats.s1
-  const sz = stats.s2
-  // Divide each axis by its own length to leave a pure rotation (an axis of length 0 cannot be
-  // normalised; such a matrix is not a placement, and gets the identity rotation).
-  const r = (value: number, scale: number): number => (scale === 0 ? 0 : value / scale)
-  const m11 = r(m[0], sx), m21 = r(m[1], sx), m31 = r(m[2], sx)
-  const m12 = r(m[4], sy), m22 = r(m[5], sy), m32 = r(m[6], sy)
-  const m13 = r(m[8], sz), m23 = r(m[9], sz), m33 = r(m[10], sz)
-
-  let x: number
-  let y: number
-  let z: number
-  let w: number
-  const trace = m11 + m22 + m33
-  if (trace > 0) {
-    const s = 0.5 / Math.sqrt(trace + 1)
-    w = 0.25 / s
-    x = (m32 - m23) * s
-    y = (m13 - m31) * s
-    z = (m21 - m12) * s
-  } else if (m11 > m22 && m11 > m33) {
-    const s = 2 * Math.sqrt(1 + m11 - m22 - m33)
-    w = (m32 - m23) / s
-    x = 0.25 * s
-    y = (m12 + m21) / s
-    z = (m13 + m31) / s
-  } else if (m22 > m33) {
-    const s = 2 * Math.sqrt(1 + m22 - m11 - m33)
-    w = (m13 - m31) / s
-    x = (m12 + m21) / s
-    y = 0.25 * s
-    z = (m23 + m32) / s
-  } else {
-    const s = 2 * Math.sqrt(1 + m33 - m11 - m22)
-    w = (m21 - m12) / s
-    x = (m13 + m31) / s
-    y = (m23 + m32) / s
-    z = 0.25 * s
-  }
-  const finite = [x, y, z, w].every(Number.isFinite)
+  // The one port of Matrix4.decompose (./mat4.ts). An axis of length 0 cannot be normalised; such a matrix is not a
+  // placement, and gets the identity rotation.
+  const { position, rotation, scale } = decomposeMat4(matrix)
+  const finite = [rotation.x, rotation.y, rotation.z, rotation.w].every(Number.isFinite)
   return {
     matrix: [...matrix],
-    position: { x: m[12], y: m[13], z: m[14] },
-    rotation: finite ? { x, y, z, w } : { x: 0, y: 0, z: 0, w: 1 },
-    scale: { x: sx, y: sy, z: sz },
+    position,
+    rotation: finite ? rotation : { x: 0, y: 0, z: 0, w: 1 },
+    scale,
   }
 }
 

@@ -209,11 +209,29 @@ export function shellSessionToken(): string | null {
 }
 
 /**
- * `url` with the session token as a `token` parameter, for the requests that cannot send a header:
- * media and sockets. Unchanged without a token.
+ * `url` with `token` as its one `token` parameter. Unchanged without a token. A `token` the URL
+ * already carries is replaced, not joined by a second one: the server reads the first `token` only,
+ * so a second would never be read. The rest of the query and the fragment are kept as they were, and
+ * a root-relative, absolute or WebSocket URL all work.
+ */
+export function withTokenParameter(url: string, token: string | null | undefined): string {
+  if (!token) return url
+  const hashAt = url.indexOf('#')
+  const hash = hashAt >= 0 ? url.slice(hashAt) : ''
+  const beforeHash = hashAt >= 0 ? url.slice(0, hashAt) : url
+  const queryAt = beforeHash.indexOf('?')
+  if (queryAt < 0) return `${beforeHash}?token=${encodeURIComponent(token)}${hash}`
+  const kept = beforeHash.slice(queryAt + 1).split('&').filter((part) => part !== '' && part !== 'token' && !part.startsWith('token='))
+  kept.push(`token=${encodeURIComponent(token)}`)
+  return `${beforeHash.slice(0, queryAt)}?${kept.join('&')}${hash}`
+}
+
+/**
+ * `url` with the session token as its `token` parameter, for the requests that cannot send a header:
+ * media and sockets. Unchanged without a token; a `token` already there is replaced
+ * ({@link withTokenParameter}). Which credential an editor media URL carries is chosen in
+ * src/shared/access-token.ts (`mediaUrl`).
  */
 export function withSessionToken(url: string, token: string | null): string {
-  if (!token) return url
-  const separator = url.includes('?') ? '&' : '?'
-  return `${url}${separator}token=${encodeURIComponent(token)}`
+  return withTokenParameter(url, token)
 }

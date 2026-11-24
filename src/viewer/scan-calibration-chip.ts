@@ -55,10 +55,14 @@
  *
  * ## A scan in another frame
  *
- * A scan whose tier differs from the tier the Place's stored frame was made with was not
- * aligned the same way as the scans the frame came from: a one-point frame differs from a
- * two-point one by the bearing of the baseline. The chip names that, and only that: the data
- * says the tiers differ, not by how much.
+ * A scan that is in a Place frame (`isInPlaceFrame`, ../world/frame-generations.ts) but whose tier differs from the
+ * tier the Place's stored frame was made with was not aligned the same way as the scans the frame came from: a
+ * one-point frame differs from a two-point one by the bearing of the baseline. The chip names that, and only that: the
+ * data says the tiers differ, not by how much.
+ *
+ * A scan that is in no Place frame (one-point, known distance, or a two-point scan placed by its own pair alone) gets no
+ * such line. Its row already says "not in Place frame" (./frame-banner.ts), and "Different frame from this Place" beside
+ * it claimed the opposite: that the scan is in a frame, only another one (F-25). One predicate decides both chips.
  *
  * ## Tracking interrupted
  *
@@ -80,8 +84,9 @@
  * line.
  */
 import { isIsoDateTime } from '../shared/iso-time.ts'
-import { NOT_CHECKED_SPOTS, formatCm, keptUnfittedPoints, residualsPastGates, unitsLimit } from '../world/frame-fit.ts'
-import type { ProjectSpatialFrame, ScanManifest } from '../world/types'
+import { NOT_CHECKED_SPOTS, formatCm, keptUnfittedPoints, residualsPastGates, unitsLimit, wholeCentimetres } from '../world/frame-fit.ts'
+import { isInPlaceFrame } from '../world/frame-generations.ts'
+import type { ProjectSpatialFrame, ScanManifest } from '../world/types.ts'
 
 /** The calibration fields of a `ScanManifest` the chip reads. */
 export type ChipScan = Pick<
@@ -92,14 +97,17 @@ export type ChipScan = Pick<
   | 'calibrationToleranceM'
   | 'calibratedAt'
   | 'qualitySummary'
-> & Partial<Pick<ScanManifest, 'calibrationCheckedBy' | 'calibrationFitPointsUsed' | 'calibrationFitRmsM' | 'calibrationFitMaxM' | 'scaleKind'>>
+> & Partial<Pick<ScanManifest, 'calibrationCheckedBy' | 'calibrationFitPointsUsed' | 'calibrationFitRmsM' | 'calibrationFitMaxM' | 'scaleKind' | 'calibrationOutsidePlaceFrame'>>
 
 export interface ScanCalibrationChip {
   /** Takes the place of the GPS accuracy text on the scan's meta line. */
   text: string
   /** A second visible line, for what the status does not prove. Null when there is nothing to add. */
   note: string | null
-  /** A visible line when the scan was calibrated a different way from the Place's frame. Null otherwise. */
+  /**
+   * A visible line when the scan is in a Place frame and was calibrated a different way from the Place's frame. Null
+   * otherwise, including for a scan in no Place frame, whose row says that instead.
+   */
   frameWarning: string | null
   /** The longer explanation, for hover and for assistive technology. */
   title: string
@@ -117,13 +125,10 @@ const TIER_LABEL: Record<Tier, string> = {
 
 /**
  * Whole centimetres, unsigned, as the scanner's own line reports them. Null for a number that does not exist,
- * which includes a finite one too large to convert: 1e308 metres times 100 is Infinity, and prints as such.
+ * which includes a finite one too large to convert: 1e308 metres times 100 is Infinity. The one copy is
+ * `wholeCentimetres` (../world/frame-fit.ts).
  */
-function centimetres(metres: number | null | undefined): string | null {
-  if (typeof metres !== 'number') return null
-  const cm = Math.abs(metres * 100)
-  return Number.isFinite(cm) ? cm.toFixed(0) : null
-}
+const centimetres = wholeCentimetres
 
 function finiteOrNull(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
@@ -136,14 +141,17 @@ function calibratedLine(calibratedAt: string | null | undefined): string | null 
 }
 
 /**
- * The warning for a scan whose tier is not the tier of the Place's stored frame. A frame made with a method this
- * editor has no name for (a Place file from a newer build, or one written by hand) is still a different frame, and
- * is called that: never "the undefined method".
+ * The warning for a scan in a Place frame whose tier is not the tier of the Place's stored frame. A frame made with a
+ * method this editor has no name for (a Place file from a newer build, or one written by hand) is still a different
+ * frame, and is called that: never "the undefined method". A scan that is in no Place frame (`isInPlaceFrame`) gets
+ * none: the frame chip says "not in Place frame" for it.
  */
 function frameWarningFor(
+  scan: ChipScan,
   method: Tier,
   placeMethod: ProjectSpatialFrame['method'] | null | undefined,
 ): { line: string; title: string } | null {
+  if (!isInPlaceFrame(scan)) return null
   if (typeof placeMethod !== 'string' || placeMethod.length === 0 || placeMethod === method) return null
   const placeTier = Object.hasOwn(TIER_LABEL, placeMethod)
     ? `the ${TIER_LABEL[placeMethod as Tier]} method`
@@ -226,7 +234,7 @@ export function scanCalibrationChip(
   const residual = off === null ? null : finiteOrNull(scan.calibrationResidualM)
   const tolerance = toleranceCm === null ? null : finiteOrNull(scan.calibrationToleranceM)
   const when = calibratedLine(scan.calibratedAt)
-  const warning = frameWarningFor(method, placeMethod)
+  const warning = frameWarningFor(scan, method, placeMethod)
 
   const chip = (
     parts: string[],

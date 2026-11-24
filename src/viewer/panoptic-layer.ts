@@ -45,10 +45,13 @@
  * origin — close enough to the room to look like a placement.
  */
 import * as THREE from 'three'
-import type { ScanManifest, PanopticLiftManifest } from '../world/types'
-import type { LiftReason } from '../shared/panoptic_lift'
-import { MIN_CONFIDENCE } from '../shared/panoptic_lift'
-import { scanArtifactBase } from './splat-layer'
+import type { ScanManifest, PanopticLiftManifest } from '../world/types.ts'
+import type { LiftReason } from '../shared/panoptic_lift.ts'
+import { MIN_CONFIDENCE } from '../shared/panoptic_lift.ts'
+import { scanArtifactBase } from './splat-layer.ts'
+import { artifactProblemText, readArtifact, type ArtifactRead } from './artifact-read.ts'
+import { matrix4FromRowMajor } from './splat-viewer.ts'
+import { isMatrix16 } from '../world/mat4.ts'
 
 /**
  * Viewer-side read of one lifted segment.
@@ -116,9 +119,8 @@ export function readPanopticFrame(value: unknown): PanopticFrameRead {
   const metric = (value as PanopticDetectionsSidecar | null)?.metricFrame
   if (!metric || typeof metric !== 'object') return { kind: 'same' }
   const m = (metric as { toScanFrame?: unknown }).toScanFrame
-  if (!Array.isArray(m) || m.length !== 16) return { kind: 'undeclared' }
-  if (!m.every((n) => typeof n === 'number' && Number.isFinite(n))) return { kind: 'undeclared' }
-  return { kind: 'mapped', toScanFrame: m as number[] }
+  if (!isMatrix16(m)) return { kind: 'undeclared' }
+  return { kind: 'mapped', toScanFrame: m }
 }
 
 /**
@@ -315,15 +317,7 @@ export function buildPanopticMarkers(
   // sidecar writes them; decomposing keeps `matrixAutoUpdate` true so the
   // group behaves like every other node under the scan root.
   if (frame.kind === 'mapped') {
-    const m = frame.toScanFrame
-    new THREE.Matrix4()
-      .set(
-        m[0], m[1], m[2], m[3],
-        m[4], m[5], m[6], m[7],
-        m[8], m[9], m[10], m[11],
-        m[12], m[13], m[14], m[15],
-      )
-      .decompose(group.position, group.quaternion, group.scale)
+    matrix4FromRowMajor(frame.toScanFrame).decompose(group.position, group.quaternion, group.scale)
   }
   const markers: PanopticMarker[] = []
   let unplacedCount = 0
@@ -381,13 +375,34 @@ export function buildPanopticMarkers(
  * case, not an error. `fetcher` is injectable so callers can add an access
  * token or point at a test server — same seam as `fetchScanDetectLayer`.
  */
+/**
+ * A scan's placed objects, as the manifest read answered (./artifact-read.ts, F-22): `found` with the layer, or why
+ * there is none. `not-run` is a scan the lift has not been through. `not-served` (no route for the sidecar here) and
+ * `error` are the two that used to read as `not-run` too.
+ */
+export async function readScanPanopticLayer(
+  scan: ScanManifest,
+  fetcher: (url: string) => Promise<Response> = fetch,
+): Promise<ArtifactRead<ScanPanopticLayer>> {
+  const read = await readArtifact<PanopticLiftManifest>(panopticLiftManifestUrl(scan), fetcher)
+  if (read.state !== 'found') return read
+  return { state: 'found', value: await panopticLayerFrom(scan, read.value, fetcher) }
+}
+
+/** The layer when the manifest was read, else null, whatever the reason. Kept for any importer. */
 export async function fetchScanPanopticLayer(
   scan: ScanManifest,
   fetcher: (url: string) => Promise<Response> = fetch,
 ): Promise<ScanPanopticLayer | null> {
-  const manifestResp = await fetcher(panopticLiftManifestUrl(scan))
-  if (!manifestResp.ok) return null
-  const manifest = (await manifestResp.json()) as PanopticLiftManifest
+  const read = await readScanPanopticLayer(scan, fetcher)
+  return read.state === 'found' ? read.value : null
+}
+
+async function panopticLayerFrom(
+  scan: ScanManifest,
+  manifest: PanopticLiftManifest,
+  fetcher: (url: string) => Promise<Response>,
+): Promise<ScanPanopticLayer> {
 
   const empty = new THREE.Group()
   empty.name = 'panoptic-placed-objects'
@@ -473,6 +488,11 @@ export type PlacementBlock =
   | 'failed'
   /** Determinate but none of the above — the reason line carries the detail. */
   | 'other'
+  /**
+   * Not known: the sidecar could not be read, because this server has no route for it or the read failed. Not a
+   * claim about the scan, which may well have been through the lift (F-22).
+   */
+  | 'unreadable'
 
 export interface PlacementVerdict {
   block: PlacementBlock
@@ -512,6 +532,22 @@ const BLOCK_BY_REASON: Record<string, PlacementBlock> = {
   'low-confidence': 'weak-placements',
   'depth-ambiguous': 'weak-placements',
   'multi-surface': 'weak-placements',
+}
+
+/**
+ * The verdict for a probe's answer (./artifact-read.ts): the layer's own verdict when the sidecar was read, the
+ * "nothing has looked yet" one when the lift has not run (`not-run`), and an `unreadable` one when the editor cannot
+ * tell, because this server does not serve the sidecar or the read failed (F-22). That last case used to read as
+ * "nothing has looked yet", which told the person to run a step that may have run.
+ */
+export function placementVerdictForRead(read: ArtifactRead<ScanPanopticLayer>): PlacementVerdict | null {
+  if (read.state === 'found') return placementVerdictOf(read.value)
+  if (read.state === 'not-run') return placementVerdictOf(null)
+  return {
+    block: 'unreadable',
+    headline: 'Whether things were placed in this scan is not known.',
+    detail: artifactProblemText(read, "this scan's placed-objects record") ?? '',
+  }
 }
 
 /**

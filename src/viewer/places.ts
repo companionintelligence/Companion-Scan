@@ -1,12 +1,13 @@
 import type { PlaceArea, Project, ScanManifest } from '../world/types'
-import { apiUrl } from '../shared/api-base.ts'
 import { noQueueHeaders } from '../project/frame-sync.ts'
+import { escapeHtml as esc } from './html.ts'
 import { ASSIGN_NEEDS_CONNECTION, MERGE_NEEDS_CONNECTION, assignQuestion, mergeQuestion, sendUnlessReferencesDiffer } from './frame-mismatch.ts'
 
 export class PlacesPanel {
   constructor(
     private readonly root: HTMLElement,
-    private readonly headers: () => HeadersInit,
+    /** A server path as the URL to fetch: the editor's, which adds the server's origin and the access token. */
+    private readonly url: (path: string) => string,
     private readonly selectedScan: () => ScanManifest | null,
     private readonly onChanged: () => void,
   ) {}
@@ -41,7 +42,7 @@ export class PlacesPanel {
         await this.putProject({ ...project, name: input.value.trim() })
       })
       section.querySelector<HTMLButtonElement>('[data-action="delete"]')?.addEventListener('click', async () => {
-        const response = await fetch(apiUrl(`/projects/${encodeURIComponent(project.projectId)}`), { method: 'DELETE', headers: this.headers() })
+        const response = await fetch(this.url(`/projects/${encodeURIComponent(project.projectId)}`), { method: 'DELETE' })
         if (!response.ok) alert(await response.text())
         await this.refresh()
       })
@@ -76,9 +77,9 @@ export class PlacesPanel {
         if (!sourceProjectId) return
         // Two Places with different references are refused until the person says go on (WP-08). Not queued: a refusal is for them to read.
         const answer = await sendUnlessReferencesDiffer(
-          (acceptFrameMismatch) => fetch(apiUrl(`/projects/${encodeURIComponent(project.projectId)}/merge`), {
+          (acceptFrameMismatch) => fetch(this.url(`/projects/${encodeURIComponent(project.projectId)}/merge`), {
             method: 'POST',
-            headers: { ...this.headers(), 'Content-Type': 'application/json', ...noQueueHeaders() },
+            headers: { 'Content-Type': 'application/json', ...noQueueHeaders() },
             body: JSON.stringify({ sourceProjectId, ...(acceptFrameMismatch ? { acceptFrameMismatch } : {}) }),
           }),
           (message) => confirm(mergeQuestion(message)),
@@ -124,15 +125,15 @@ export class PlacesPanel {
   }
 
   private async fetchProjects(): Promise<Project[]> {
-    const response = await fetch(apiUrl('/projects'), { headers: this.headers() })
+    const response = await fetch(this.url('/projects'))
     if (!response.ok) return []
     return await response.json() as Project[]
   }
 
   private async putProject(project: Project): Promise<void> {
-    await fetch(apiUrl(`/projects/${encodeURIComponent(project.projectId)}`), {
+    await fetch(this.url(`/projects/${encodeURIComponent(project.projectId)}`), {
       method: 'PUT',
-      headers: { ...this.headers(), 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(project),
     })
     await this.refresh()
@@ -144,9 +145,9 @@ export class PlacesPanel {
     const area = project.areas?.find(candidate => candidate.areaId === areaId) ?? null
     // A scan measured against another Place's reference is refused until the person says go on (WP-08). Not queued.
     const answer = await sendUnlessReferencesDiffer(
-      (acceptFrameMismatch) => fetch(apiUrl(`/projects/${encodeURIComponent(project.projectId)}/scans/${encodeURIComponent(scan.scanId)}`), {
+      (acceptFrameMismatch) => fetch(this.url(`/projects/${encodeURIComponent(project.projectId)}/scans/${encodeURIComponent(scan.scanId)}`), {
         method: 'PATCH',
-        headers: { ...this.headers(), 'Content-Type': 'application/json', ...noQueueHeaders() },
+        headers: { 'Content-Type': 'application/json', ...noQueueHeaders() },
         body: JSON.stringify({ floorId: area?.floorId ?? null, roomId: area?.roomId ?? null, areaId, ...(acceptFrameMismatch ? { acceptFrameMismatch } : {}) }),
       }),
       (message) => confirm(assignQuestion(message)),
@@ -157,8 +158,4 @@ export class PlacesPanel {
     }
     await this.refresh()
   }
-}
-
-function esc(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
