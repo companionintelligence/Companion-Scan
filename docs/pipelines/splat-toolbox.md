@@ -33,7 +33,7 @@ stay in `scans/sessions/<id>/`.
 | **Finish** | [@playcanvas/splat-transform](https://github.com/playcanvas/splat-transform) | `splat-finish` world job (auto-chained after train) | `<base>.sog` + `<base>.compressed.ply` (+ manifest) |
 | **Align** | Umeyama 7-DoF similarity fit (pure TS) | `splat-align` world job (**queued explicitly**) | `<base>.splat-align.manifest.json` — the metric scale |
 | **Detect** | [splat_analyzer](#detect--splat_analyzer) + OWLv2 | `splat-detect` world job | `<base>.interactions.json` (+ manifest) |
-| **Floor plan** | [`scripts/floor_plan_worker.py`](#floor-plan--walls-and-area-from-a-lingbot-map-cloud-cpu) (numpy, CPU) | `floor-plan` world job (auto-chained after `lingbot-map-reconstruct`) | `<base>.floor-plan.json` + `.svg` (+ manifest), in the cloud's own units |
+| **Floor plan** | [`scripts/floor_plan_worker.py`](#floor-plan--walls-and-area-from-a-lingbot-map-cloud-cpu) (numpy, CPU) | `floor-plan` world job (auto-chained after `lingbot-map-reconstruct`) | `<base>.floor-plan.json` + `.svg` (+ manifest), fitted to the capture's AR poses: metres when they were |
 | **Ingest video** | ffmpeg (+ adaptive fps + blur gate) | `scripts/ingest-video.mjs` / `POST /ingest-video` | keyframe session (pose-less) |
 | **Ingest photos** | sharp/jimp (+ EXIF ordering + blur gate) | `scripts/ingest-photos.mjs` / `POST /ingest-photos` | keyframe session(s) (pose-less) |
 
@@ -350,8 +350,14 @@ area. `server/floor_plan.ts` runs `scripts/floor_plan_worker.py` (the standard
 library and numpy: no torch, no GPU) on the session's
 `lingbot-map.point-cloud.ply`, with the interpreter `LINGBOT_MAP_PYTHON` names:
 
-1. a height histogram → floor and ceiling heights (the up axis is taken to be
-   the cloud's narrowest extent),
+0. first, the fit: the cloud is carried into the capture's own AR session
+   frame (metric when the runtime is, and Y up), by the similarity that maps
+   LingBot-Map's camera poses (`lingbot-map.poses.json`) onto the same
+   keyframes' AR poses (`keyframes.jsonl`), paired by file name
+   (`fitCloudToSession`). The rotation comes from the cameras' orientations,
+   so a capture walked in a straight line still fixes it; the scale and the
+   offset come from their centres,
+1. a height histogram along that frame's Y → floor and ceiling heights,
 2. the wall band (floor + 0.4 to ceiling − 0.3) rasterised into a 2 cm
    occupancy grid (wider cells past 4096 a side),
 3. a morphological clean-up, then seeded-RANSAC line fits → wall segments,
@@ -359,38 +365,55 @@ library and numpy: no torch, no GPU) on the session's
 4. an outline: a rectangle from the outermost snapped walls, else the convex
    hull of the wall cells → area, perimeter, ceiling height.
 
-> **Not metres unless the cloud was.** A LingBot-Map reconstruction is in its
-> own units, like every stage above Align, and nothing here scales it. The
-> plan's numbers are in those units, the drawing's labels carry no unit, and
-> the worker's thresholds (the 2 cm grid, the band margins, the 0.5 shortest
-> wall) are written for a metric cloud, so on another they scale with its
-> units. The field names (`areaM2`, `lengthM`, `ceilingHeightM`) are the
-> worker's. Derived, not survey-grade, either way: every file says so in its
-> `disclaimer`.
+The plan is drawn looking down, right-handed (x to the right, −z up the page),
+so it is the room seen from above and not its mirror image.
+
+> **Metres when the capture measured them.** A LingBot-Map reconstruction is
+> in its own frame and units, so the fit above is what gives the plan a scale
+> and an up axis, and the worker's thresholds (the 2 cm grid, the band
+> margins, the 0.5 shortest wall) their meaning. One unit of the result is one
+> unit of the capture's AR session, which the scan's `scaleKind` describes:
+> `metric` (WebXR, ARCore, ARKit) gives `units: "m"`, `estimated-metric`
+> (8th Wall absolute scale) gives `"m-estimated"`, and `arbitrary` or no
+> record gives `"session"`, whose numbers are not known to be metres. The
+> drawing's labels say "m" only for the first two. Derived, not survey-grade,
+> either way: every file says so in its `disclaimer`.
+>
+> A capture with no AR poses (a photo or video ingest) has nothing to fit to,
+> so its floor plan is a `skipped` job that says why, rather than a plan drawn
+> on a guess. So is one whose poses the cloud does not fit: fewer than four
+> keyframes posed by both, cameras that did not move, orientations more than
+> 10° RMS apart, or centres more than 0.25 (in the session's units) RMS apart
+> after the fit, the line splat-align uses.
 
 Deterministic (a fixed RNG seed, no timestamps in the outputs). On a synthetic
 4 × 3 box room of 3.65 million points it took 0.6 s on a development machine;
 PR #273 reported about 4 s on a 3.65-million-point garden capture, which it
-called a degenerate outdoor scene (32 walls, closed by convex hull). The
-files land beside the scan, and go with it when it is deleted:
+called a degenerate outdoor scene (32 walls, closed by convex hull). On
+synthetic captures whose LingBot frame is shrunk to 0.3 and tilted 35°, the
+4 × 3 m room comes out at 11.9 m² and a 1.2 × 6 m hallway at 7.1 m², both with a
+2.5 m ceiling. The files land beside the scan, and go with it when it is
+deleted:
 
 - `<base>.floor-plan.json`: `walls: [{x1, y1, x2, y2, lengthM}]`,
   `rooms: [{polygon, areaM2, method}]`, `floorZ`/`ceilingZ`/`ceilingHeightM`,
-  `areaM2`, `perimeterM`, `wallCount`, `gridCellM`, `upAxis` and `disclaimer`.
+  `areaM2`, `perimeterM`, `wallCount`, `gridCellM`, `upAxis`, `units`,
+  `frame` (`scan`: the AR session frame) and `disclaimer`.
 - `<base>.floor-plan.svg`: the plan drawn: walls, a mint room fill, the
-  longest walls' lengths, a grid and a scale bar of one unit, a north-arrow
-  placeholder (the plan is not geo-referenced) and the disclaimer. Served
-  under a policy that lets it run nothing.
+  longest walls' lengths, a grid and a scale bar of one metre (or one unit),
+  a north-arrow placeholder (the plan is not geo-referenced) and the
+  disclaimer. Served under a policy that lets it run nothing.
 - `<base>.floor-plan.manifest.json`: `status` (`ok`/`skipped`/`error`),
-  `areaM2`, `wallCount`, `roomCount`, `ceilingHeightM`, `disclaimer`, params
+  `areaM2`, `wallCount`, `roomCount`, `ceilingHeightM`, `disclaimer`, `units`,
+  `frame`, `alignment` (paired keyframes, scale, the two residuals), params
   and timing (`FloorPlanManifest`, `src/world/manifests.ts`). This is what the
   editor and report tooling read.
 
 **In the editor:** Layers → **Floor plan** shows the selected scan's numbers,
-the drawing, **Download SVG** and **Download JSON**, and **Generate floor
-plan**, which queues the job. It is a section of the Layers tab, not a scene
-layer: the plan is in the LingBot-Map cloud's own frame and units, not the
-scan's, so it adds no Scene layers row and no View menu switch.
+with their unit, the drawing, **Download SVG** and **Download JSON**, and
+**Generate floor plan**, which queues the job. It is a section of the Layers
+tab, not a scene layer: nothing draws the plan in the 3D scene yet, so it adds
+no Scene layers row and no View menu switch.
 
 **When:** automatically after every successful `lingbot-map-reconstruct` of
 the scan (kill switch: `FLOORPLAN_AUTO=0`), from the editor, or through the
@@ -405,7 +428,9 @@ jobs API.
     -H 'content-type: application/json' \
     -d '{"type":"floor-plan","scanId":"scan-<id>","payload":{"minWallM":0.5}}'
   ```
-- **CLI (box-side smoke):**
+- **CLI (box-side smoke):** without `--transform` the worker draws the cloud in
+  its own frame and units, guessing the up axis as the narrowest extent (a
+  hallway defeats that guess); the job always passes the fit.
   ```sh
   "${LINGBOT_MAP_PYTHON:-python3}" scripts/floor_plan_worker.py \
     --ply scans/sessions/<sess>/lingbot-map.point-cloud.ply \
@@ -414,17 +439,21 @@ jobs API.
 
 **Env:** `LINGBOT_MAP_PYTHON` (the interpreter; it needs numpy, which the
 LingBot-Map venv has), `FLOORPLAN_AUTO` (default on; `0` stops the chain),
-`FLOORPLAN_MIN_WALL_M` (shorter segments are dropped, in the cloud's units,
+`FLOORPLAN_MIN_WALL_M` (shorter segments are dropped, in the plan's units,
 default 0.5; a job's `payload.minWallM` wins), `FLOORPLAN_WORKER` (another copy
 of the script), `FLOORPLAN_TIMEOUT_MS` (default 600000). No cloud, a cloud its
-LingBot run judged degenerate, an interpreter that is not found, a missing
-worker or an interpreter without numpy → a `skipped` manifest with the fix; a
-worker crash, a timeout or a run that wrote no plan → an `error` manifest with
-the stderr tail. A failed run leaves the plan already there. `GET /capabilities`
-lists the stage as `floor-plan`, on the `lingbot-map-python` row.
+LingBot run judged degenerate, a capture the cloud cannot be fitted to, an
+interpreter that is not found, a missing worker or an interpreter without
+numpy → a `skipped` manifest with the fix; a worker crash, a timeout or a run
+that wrote no plan → an `error` manifest with the stderr tail. A failed run
+leaves the plan files already there; its manifest records the failure, as
+splat-detect's does. `GET /capabilities` lists the stage as `floor-plan`, on
+the `lingbot-map-python` row.
 
-**Limits:** one outline per scan; the up axis is a guess that a long, narrow
-room can defeat; the north arrow is a placeholder.
+**Limits:** one outline per scan; a capture with no AR poses gets no plan; the
+units are metres only when the capture's AR runtime measured in metres; the
+north arrow is a placeholder; the fit and the plan have run on synthetic
+captures only, not on a real LingBot-Map cloud.
 
 ---
 

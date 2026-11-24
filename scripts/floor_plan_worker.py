@@ -11,21 +11,34 @@ frame, closes a room polygon where possible, and emits a JSON plan + an SVG.
 Everything is deterministic (fixed RNG seed, no timestamps in outputs) so the
 driver tests can re-run it and diff. Output is derived, not survey-grade.
 
-Units: every length is in the point cloud's own units. A LingBot-Map cloud is
-not known to be metric (server/lingbot-map/lingbot_map.ts measures it "in the
-worker's own units"), so the lengths are metres only when the cloud was. The
-field names (`lengthM`, `areaM2`, ...) and the thresholds below (the 2 cm grid,
-the 0.4 m / 0.3 m band margins, `--min-wall-m`) are written for a metric
-cloud; on a cloud in other units they scale with it. The SVG's labels carry no
-unit for that reason, and the disclaimer says so.
+Frame and units. A LingBot-Map cloud is in LingBot's own frame: not known to be
+metric, and not gravity-aligned. The thresholds below (the 2 cm grid, the
+0.4 m / 0.3 m band margins, `--min-wall-m`) are written in metres, and the
+height histogram needs to know which way is up. So the job driver
+(server/floor_plan.ts) fits the cloud to the capture's own AR camera poses
+first and passes that similarity as `--transform`, with `--up-axis y` (the AR
+session's frame is Y-up) and `--units` saying what one AR unit is worth:
+
+  m            metres: the AR runtime's contract (WebXR, ARCore, ARKit)
+  m-estimated  approximate metres: the runtime's own estimate (8th Wall absolute)
+  session      the AR session's units, not known to be metres
+  cloud        no transform: the point cloud's own units (a direct CLI run)
+
+The field names (`lengthM`, `areaM2`, ...) are kept for every unit; `units` in
+the plan says which one they are in, and the SVG's labels say "m" only for the
+first two.
+
+The plan view is drawn looking down the up axis, right-handed (the horizontal
+pair a, b with a x b = up), so it is not a mirror image of the room.
 
 Exit codes (server/floor_plan.ts reads them):
   0  plan written
-  2  bad input: an unreadable PLY or too few points
+  2  bad input: an unreadable PLY, too few points, or a bad --transform
   3  numpy is not installed for this interpreter: the job is skipped, not failed
 
 Usage:
   floor_plan_worker.py --ply cloud.ply --out-json plan.json --out-svg plan.svg
+                       [--transform m00,m01,...,m33] [--units m|m-estimated|session|cloud]
                        [--min-wall-m 0.5] [--grid-cell-m 0.02] [--up-axis auto]
 """
 import argparse
@@ -39,7 +52,13 @@ except ImportError as exc:  # pragma: no cover - environment-dependent
     print(f"floor-plan: numpy is not installed for this interpreter ({exc})", file=sys.stderr)
     sys.exit(3)
 
-DISCLAIMER = "derived, not survey-grade; in the point cloud's own units"
+DISCLAIMERS = {
+    "m": "derived, not survey-grade; metres, from the capture's AR tracking",
+    "m-estimated": "derived, not survey-grade; approximate metres, from the AR runtime's scale estimate",
+    "session": "derived, not survey-grade; in the AR session's own units, which are not known to be metres",
+    "cloud": "derived, not survey-grade; in the point cloud's own units",
+}
+METRIC_UNITS = ("m", "m-estimated")
 RNG_SEED = 12345
 AXES = ("x", "y", "z")
 EXIT_BAD_INPUT = 2
@@ -108,11 +127,44 @@ def read_lingbot_ply(path):
 # ── Geometry helpers ──────────────────────────────────────────────────────────
 
 def pick_up_axis(xyz, requested):
-    """The vertical axis of an indoor scan has the smallest robust span."""
+    """The axis named, else a guess: the vertical axis of an indoor scan has the smallest robust span.
+
+    The guess fails on a room narrower than it is tall (a hallway), which is why the job passes the axis.
+    """
     if requested in AXES:
         return AXES.index(requested)
     spans = [np.percentile(xyz[:, i], 98) - np.percentile(xyz[:, i], 2) for i in range(3)]
     return int(np.argmin(spans))
+
+
+def parse_transform(text):
+    """A row-major 4x4 from 16 comma-separated numbers, as a (3x3, 3) pair. ValueError if it is not one."""
+    parts = [p for p in text.split(",") if p.strip()]
+    if len(parts) != 16:
+        raise ValueError(f"--transform needs 16 numbers, got {len(parts)}")
+    m = np.array([float(p) for p in parts], dtype=np.float64).reshape(4, 4)
+    if not np.isfinite(m).all():
+        raise ValueError("--transform has a number that is not finite")
+    if not np.allclose(m[3], [0.0, 0.0, 0.0, 1.0]):
+        raise ValueError("--transform's last row must be 0 0 0 1")
+    if not abs(np.linalg.det(m[:3, :3])) > 1e-12:
+        raise ValueError("--transform collapses the cloud")
+    return m[:3, :3], m[:3, 3]
+
+
+# The horizontal pair (a, b) for each up axis, with a x b = up, so a plan drawn with a to the right and b up the
+# page is the room seen from above, not its mirror image. Each entry: (index, sign) for a, then for b.
+PLAN_AXES = {
+    0: ((1, 1.0), (2, 1.0)),   # up x: y x z = x
+    1: ((0, 1.0), (2, -1.0)),  # up y: x x (-z) = y
+    2: ((0, 1.0), (1, 1.0)),   # up z: x x y = z
+}
+
+
+def to_plan(points, up):
+    """Points (n x 3) to plan coordinates (n x 2), looking down the up axis."""
+    (ia, sa), (ib, sb) = PLAN_AXES[up]
+    return np.stack([sa * points[:, ia], sb * points[:, ib]], axis=1)
 
 
 def estimate_floor_ceiling(heights, bin_m=0.02):
@@ -366,8 +418,10 @@ def close_room(walls, theta0, cells_m):
 
 # ── SVG rendering ─────────────────────────────────────────────────────────────
 
-def render_svg(walls, rooms, bounds):
-    scale = 100.0  # px per unit of the cloud
+def render_svg(walls, rooms, bounds, units="cloud"):
+    metric = units in METRIC_UNITS
+    unit_suffix = " m" if metric else ""
+    scale = 100.0  # px per unit of the plan
     pad = 60.0
     (u0, v0), (u1, v1) = bounds
     w_px = (u1 - u0) * scale + 2 * pad
@@ -405,7 +459,7 @@ def render_svg(walls, rooms, bounds):
         parts.append(f'<line x1="{X(w["x1"]):.1f}" y1="{Y(w["y1"]):.1f}" '
                      f'x2="{X(w["x2"]):.1f}" y2="{Y(w["y2"]):.1f}" '
                      f'stroke="#23262b" stroke-width="6" stroke-linecap="round"/>')
-    # Dimension labels on the longest walls. No unit: the cloud's units are not known to be metres.
+    # Dimension labels on the longest walls. "m" only when the units are metres (METRIC_UNITS).
     for w in sorted(walls, key=lambda w: -w["lengthM"])[:4]:
         mx = (X(w["x1"]) + X(w["x2"])) / 2
         my = (Y(w["y1"]) + Y(w["y2"])) / 2
@@ -414,21 +468,22 @@ def render_svg(walls, rooms, bounds):
             ang += 180
         parts.append(f'<text class="dimension" x="{mx:.1f}" y="{my - 10:.1f}" font-size="15" fill="#37414b" '
                      f'text-anchor="middle" transform="rotate({ang:.1f} {mx:.1f} {my:.1f})">'
-                     f'{w["lengthM"]:.2f}</text>')
+                     f'{w["lengthM"]:.2f}{unit_suffix}</text>')
     # North arrow placeholder (orientation is unreferenced until geo-aligned)
     nx, ny = w_px - 34, 44
     parts.append(f'<g stroke="#37414b" fill="#37414b">'
                  f'<line x1="{nx}" y1="{ny + 16}" x2="{nx}" y2="{ny - 10}" stroke-width="2"/>'
                  f'<polygon points="{nx - 5},{ny - 8} {nx + 5},{ny - 8} {nx},{ny - 20}"/>'
                  f'<text x="{nx}" y="{ny + 32}" font-size="13" text-anchor="middle" stroke="none">N</text></g>')
-    # Scale bar: one unit of the cloud
+    # Scale bar: one unit of the plan
     sx, sy = pad, h_px - 24
     parts.append(f'<line x1="{sx}" y1="{sy}" x2="{sx + scale}" y2="{sy}" stroke="#23262b" stroke-width="3"/>')
     parts.append(f'<line x1="{sx}" y1="{sy - 5}" x2="{sx}" y2="{sy + 5}" stroke="#23262b" stroke-width="2"/>')
     parts.append(f'<line x1="{sx + scale}" y1="{sy - 5}" x2="{sx + scale}" y2="{sy + 5}" stroke="#23262b" stroke-width="2"/>')
-    parts.append(f'<text x="{sx + scale / 2:.1f}" y="{sy - 8}" font-size="13" fill="#37414b" text-anchor="middle">1 unit</text>')
+    parts.append(f'<text x="{sx + scale / 2:.1f}" y="{sy - 8}" font-size="13" fill="#37414b" text-anchor="middle">'
+                 f'{"1 m" if metric else "1 unit"}</text>')
     parts.append(f'<text x="{w_px - 12:.1f}" y="{h_px - 12:.1f}" font-size="11" fill="#9aa3ab" '
-                 f'text-anchor="end">{DISCLAIMER}</text>')
+                 f'text-anchor="end">{DISCLAIMERS[units]}</text>')
     parts.append("</svg>")
     return "\n".join(parts)
 
@@ -443,6 +498,10 @@ def main():
     ap.add_argument("--min-wall-m", type=float, default=0.5)
     ap.add_argument("--grid-cell-m", type=float, default=0.02)
     ap.add_argument("--up-axis", choices=["auto", "x", "y", "z"], default="auto")
+    ap.add_argument("--transform", default=None,
+                    help="row-major 4x4, 16 comma-separated numbers, applied to every point first")
+    ap.add_argument("--units", choices=sorted(DISCLAIMERS), default="cloud",
+                    help="what one unit of the (transformed) cloud is worth")
     args = ap.parse_args()
 
     try:
@@ -453,9 +512,15 @@ def main():
     if xyz.shape[0] < 100:
         print(f"floor-plan: too few points ({xyz.shape[0]})", file=sys.stderr)
         sys.exit(EXIT_BAD_INPUT)
+    if args.transform is not None:
+        try:
+            rot, trans = parse_transform(args.transform)
+        except ValueError as exc:
+            print(f"floor-plan: {exc}", file=sys.stderr)
+            sys.exit(EXIT_BAD_INPUT)
+        xyz = xyz @ rot.T + trans
 
     up = pick_up_axis(xyz, args.up_axis)
-    horiz = [i for i in range(3) if i != up]
     heights = xyz[:, up]
     floor_z, ceil_z = estimate_floor_ceiling(heights)
     band_lo, band_hi = floor_z + 0.4, ceil_z - 0.3
@@ -467,7 +532,7 @@ def main():
     walls_out, rooms_out = [], []
     grid_cell = args.grid_cell_m
     if band.shape[0] >= 100:
-        occ, origin, grid_cell = occupancy_grid(band[:, horiz], args.grid_cell_m)
+        occ, origin, grid_cell = occupancy_grid(to_plan(band, up), args.grid_cell_m)
         occ = morph_cleanup(occ)
         cells = np.argwhere(occ)
         if cells.shape[0] >= 30:
@@ -499,7 +564,10 @@ def main():
     plan = {
         "schemaVersion": 1,
         "tool": "floor-plan-worker",
-        "disclaimer": DISCLAIMER,
+        "disclaimer": DISCLAIMERS[args.units],
+        "units": args.units,
+        # 'scan': moved into the capture's AR session frame by --transform; 'cloud': LingBot's own frame.
+        "frame": "scan" if args.transform is not None else "cloud",
         "upAxis": AXES[up],
         "gridCellM": round(grid_cell, 4),
         "floorZ": round(floor_z, 3),
@@ -524,7 +592,7 @@ def main():
         bounds = ((min(xs) - 0.3, min(ys) - 0.3), (max(xs) + 0.3, max(ys) + 0.3))
     else:
         bounds = ((0.0, 0.0), (1.0, 1.0))
-    svg = render_svg(walls_out, rooms_out, bounds)
+    svg = render_svg(walls_out, rooms_out, bounds, args.units)
 
     with open(args.out_json, "w") as f:
         json.dump(plan, f, indent=2)
@@ -532,7 +600,7 @@ def main():
     with open(args.out_svg, "w") as f:
         f.write(svg)
         f.write("\n")
-    print(f"floor-plan: {len(walls_out)} walls, area {area}, ceiling {plan['ceilingHeightM']} (point-cloud units)")
+    print(f"floor-plan: {len(walls_out)} walls, area {area}, ceiling {plan['ceilingHeightM']} (units: {args.units})")
 
 
 if __name__ == "__main__":

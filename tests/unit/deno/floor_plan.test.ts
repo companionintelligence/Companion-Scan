@@ -1,11 +1,16 @@
 /**
  * The floor-plan driver (server/floor_plan.ts) and its worker (scripts/floor_plan_worker.py), ported from PR #273.
  *
- * Through the `_spawn` seam: the argument order, every skip (no cloud, a degenerate cloud, no interpreter, no worker,
- * no numpy) and every error (a crash, a timeout, no plan, a plan that is not JSON), and that a failed run leaves a plan
- * already beside the scan alone. Then the real worker, twice: once with numpy shadowed by a module that will not
- * import, which must come back as a skip and not a failure, and once on a synthetic 4 x 3 box room, which must come
- * back within 10% of the truth. The real runs need the interpreter the job would use (`floorPlanPython`); without one
+ * The fit to the capture (`fitCloudToSession`): it finds the similarity a synthetic capture was built with, from a
+ * loop and from a hallway's straight line, and refuses a capture with no AR poses, too few of them, cameras that did
+ * not move, orientations that disagree, and a camera path that does not match.
+ *
+ * Through the `_spawn` seam: the argument order, every skip (no cloud, a degenerate cloud, no fit, no interpreter, no
+ * worker, no numpy) and every error (a crash, a timeout, no plan, a plan that is not JSON), and that a failed run
+ * leaves a plan already beside the scan alone. Then the real worker: with numpy shadowed by a module that will not
+ * import, which must come back as a skip and not a failure; and on synthetic captured rooms whose LingBot frame is
+ * shrunk to 0.3 and tilted 35°, which must come back in metres within 10% of the truth, the right way up, not mirrored,
+ * and a hallway as a hallway. The real runs need the interpreter the job would use (`floorPlanPython`); without one
  * they are ignored, and `deno test` lists them as ignored.
  *
  * Also the job's place in the rules table and the chain predicate (server/world/job_request.ts).
@@ -14,13 +19,19 @@ import { assert, assertEquals, assertFalse, assertStringIncludes } from 'jsr:@st
 
 import {
   buildFloorPlanArgs,
+  fitCloudToSession,
+  floorPlanUnitsFor,
   isValidSessionDir,
+  MAX_ORIENTATION_RESIDUAL_DEG,
+  NO_AR_POSES_REMEDIATION,
   NO_NUMPY_REMEDIATION,
   resolveParams,
   runFloorPlan,
+  scaleKindOfScan,
   summarizePlan,
 } from '../../../server/floor_plan.ts'
 import { numFromEnv } from '../../../server/run_with_deadline.ts'
+import { type KeyframeRecord, readKeyframes, readLingbotPoses } from '../../../server/splat/splat_train_dataset.ts'
 import {
   floorPlanFollowsReconstruct,
   REQUEST_ONLY_JOB_TYPES,
@@ -28,7 +39,14 @@ import {
   WORLD_JOB_RULES,
 } from '../../../server/world/job_request.ts'
 import { jobRequiresScan } from '../../../src/world/job-types.ts'
-import { floorPlanPython, ROOM, TINY_PLY, writeBoxRoomPly } from './floor_plan_fixtures.ts'
+import {
+  expectedArFromLingbot,
+  floorPlanPython,
+  LINGBOT_TILTED,
+  ROOM,
+  TINY_PLY,
+  writeCapturedRoom,
+} from './floor_plan_fixtures.ts'
 
 const PYTHON = await floorPlanPython()
 /** Any file that exists and is executable, to stand in for an interpreter the `_spawn` seam never runs. */
@@ -37,14 +55,39 @@ const NEVER = () => {
   throw new Error('spawn must not be reached')
 }
 
-/** A temp dir holding a server-shaped session dir (`sess-…`), with `ply` written as its LingBot-Map cloud. */
-async function makeSession(ply?: Uint8Array, lingbotManifest?: unknown): Promise<{ tmp: string; session: string }> {
+/**
+ * A temp dir holding a server-shaped session dir (`sess-…`), with `ply` written as its LingBot-Map cloud, and the
+ * keyframes' AR and LingBot-Map poses of a captured room, so the fit passes (`poses: false` leaves them out).
+ */
+async function makeSession(
+  ply?: Uint8Array,
+  lingbotManifest?: unknown,
+  poses = true,
+): Promise<{ tmp: string; session: string }> {
   const tmp = await Deno.makeTempDir({ prefix: 'floor-plan-test-' })
   const session = `${tmp}/sess-floorplan-test`
   await Deno.mkdir(session, { recursive: true })
   if (ply) await Deno.writeFile(`${session}/lingbot-map.point-cloud.ply`, ply)
   if (lingbotManifest) await Deno.writeTextFile(`${session}/lingbot-map.manifest.json`, JSON.stringify(lingbotManifest))
+  if (poses) await writeCapturedRoom(session, { write: { cloud: false } })
   return { tmp, session }
+}
+
+/** The AR and LingBot-Map poses of a synthetic capture, as the fit reads them from disk. */
+async function capturedPoses(opts: Parameters<typeof writeCapturedRoom>[1] = {}) {
+  const dir = await Deno.makeTempDir({ prefix: 'floor-plan-fit-' })
+  try {
+    await writeCapturedRoom(dir, { ...opts, write: { cloud: false } })
+    return { lingbot: await readLingbotPoses(dir), records: await readKeyframes(dir) }
+  } finally {
+    await Deno.remove(dir, { recursive: true })
+  }
+}
+
+function assertClose(actual: number[], expected: number[], tol: number, what: string) {
+  assertEquals(actual.length, expected.length, what)
+  const worst = Math.max(...actual.map((v, i) => Math.abs(v - expected[i]!)))
+  assert(worst <= tol, `${what}: off by ${worst}`)
 }
 
 function outputs(tmp: string) {
@@ -88,6 +131,80 @@ Deno.test('buildFloorPlanArgs assembles the worker CLI in a stable order', () =>
       '--min-wall-m', '0.5',
     ],
   )
+  const fitted = buildFloorPlanArgs('/w.py', '/c.ply', '/p.json', '/p.svg', {
+    minWallM: 0.5,
+    transform: [2, 0, 0, 1, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1],
+    units: 'm',
+  })
+  assertEquals(fitted.slice(-6), ['--transform', '2,0,0,1,0,2,0,0,0,0,2,0,0,0,0,1', '--up-axis', 'y', '--units', 'm'])
+})
+
+// ── The fit to the capture ──────────────────────────────────────────────────
+
+Deno.test('fitCloudToSession finds the similarity a capture was built with, from a loop and from a straight line', async () => {
+  for (const path of ['loop', 'line'] as const) {
+    const { lingbot, records } = await capturedPoses({ path })
+    const fit = fitCloudToSession(lingbot, records)
+    assert(fit.ok, `${path}: ${!fit.ok && fit.reason}`)
+    assertClose(fit.alignment.transform, expectedArFromLingbot(LINGBOT_TILTED), 1e-9, `${path}: the transform`)
+    assert(Math.abs(fit.alignment.scale - 1 / LINGBOT_TILTED.scale) < 1e-9, `${path}: scale ${fit.alignment.scale}`)
+    assertEquals(fit.alignment.pairedFrames, 8)
+    assert(fit.alignment.residual < 1e-9)
+    assert(fit.alignment.orientationResidualDeg < 1e-3)
+  }
+})
+
+Deno.test('fitCloudToSession refuses a capture with no AR poses, and says what fixes it', async () => {
+  const { lingbot, records } = await capturedPoses({ noArPoses: true })
+  const fit = fitCloudToSession(lingbot, records)
+  assertFalse(fit.ok)
+  assertStringIncludes(fit.reason, 'no AR poses')
+  assertEquals(fit.remediation, NO_AR_POSES_REMEDIATION)
+  assertFalse(fitCloudToSession(lingbot, []).ok, 'no keyframes.jsonl at all')
+})
+
+Deno.test('fitCloudToSession refuses fewer than four keyframes posed by both, and a reconstruction with no poses', async () => {
+  const { lingbot, records } = await capturedPoses()
+  const three = fitCloudToSession(lingbot, records.slice(0, 3))
+  assertFalse(three.ok)
+  assertStringIncludes(three.reason, 'only 3 keyframes')
+  const none = fitCloudToSession(null, records)
+  assertFalse(none.ok)
+  assertStringIncludes(none.reason, 'only 0 keyframes')
+})
+
+Deno.test('fitCloudToSession refuses cameras that turned on the spot: nothing gives the scale', async () => {
+  const { lingbot, records } = await capturedPoses()
+  const still = records.map((r): KeyframeRecord => ({ ...r, pose: { ...r.pose, position: { x: 1, y: 1.4, z: 1 } } }))
+  const fit = fitCloudToSession(lingbot, still)
+  assertFalse(fit.ok)
+  assertStringIncludes(fit.reason, 'did not move')
+})
+
+Deno.test('fitCloudToSession refuses orientations that disagree, and a camera path that does not match', async () => {
+  const { lingbot, records } = await capturedPoses()
+  // Half the AR cameras turned a quarter turn the reconstruction did not see.
+  const turned = records.map((r, k): KeyframeRecord => k % 2 ? r : { ...r, pose: { ...r.pose, rotation: { x: 0, y: Math.SQRT1_2, z: 0, w: Math.SQRT1_2 } } })
+  const twisted = fitCloudToSession(lingbot, turned)
+  assertFalse(twisted.ok)
+  assertStringIncludes(twisted.reason, `limit ${MAX_ORIENTATION_RESIDUAL_DEG}°`)
+  // One AR camera a metre off where the reconstruction put it.
+  const moved = records.map((r, k): KeyframeRecord =>
+    k === 3 ? { ...r, pose: { ...r.pose, position: { ...r.pose!.position, x: (r.pose!.position!.x ?? 0) + 1 } } } : r
+  )
+  const off = fitCloudToSession(lingbot, moved)
+  assertFalse(off.ok)
+  assertStringIncludes(off.reason, 'does not match the AR one')
+})
+
+Deno.test('the units follow what the scan\'s AR session is worth', () => {
+  assertEquals(floorPlanUnitsFor('metric'), 'm')
+  assertEquals(floorPlanUnitsFor('estimated-metric'), 'm-estimated')
+  assertEquals(floorPlanUnitsFor('arbitrary'), 'session')
+  assertEquals(floorPlanUnitsFor(undefined), 'session', 'a scan that recorded nothing is not taken to be metric')
+  assertEquals(scaleKindOfScan({ scaleKind: 'metric' }), 'metric')
+  assertEquals(scaleKindOfScan({ scaleMode: 'responsive-unconfigured' }), 'arbitrary')
+  assertEquals(scaleKindOfScan({}), undefined)
 })
 
 Deno.test('isValidSessionDir is the shared check: a server session id, nothing else', () => {
@@ -152,6 +269,22 @@ Deno.test('runFloorPlan skips a cloud its own LingBot run judged degenerate, as 
   }
 })
 
+Deno.test('runFloorPlan skips a cloud it cannot fit to the capture, rather than draw it on a guess', async () => {
+  const { tmp, session } = await makeSession(TINY_PLY, undefined, false)
+  try {
+    // A photo or video ingest: keyframes, and LingBot-Map poses, but no AR poses.
+    await writeCapturedRoom(session, { write: { cloud: false }, noArPoses: true })
+    const result = await runFloorPlan({ sessionDir: session, ...outputs(tmp), python: RUNNABLE, _spawn: NEVER })
+    assertEquals(result.status, 'skipped')
+    assertEquals(result.exitCode, 0)
+    assertStringIncludes(result.manifest.skippedReason ?? '', 'cannot fit the point cloud to the capture: no AR poses')
+    assertEquals(result.manifest.remediation, NO_AR_POSES_REMEDIATION)
+    assertEquals((await readManifest(tmp)).status, 'skipped')
+  } finally {
+    await Deno.remove(tmp, { recursive: true })
+  }
+})
+
 Deno.test('runFloorPlan skips when the interpreter is not found, with the remediation GET /capabilities prints', async () => {
   const { tmp, session } = await makeSession(TINY_PLY)
   try {
@@ -201,6 +334,7 @@ Deno.test('runFloorPlan lands the plan JSON and SVG and writes an ok manifest wi
       python: RUNNABLE,
       minWallM: 0.7,
       provenance: { sessionId: 'sess-floorplan-test', scanId: 'scan-3' },
+      scaleKind: 'metric',
       _spawn: async (bin, args) => {
         spawns.push({ bin, args })
         await Deno.writeTextFile(args[args.indexOf('--out-json') + 1]!, JSON.stringify(PLAN))
@@ -216,6 +350,10 @@ Deno.test('runFloorPlan lands the plan JSON and SVG and writes an ok manifest wi
     assertEquals(args[args.indexOf('--ply') + 1], `${session}/lingbot-map.point-cloud.ply`)
     assertEquals(args[args.indexOf('--min-wall-m') + 1], '0.7')
     assertFalse(args[args.indexOf('--out-json') + 1]!.startsWith(tmp), 'the worker writes into its own temp dir')
+    // The fit rides along: the similarity into the AR frame, Y up, and the scan's units.
+    assertClose(args[args.indexOf('--transform') + 1]!.split(',').map(Number), expectedArFromLingbot(LINGBOT_TILTED), 1e-9, 'transform')
+    assertEquals(args[args.indexOf('--up-axis') + 1], 'y')
+    assertEquals(args[args.indexOf('--units') + 1], 'm')
     assertEquals(result.areaM2, 12)
     assertEquals(result.wallCount, 4)
     assertEquals(await Deno.readTextFile(`${tmp}/scan.floor-plan.json`), JSON.stringify(PLAN))
@@ -233,6 +371,12 @@ Deno.test('runFloorPlan lands the plan JSON and SVG and writes an ok manifest wi
     assertEquals(manifest.sessionId, 'sess-floorplan-test')
     assertEquals(manifest.scanId, 'scan-3')
     assertEquals((manifest.params as { minWallM: number }).minWallM, 0.7)
+    assertEquals(manifest.units, 'm')
+    assertEquals(manifest.frame, 'scan')
+    const alignment = manifest.alignment as { pairedFrames: number; scale: number; residual: number }
+    assertEquals(alignment.pairedFrames, 8)
+    assert(Math.abs(alignment.scale - 1 / LINGBOT_TILTED.scale) < 1e-9, `scale ${alignment.scale}`)
+    assertFalse('transform' in alignment, 'the manifest records the fit, not the matrix')
     assert(typeof (manifest.timing as { elapsedMs?: number } | undefined)?.elapsedMs === 'number')
   } finally {
     await Deno.remove(tmp, { recursive: true })
@@ -377,21 +521,22 @@ Deno.test({
 })
 
 Deno.test({
-  name: 'the real worker draws a 4 x 3 box room within 10% of the truth, and says what its numbers are',
+  name: 'the real worker draws a captured 4 x 3 room in metres, the right way up and not mirrored, from a tilted 0.3x cloud',
   ignore: !PYTHON?.numpy,
   fn: async () => {
-    const { tmp, session } = await makeSession()
+    const { tmp, session } = await makeSession(undefined, undefined, false)
     try {
-      const count = await writeBoxRoomPly(`${session}/lingbot-map.point-cloud.ply`)
-      assert(count >= 49000, `fixture should be ~50k points, got ${count}`)
+      const { points } = await writeCapturedRoom(session)
+      assert(points >= 49000, `fixture should be ~50k points, got ${points}`)
 
       const result = await runFloorPlan({
         sessionDir: session,
         ...outputs(tmp),
         python: PYTHON!.path,
         provenance: { sessionId: 'sess-floorplan-test', scanId: 'scan-room' },
+        scaleKind: 'metric',
       })
-      assertEquals(result.status, 'ok', `worker failed: ${result.manifest.error ?? result.log}`)
+      assertEquals(result.status, 'ok', `worker failed: ${result.manifest.error ?? result.manifest.skippedReason ?? result.log}`)
 
       const plan = JSON.parse(await Deno.readTextFile(`${tmp}/scan.floor-plan.json`))
       // Four dominant walls (RANSAC may split a wall across gaps, so up to two more).
@@ -399,17 +544,26 @@ Deno.test({
       const truth = ROOM.width * ROOM.depth
       assert(Math.abs(plan.areaM2 - truth) <= truth * 0.1, `areaM2 ${plan.areaM2} not within 10% of ${truth}`)
       assert(Math.abs(plan.ceilingHeightM - ROOM.height) <= 0.1, `ceilingHeightM ${plan.ceilingHeightM}`)
-      assertEquals(plan.upAxis, 'z')
-      assertEquals(plan.disclaimer, 'derived, not survey-grade; in the point cloud\'s own units')
+      assert(Math.abs(plan.floorZ) <= 0.05, `the floor is at the AR frame's y = 0, not the ceiling: floorZ ${plan.floorZ}`)
+      assertEquals(plan.upAxis, 'y')
+      assertEquals(plan.frame, 'scan')
+      assertEquals(plan.units, 'm')
+      assertEquals(plan.disclaimer, 'derived, not survey-grade; metres, from the capture\'s AR tracking')
       assertEquals(plan.rooms[0]?.method, 'rectilinear', 'a box room closes as a rectangle')
+      // Seen from above with x to the right and -z up the page: the room spans x 0..4 and z 0..3, so v runs -3..0.
+      // A mirrored plan would put it at v 0..3.
+      const polygon = plan.rooms[0].polygon as number[][]
+      const us = polygon.map((p) => p[0]!)
+      const vs = polygon.map((p) => p[1]!)
+      assert(Math.abs(Math.min(...us)) < 0.1 && Math.abs(Math.max(...us) - ROOM.width) < 0.1, `u ${Math.min(...us)}..${Math.max(...us)}`)
+      assert(Math.abs(Math.min(...vs) + ROOM.depth) < 0.1 && Math.abs(Math.max(...vs)) < 0.1, `v ${Math.min(...vs)}..${Math.max(...vs)}`)
 
-      // A standalone SVG, with dimension labels that carry no unit, a one-unit scale bar and the disclaimer.
+      // A standalone SVG, with labels in metres, a one-metre scale bar and the disclaimer.
       const svg = await Deno.readTextFile(`${tmp}/scan.floor-plan.svg`)
       assertStringIncludes(svg, '<svg xmlns="http://www.w3.org/2000/svg"')
       assertStringIncludes(svg, '</svg>')
-      assert(/<text class="dimension"[^>]*>\d+\.\d\d<\/text>/.test(svg), 'a dimension label is a bare number')
-      assertFalse(/ m<\/text>/.test(svg), 'no label claims metres')
-      assertStringIncludes(svg, '>1 unit</text>')
+      assert(/<text class="dimension"[^>]*>\d+\.\d\d m<\/text>/.test(svg), 'a dimension label is in metres')
+      assertStringIncludes(svg, '>1 m</text>')
       assertStringIncludes(svg, plan.disclaimer)
       assertFalse(/<script|on[a-z]+=/i.test(svg), 'the drawing runs nothing')
 
@@ -418,6 +572,7 @@ Deno.test({
       assertEquals(manifest.wallCount, plan.wallCount)
       assertEquals(manifest.areaM2, plan.areaM2)
       assertEquals(manifest.disclaimer, plan.disclaimer)
+      assertEquals(manifest.units, 'm')
       assertEquals((manifest.params as { python: string }).python, PYTHON!.path)
 
       // Deterministic: a second run over the same cloud writes the same plan.
@@ -426,9 +581,52 @@ Deno.test({
         outputJsonPath: `${tmp}/again.floor-plan.json`,
         outputSvgPath: `${tmp}/again.floor-plan.svg`,
         python: PYTHON!.path,
+        scaleKind: 'metric',
       })
       assertEquals(again.status, 'ok')
       assertEquals(await Deno.readTextFile(`${tmp}/again.floor-plan.json`), await Deno.readTextFile(`${tmp}/scan.floor-plan.json`))
+    } finally {
+      await Deno.remove(tmp, { recursive: true })
+    }
+  },
+})
+
+Deno.test({
+  name: 'the real worker draws a 1.2 m hallway walked in a straight line as a hallway, not as one of its walls',
+  ignore: !PYTHON?.numpy,
+  fn: async () => {
+    const { tmp, session } = await makeSession(undefined, undefined, false)
+    const hall = { width: 1.2, depth: 6, height: 2.5 }
+    try {
+      await writeCapturedRoom(session, { room: hall, path: 'line' })
+      const result = await runFloorPlan({ sessionDir: session, ...outputs(tmp), python: PYTHON!.path, scaleKind: 'metric' })
+      assertEquals(result.status, 'ok', `worker failed: ${result.manifest.error ?? result.manifest.skippedReason ?? result.log}`)
+      const plan = JSON.parse(await Deno.readTextFile(`${tmp}/scan.floor-plan.json`))
+      const truth = hall.width * hall.depth
+      assertEquals(plan.upAxis, 'y')
+      assert(Math.abs(plan.areaM2 - truth) <= truth * 0.1, `areaM2 ${plan.areaM2} not within 10% of ${truth}`)
+      assert(Math.abs(plan.ceilingHeightM - hall.height) <= 0.1, `ceilingHeightM ${plan.ceilingHeightM}`)
+    } finally {
+      await Deno.remove(tmp, { recursive: true })
+    }
+  },
+})
+
+Deno.test({
+  name: 'a capture in an AR session\'s own units gets a plan with no metre symbol in it',
+  ignore: !PYTHON?.numpy,
+  fn: async () => {
+    const { tmp, session } = await makeSession(undefined, undefined, false)
+    try {
+      await writeCapturedRoom(session)
+      const result = await runFloorPlan({ sessionDir: session, ...outputs(tmp), python: PYTHON!.path, scaleKind: 'arbitrary' })
+      assertEquals(result.status, 'ok', `worker failed: ${result.manifest.error ?? result.manifest.skippedReason ?? result.log}`)
+      assertEquals(result.manifest.units, 'session')
+      assertStringIncludes(result.manifest.disclaimer ?? '', 'not known to be metres')
+      const svg = await Deno.readTextFile(`${tmp}/scan.floor-plan.svg`)
+      assert(/<text class="dimension"[^>]*>\d+\.\d\d<\/text>/.test(svg), 'a dimension label is a bare number')
+      assertFalse(/ m<\/text>/.test(svg), 'no label claims metres')
+      assertStringIncludes(svg, '>1 unit</text>')
     } finally {
       await Deno.remove(tmp, { recursive: true })
     }

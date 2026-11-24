@@ -53,13 +53,14 @@ test.describe('Floor plan: served files, the jobs API, and the editor\'s Floor p
     const manifest = await request.get(apiPath(`/scans/${SCAN_BASE}.floor-plan.manifest.json`))
     expect(manifest.ok(), 'manifest 200').toBeTruthy()
     expect(manifest.headers()['content-type']).toContain('application/json')
-    const body = await manifest.json() as { status: string; areaM2?: number; wallCount?: number; planPath?: string; svgPath?: string; disclaimer?: string }
+    const body = await manifest.json() as { status: string; areaM2?: number; wallCount?: number; planPath?: string; svgPath?: string; disclaimer?: string; units?: string }
     expect(body.status).toBe('ok')
     expect(body.areaM2).toBe(12)
     expect(body.wallCount).toBe(4)
     expect(body.planPath).toBe(`${SCAN_BASE}.floor-plan.json`)
     expect(body.svgPath).toBe(`${SCAN_BASE}.floor-plan.svg`)
-    expect(body.disclaimer).toContain('own units')
+    expect(body.disclaimer).toContain('metres, from the capture\'s AR tracking')
+    expect(body.units).toBe('m')
 
     const plan = await request.get(apiPath(`/scans/${SCAN_BASE}.floor-plan.json`))
     expect(plan.ok(), 'plan 200').toBeTruthy()
@@ -67,7 +68,7 @@ test.describe('Floor plan: served files, the jobs API, and the editor\'s Floor p
     const planBody = await plan.json() as { walls: unknown[]; rooms: unknown[]; disclaimer: string }
     expect(planBody.walls.length).toBe(4)
     expect(planBody.rooms.length).toBe(1)
-    expect(planBody.disclaimer).toBe('derived, not survey-grade; in the point cloud\'s own units')
+    expect(planBody.disclaimer).toBe('derived, not survey-grade; metres, from the capture\'s AR tracking')
 
     const svg = await request.get(apiPath(`/scans/${SCAN_BASE}.floor-plan.svg`))
     expect(svg.ok(), 'svg 200').toBeTruthy()
@@ -111,8 +112,8 @@ test.describe('Floor plan: served files, the jobs API, and the editor\'s Floor p
     await section.locator('summary').click()
 
     await expect(page.locator('#floor-plan-status')).toContainText('Floor plan ready', { timeout: 20_000 })
-    await expect(page.locator('#floor-plan-status')).toContainText('metres only if it was metric')
-    await expect(page.locator('#floor-plan-stats')).toHaveText('4 walls · 1 room · area 12.0 · ceiling 2.50 (point-cloud units)')
+    await expect(page.locator('#floor-plan-status')).toContainText('fitted to the capture\'s AR poses for scale and up, in metres')
+    await expect(page.locator('#floor-plan-stats')).toHaveText('4 walls · 1 room · area 12.0 m² · ceiling 2.50 m')
 
     const preview = page.locator('#floor-plan-preview-img')
     await expect(page.locator('#floor-plan-preview')).toBeVisible()
