@@ -1,5 +1,5 @@
 > **Type:** Docs / device test
-> **Wave:** 16-xr-device-targets
+> **Wave:** 17-xr-device-targets
 > **Branch:** `docs/aura-first-run`
 > **Commit style:** `docs(aura): summary`
 > **Design:** the first-run list in `docs/targets/xreal-aura.md`

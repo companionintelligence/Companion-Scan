@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Companion Scan: locar.js spike</title>
+    <style>
+      /* Black on html only. A body background would paint over locar's camera video, which sits at z-index -100. */
+      html {
+        background: #000;
+      }
+      html, body {
+        margin: 0;
+        height: 100%;
+        color: #fff;
+        font: 14px/1.4 system-ui, -apple-system, sans-serif;
+        overflow: hidden;
+      }
+      body {
+        background: transparent;
+      }
+      #locar-status {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        padding: 8px 12px;
+        background: rgba(0, 0, 0, 0.55);
+        /* Above locar's canvas, which it sets to z-index 999. */
+        z-index: 1000;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="locar-status" role="status" aria-live="polite">locar.js spike: starting</div>
+    <script type="module" src="/src/ar/locar-spike.ts"></script>
+  </body>
+</html>

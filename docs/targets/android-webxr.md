@@ -12,7 +12,7 @@ what its documents state, and what the first run there must find out:
 - PICO OS 6: PICO documents WebXR in its WebView.
 - Android XR and PICO OS 5: their documents do not say.
 
-Plan: [wave 16](../factory/16-xr-device-targets/README.md).
+Plan: [wave 17](../factory/17-xr-device-targets/README.md).
 
 ## What it is
 
@@ -37,7 +37,7 @@ Plan: [wave 16](../factory/16-xr-device-targets/README.md).
 - **Everything else is the default shell:** the `applicationId` `com.companionintelligence.scan`,
   the sign-in return, the permissions, the Scan server setting, and the portrait lock.
 - **No device's own libraries, permissions or manifest entries.** Native runtimes for Android XR
-  and for PICO are tickets of their own (wave 16, 0003 and 0005).
+  and for PICO are tickets of their own (wave 17, 0003 and 0005).
 
 ## Status
 

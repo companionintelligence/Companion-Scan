@@ -1,5 +1,5 @@
 > **Type:** Native / Android
-> **Wave:** 16-xr-device-targets
+> **Wave:** 17-xr-device-targets
 > **Branch:** `feat/android-xr-runtime`
 > **Commit style:** `feat(android-xr): summary`
 > **Design:** to be settled from 0002's results, and recorded in an ADR before any code

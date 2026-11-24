@@ -1,4 +1,7 @@
-# Wave 16 — XR device targets: XREAL Aura and PICO
+# Wave 17 — XR device targets: XREAL Aura and PICO
+
+Numbered 17 because wave 15 (AR runtime targets, #283) and wave 16 (the Spatial Editor, #298)
+merged first, on the same day.
 
 On 2026-11-24 the owner asked for two build targets, each with a pointer to the maker's developer
 documentation:

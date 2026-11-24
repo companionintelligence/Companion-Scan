@@ -2304,6 +2304,11 @@ async function main() {
     sample: probeTapReader(tapSampler),
   })
 
+  // ?debug=tag / ?debug=tagneg: the DX8 instruments for the printed marker (./ar/fiducial/tag-debug), loaded only when a flag asks for them.
+  if (hasDebugFlag('tag') || hasDebugFlag('tagneg')) {
+    void import('./ar/fiducial/tag-debug').then((kit) => kit.installTagDebug({ provider, runtime: probeRuntimeLabel(provider, use8thWall) }))
+  }
+
   overlay.setStatus('Move the camera to start tracking…')
 
   // A scan in a Place streams camera frames by default (D15), but only on a device that has agreed to it.

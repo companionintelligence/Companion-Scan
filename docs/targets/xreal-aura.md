@@ -12,7 +12,7 @@ two ways onto it, and neither has run on one yet:
    [Web, WebXR](web-webxr.md) target, and it needs no build. Google documents WebXR for Chrome on
    Android XR, so this is the capture path to try first ([below](#the-capture-path-to-try-first-chrome)).
 
-Plan: [wave 16](../factory/16-xr-device-targets/README.md).
+Plan: [wave 17](../factory/17-xr-device-targets/README.md).
 
 ## The device, as its documentation describes it
 
@@ -50,7 +50,7 @@ is, how to make it, and what was checked. These are the reasons for it on this d
 - **No Android XR libraries, permissions or manifest entries.** Jetpack XR, the
   `android.window.PROPERTY_XR_ACTIVITY_START_MODE` property, and permissions such as
   `android.permission.HEAD_TRACKING` belong to a native XR runtime: that is
-  [ticket 0003](../factory/16-xr-device-targets/0003-native-android-xr-capture.md). Google's pages give no
+  [ticket 0003](../factory/17-xr-device-targets/0003-native-android-xr-capture.md). Google's pages give no
   `uses-feature` names for Android XR, so the build declares none.
 
 ## The capture path to try first: Chrome
@@ -97,7 +97,7 @@ session.
 There is no checklist for this device yet. This list is what the first run should write down, with
 the date, back into [Status](#status) and into
 [AR_DEVICE_SUPPORT.md](../operations/AR_DEVICE_SUPPORT.md). The answers decide
-[ticket 0003](../factory/16-xr-device-targets/0003-native-android-xr-capture.md).
+[ticket 0003](../factory/17-xr-device-targets/0003-native-android-xr-capture.md).
 
 1. **The platform.** Record what no page gives:
    - `adb shell getprop ro.build.version.release`, `ro.build.version.sdk` and `ro.product.model`;
@@ -132,7 +132,7 @@ the date, back into [Status](#status) and into
 ## Known gaps
 
 - **No capture in the APK** unless Android XR's WebView has WebXR. A native capture path is
-  [ticket 0003](../factory/16-xr-device-targets/0003-native-android-xr-capture.md), and it waits on checks
+  [ticket 0003](../factory/17-xr-device-targets/0003-native-android-xr-capture.md), and it waits on checks
   1, 3 and 4. It would use Jetpack XR's device pose, behind `android.permission.HEAD_TRACKING`,
   and the glasses' camera if apps can open it.
 - **Not run:** nothing has been installed on an Aura, and no XR emulator has run here. Linux is

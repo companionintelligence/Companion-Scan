@@ -74,9 +74,10 @@ test('V3-6: a Place switch clears the LingBot stats, splat stats and panoptic re
 })
 
 test('V3-7: a failed share-link fetch from a Place that was left does not write the new Place panel', () => {
+  // The panel is the SHARE menu since wave 16 (src/viewer/share-menu.ts): its failure write is apply(null, ...).
   assert.match(
     fnBody('loadShareLinks'),
-    /\} catch \(error\) \{\n(?:\s*\/\/[^\n]*\n)?\s*if \(gen !== worldGen\) return\n\s*target\.innerHTML = /,
+    /\} catch \(error\) \{\n(?:\s*\/\/[^\n]*\n)?\s*if \(gen !== worldGen\) return\n\s*shareMenu\.apply\(null, /,
   )
 })
 

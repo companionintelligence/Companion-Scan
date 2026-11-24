@@ -1,12 +1,14 @@
 /**
  * docs/testing/DEVICE_TESTING.md, the arms of Procedure 3 (DX1), the handedness column of Procedure 2 (DX2), and
- * Procedures 6 (DX6) and 8 (DX8), held to the code they send a person to.
+ * Procedure 6 (DX6), held to the code they send a person to. Procedure 8 (DX8) arrived with the printed-marker reader it
+ * measures, and tests/unit/node/fiducial_device_doc.test.ts holds it to that code; this file keeps the probe run Procedure 8
+ * leaves for the marker step, and the rule on debug flags that every procedure here is held to.
  *
  * A device procedure is only as good as its instrument. One that names a scale string the build never writes, a log line
  * the build never prints, or a debug flag that does not exist sends someone to read a number that is not there, on a day
- * that needs a phone and a tape. Procedures 6 and 8 are written ahead of the packages whose readouts they use (WP-17b,
- * WP-14a, WP-14b), so a second rule holds them honest: anything the build does not write yet is marked "after WP-xx" in the
- * same table row or paragraph, and anything unmarked has to exist. The existing test, device_testing_probe.test.ts, holds
+ * that needs a phone and a tape. Procedure 6 is written ahead of the package whose readouts it uses (WP-17b), so a second
+ * rule holds it honest: anything the build does not write yet is marked "after WP-xx" in the same table row or paragraph,
+ * and anything unmarked has to exist. The existing test, device_testing_probe.test.ts, holds
  * every `line.<field>` to the probe line; this one holds the rest.
  *
  * That the procedures are followable is for a person with a phone. These tests hold what a person cannot check afterwards:
@@ -38,6 +40,7 @@ import {
   type AnchorCapability,
 } from '../../../src/ar/anchors.ts'
 import { formatPoseDelta, poseDelta } from '../../../src/capture/pose-delta.ts'
+import { PROBE_KEYS } from '../../../src/capture/probe-log.ts'
 import { FRAME_JUMP_TRANSLATION_M, FRAME_LOG_MAX, describeTracking } from '../../../src/ar/frame-epoch.ts'
 import { asScaleMode } from '../../../src/world/scale-mode.ts'
 import { DEFAULT_SEPARATION_TOLERANCE_M, MIN_POINT_SEPARATION_M, transformPoint, twoPointToProjectTransform } from '../../../src/world/geo.ts'
@@ -80,7 +83,7 @@ const flat = (text: string): string => text.replace(/\s+/g, ' ')
 const PROC2 = '### Procedure 2 — probe-point protocol (DX2)'
 const PROC3 = '### Procedure 3 — units tape test (DX1)'
 const PROC6 = '### Procedure 6 — WebXR runtimes: resets, tracking loss and anchors (DX6)'
-const PROC8 = '### Procedure 8 — fiducial feasibility (DX8)'
+const PROC8 = '### Procedure 8 — reading a printed marker (DX8)'
 
 // ── DX1: the arms ────────────────────────────────────────────────────────────────────────────
 
@@ -333,10 +336,8 @@ test('Procedure 6: the holds, the walk, the distances and the buffer it names ag
   // The 60 s hold of step 2 is the 60 s its pass line judges, and the 60 s and 10 min of step 8 are the ones its pass line judges.
   assert.ok(steps[1]![1]!.endsWith('Then hold still for 60 s') && steps[1]![2]!.includes('`Δ` at the end of the 60 s') && steps[1]![3]!.startsWith('No line in the 60 s.'))
   assert.ok(steps[7]![1]!.includes('stay still for 60 s, then walk step 4\'s route') && steps[7]![2]!.includes('at 60 s, at each return and at 10 min') && steps[7]![3]!.includes('at 10 min (the drift flag WP-17b adopts)'))
-  // The walk is 10 minutes with a return every 2 to 3 minutes, here and in Procedure 8's negative-image run, and a ten-minute walk at 10 Hz is the 6,000 frames it counts.
+  // The walk is 10 minutes with a return every 2 to 3 minutes.
   assert.ok(steps[3]![1]!.includes('Walk 10 minutes through three rooms, back to A with the same facing every 2 to 3 minutes'))
-  assert.ok(stepCells(PROC8)[8]![1]!.startsWith('Negative images. Walk 10 minutes through three rooms, as in step 4 of Procedure 6'))
-  assert.equal(10 * 60 * 10, 6_000)
   // Mark E lies beyond the 8 m of Google's guidance and mark D within it, which is what the comparison is for.
   const e = Number(/mark E (\d+) m from A/.exec(steps[7]![1]!)![1])
   const d = Number(/mark D within (\d+) m/.exec(steps[7]![1]!)![1])
@@ -382,16 +383,16 @@ test('Procedure 6 step 1: the feature check answers as the document says on a ph
   assert.ok(anchors.includes('requestPersistentHandle'))
 })
 
-test('every log line Procedures 3, 6 and 8 name is one the build prints, at the level the document says', () => {
+test('every log line Procedures 3 and 6 name is one the build prints, at the level the document says', () => {
   const sources = ['src/ar/webxr.ts', 'src/ar/eighthwall.ts', 'src/main.ts'].map(read).join('\n')
-  const text = flat([PROC3, PROC6, PROC8].map(section).join('\n'))
+  const text = flat([PROC3, PROC6].map(section).join('\n'))
   const named = new Set<string>()
   for (const match of text.matchAll(/`(\[(?:webxr|8thwall|scan)\](?:\[aspect\])?[^`]*)`/g)) {
     // Cut at the first placeholder, colon or bracketed value: what is left is the text the build writes verbatim.
     const prefix = match[1]!.split(/ <|: | \(<|\(/)[0]!.trim()
     if (prefix !== '[webxr]' && prefix !== '[8thwall]') named.add(prefix)
   }
-  const expected = ['[webxr] frame discontinuity', '[webxr] trackingStatus', '[8thwall] trackingStatus', '[8thwall] Camera status', '[8thwall] frame discontinuity', '[8thwall][aspect]', '[scan] tracking degraded', '[scan] tracking recovered']
+  const expected = ['[webxr] frame discontinuity', '[webxr] trackingStatus', '[8thwall] trackingStatus', '[8thwall] Camera status', '[8thwall] frame discontinuity', '[scan] tracking degraded', '[scan] tracking recovered']
   for (const line of expected) assert.ok(named.has(line), `the procedures no longer name ${line}`)
   for (const line of named) assert.ok(sources.includes(line), `the document names the log line ${line}, which the build does not print`)
   // The levels: the relay carries console.warn under `remote` alone and console.log only under `verbose`.
@@ -400,11 +401,9 @@ test('every log line Procedures 3, 6 and 8 name is one the build prints, at the 
   assert.match(sources, /console\.warn\(recordingPaused/)
   assert.match(sources, /console\.log\('\[webxr\] trackingStatus:'/)
   assert.match(sources, /console\.log\('\[8thwall\] trackingStatus:'/)
-  assert.match(sources, /console\.log\('\[8thwall\]\[aspect\]'/)
   const proc6 = flat(section(PROC6))
   assert.ok(proc6.includes('Lines the page writes with `console.warn` reach `npm run logs:watch` and `scans/client-logs.jsonl` under `remote` alone'))
   assert.ok(proc6.includes('Add `verbose` only to see every status change (`[webxr] trackingStatus: ...`)'))
-  assert.ok(flat(section(PROC8)).includes('`[8thwall][aspect]` line (`console.log`, so it needs `remote,verbose`)'))
 })
 
 test('the fields of a discontinuity Procedure 6 names, and the causes, are the ones the build writes', () => {
@@ -616,7 +615,7 @@ test('Procedure 6 steps that name a constant give the value the build has, and t
 })
 
 test('the steps a procedure refers to by number are steps it has', () => {
-  for (const [heading, steps] of [[PROC6, 13], [PROC8, 9]] as const) {
+  for (const [heading, steps] of [[PROC6, 13]] as const) {
     const body = flat(section(heading))
     for (const match of body.matchAll(/\bsteps? (\d+)(?: (?:to|and) (\d+))?/g)) {
       for (const number of [match[1], match[2]]) {
@@ -627,104 +626,17 @@ test('the steps a procedure refers to by number are steps it has', () => {
   // Procedure 6 borrows Procedure 1's figures, and says in the same words what it uses them for: a loop target there, a line for one loss here.
   assert.ok(flat(section('### Procedure 1 — within-session loop drift')).includes('< 10 cm translational and < 5° rotational'))
   assert.ok(flat(section(PROC6)).includes("These are this step's own figures (adopted: Procedure 1's targets for a whole walk, used here for one loss)") && flat(section(PROC6)).includes('(targets of 10 cm and 5°, not thresholds)'))
-  // Procedure 8 sends the negative-image run on the walk of Procedure 6's step 4, and step 8 repeats step 6's tape check.
-  assert.ok(/^\| 4 \| Close the tab and open the page again[^|]*Walk 10 minutes through three rooms/m.test(section(PROC6)))
-  assert.ok(flat(section(PROC8)).includes('as in step 4 of Procedure 6'))
-  assert.ok(/^\| 6 \| Focal factor and projection\. Put the phone's camera exactly 2\.000 m from the tag's centre by tape/m.test(section(PROC8)))
-  assert.ok(flat(section(PROC8)).includes('Repeat step 6\'s 2.000 m tape check'))
 })
 
 // ── DX8 ──────────────────────────────────────────────────────────────────────────────────────
+// Procedure 8 came with the printed-marker reader it measures, and fiducial_device_doc.test.ts holds it to that code: its lines,
+// its parameters, its commands and its arithmetic. What stays here is the run it leaves for the marker step, which is not built,
+// with the construction this file held when that run was a step of the plan Procedure 8 replaced; and the debug-flag rule.
 
-test('Procedure 8: the pixel-side ranges the document gives are f x size / side at f = 720 px, and the other figures agree with each other', () => {
-  const text = flat(section(PROC8))
-  const f = 720
-  const range = (sizeMm: number, sidePx: number): string => ((f * sizeMm) / 1000 / sidePx).toFixed(1)
-  assert.ok(text.includes('a 40 pixel side is 2.9 m for the 160 mm tag, 3.6 m for the 200 mm tag and 4.1 m for the 230 mm tag'))
-  assert.deepEqual([range(160, 40), range(200, 40), range(230, 40)], ['2.9', '3.6', '4.1'])
-  assert.ok(text.includes('read for pose from a side of 40 pixels and for identity only from 24'))
-  assert.ok(text.includes('f × size ÷ range'))
-  // 2% of the focal length is 6 cm at 3 m, and the factor band is the same 2%.
-  assert.ok(Math.abs(0.02 * 3 - 0.06) < 1e-12 && text.includes('2% of focal length is 6 cm at 3 m') && text.includes('between 0.98 and 1.02'))
-  // The 10 Hz budget is 100 ms a frame.
-  assert.equal(1000 / 10, 100)
-  assert.ok(text.includes('at most 100 ms a frame, the budget at 10 Hz'))
-})
-
-test('Procedure 8: the totals of candidate quads the document asks for each show a false-accept rate under 1e-6 at 95%, and none rounds the wrong way', () => {
-  const text = flat(section(PROC8))
-  // One-sided 95% upper limit of a Poisson count: the lambda at which P(X <= k) falls to 0.05.
-  const upper = (k: number): number => {
-    const cdf = (lambda: number): number => {
-      let term = Math.exp(-lambda)
-      let sum = term
-      for (let i = 1; i <= k; i++) {
-        term *= lambda / i
-        sum += term
-      }
-      return sum
-    }
-    let lo = 0
-    let hi = 50
-    for (let i = 0; i < 200; i++) {
-      const mid = (lo + hi) / 2
-      if (cdf(mid) > 0.05) lo = mid
-      else hi = mid
-    }
-    return lo
-  }
-  assert.ok(Math.abs(upper(0) - 3) < 0.005, `with none seen the limit is ${upper(0)} events, the rule of three`)
-  // The quads needed to show a rate of 1e-6 with k detections, and the totals the document gives for k = 0, 1, 2 and 3 detections.
-  const needed = [0, 1, 2, 3].map((k) => upper(k) / 1e-6)
-  const stated = [
-    Number(/at least ([\d,]+) candidate quads/.exec(text)![1]!.replace(/,/g, '')),
-    Number(/One detection moves the total to ([\d.]+) million/.exec(text)![1]) * 1e6,
-    Number(/two to ([\d.]+) million/.exec(text)![1]) * 1e6,
-    Number(/would need ([\d.]+) million quads to show under 1e-6/.exec(text)![1]) * 1e6,
-  ]
-  stated.forEach((total, k) => {
-    assert.ok(total >= needed[k]!, `${total} quads with ${k} detections gives an upper limit of ${upper(k) / total} per quad, above 1e-6: the total is rounded down (it needs ${needed[k]})`)
-    assert.ok(total <= needed[k]! * 1.01, `${total} quads with ${k} detections is more than 1% above the ${needed[k]} it needs`)
-  })
-  assert.ok(text.includes('under 3 ÷ *n* at 95%'))
-  // The cap is the document's own and says so, and the walks it quotes are the quads over the quads a walk gives (3 million for 17 walks).
-  assert.ok(text.includes('A third detection **fails** the in-house family whatever the total: that is a cap this page adopts so that the run ends, not part of the 95% arithmetic'))
-  assert.doesNotMatch(text, /three in 3 million is a rate of 1e-6/, 'a point estimate is not the reason for the cap')
-  assert.equal(Math.round(stated[3]! / (3_000_000 / 17)), 44)
-  assert.ok(text.includes('about 44 walks'))
-  // 100,000 images at 6,000 frames a walk (ten minutes at 10 Hz) is 17 walks.
-  const framesPerWalk = 10 * 60 * 10
-  assert.equal(framesPerWalk, 6_000)
-  assert.equal(Math.ceil(100_000 / framesPerWalk), 17)
-  assert.ok(text.includes('Three million is about 100,000 negative images: 17 walks of ten minutes at 10 Hz, 6,000 frames each'))
-})
-
-test('Procedure 8: the grid has the cells the document counts, and its floor marks are where the formula puts them', () => {
-  const text = flat(section(PROC8))
-  // 3 ranges of angle by 4 ranges for the wall tag, plus the 4 ranges of the floor tag: 16 cells for the 200 mm tag, and the two other sizes in the same cells.
-  const wall = 3 * 4
-  const floor = 4
-  assert.equal(wall + floor, 16)
-  assert.equal(2 * (wall + floor), 32)
-  assert.ok(text.includes('The minimum is 16 cells') && text.includes('(12 cells)') && text.includes('(4)') && text.includes('(32 more)'))
-  // "r sin a along the wall from the tag's foot and r cos a out from it": the mark is r from the tag and a off the normal.
-  assert.ok(text.includes("*r* sin *a* along the wall from the tag's foot and *r* cos *a* out from it"))
-  for (const r of [1, 2, 3, 5]) {
-    for (const a of [10, 40, 60]) {
-      const along = r * Math.sin((a * Math.PI) / 180)
-      const out = r * Math.cos((a * Math.PI) / 180)
-      assert.ok(Math.abs(Math.hypot(along, out) - r) < 1e-12, `the mark at ${r} m and ${a} degrees is ${r} m from the tag`)
-      assert.ok(Math.abs((Math.atan2(along, out) * 180) / Math.PI - a) < 1e-9, `and ${a} degrees off its normal`)
-    }
-  }
-  // The pose-grade range of the 200 mm tag is 3.6 m face-on, and the 5 m cells lie beyond it.
-  assert.ok((720 * 0.2) / 40 < 5)
-  assert.ok(text.includes('hold the phone 1.4 m above each'))
-})
-
-test('Procedure 8 step 3: the probe mark is laid with two tapes, and the arithmetic of the construction, its tolerance and the tap are what the document says', () => {
-  const cells = stepCells(PROC8)[2]!
-  const [, action, writeDown, pass] = cells
+test('Procedure 8 leaves the tag-defined frame for later, and the probe run it keeps is laid with two tapes whose arithmetic, tolerance and tap are what the document says', () => {
+  const later = flat(section('#### Not measured here'))
+  assert.ok(section(PROC8).includes('#### Not measured here'), 'the run for later is part of Procedure 8')
+  assert.ok(later.includes('which is a later package. Nothing here measures them'), 'it says that nothing measures it yet')
   // F is the floor point under the tag's centre, Q is 3 m along the foot of the wall, P is where a tape from F (5.000 m) crosses one from Q (sqrt(34) m).
   const crossing = (rF: number, rQ: number): { x: number; y: number } => {
     const along = 3
@@ -734,7 +646,7 @@ test('Procedure 8 step 3: the probe mark is laid with two tapes, and the arithme
   const exact = crossing(5, Math.sqrt(34))
   assert.ok(Math.abs(exact.x) < 1e-12 && Math.abs(exact.y - 5) < 1e-12, 'the two tapes cross 0 m across and 5 m out along the normal')
   assert.equal(Math.sqrt(34).toFixed(3), '5.831')
-  assert.ok(action!.includes('Q is 3.000 m from F along the foot of the wall, and P is where a tape from F reading 5.000 m crosses a tape from Q reading 5.831 m (the square root of 34)'))
+  assert.ok(later.includes('Q is 3.000 m from F along the foot of the wall, and P is where a tape from F reading 5.000 m crosses a tape from Q reading 5.831 m (the square root of 34)'))
   // Each tape read to 5 mm, in the worst combination: the mark is within 2 cm sideways and 0.5 cm (and a hair) out, as the document says.
   let sideways = 0
   let out = 0
@@ -748,171 +660,34 @@ test('Procedure 8 step 3: the probe mark is laid with two tapes, and the arithme
   assert.ok(sideways <= 0.02, `the mark can be ${sideways} m off sideways`)
   assert.ok(sideways > 0.015, 'and the 2 cm the document states is not a figure far above what the tapes give')
   assert.ok(out <= 0.0055, `the mark can be ${out} m off along the normal`)
-  assert.ok(pass!.includes('P is laid to within 2 cm sideways and 0.5 cm out with each tape read to 5 mm, and that comes out of the 10 cm'))
-  // The 10 cm is the pass line, and a 1 degree aim error at 5 m would be most of it: that is why the mark is laid, not judged by eye.
+  assert.ok(later.includes('P is laid to within 2 cm sideways and 0.5 cm out with each tape read to 5 mm, and that comes out of the 10 cm'))
+  // The 10 cm is the line, and a 1 degree aim error at 5 m would be most of it: that is why the mark is laid, not judged by eye.
   assert.ok(5 * Math.tan((1 * Math.PI) / 180) > 0.08)
-  assert.ok(pass!.includes('Each is within 10 cm of P\'s true place, 0 m across and 5.000 m out along the normal'))
-  // The frame the probe reads: the tag's plan position is the origin and +Z its outward normal; the tap is Procedure 2's, and records the same two fields.
-  assert.ok(action!.includes('its origin is F and its +Z the tag\'s outward normal'))
-  assert.ok(action!.includes('hold the phone looking steeply down about 2 m from P, and tap the middle of P once, as in Procedure 2'))
-  assert.ok(writeDown!.includes('`line.px`, `line.pz`, `line.rng` and `line.pitch` in each session (a `line.pitch` above −45 means the phone was not looking steeply down: say so)'))
+  assert.ok(later.includes("Each is to be within 10 cm of P's true place, 0 m across and 5.000 m out along the normal (adopted:"))
+  // The frame the probe reads: the tag's plan position is the origin and +Z its outward normal; the tap is Procedure 2's, and records the same fields.
+  assert.ok(later.includes("its origin is F and its +Z the tag's outward normal"))
+  assert.ok(later.includes('hold the phone looking steeply down about 2 m from P, and tap the middle of P once, as in Procedure 2'))
+  // Procedure 8 names fields bare (fiducial_device_doc.test.ts keeps `line.` for the probe line's own procedures), so the probe test does not see these: they are held to the line here.
+  assert.ok(later.includes("Write down the probe line's `px` and `pz` (the tap across and out in the frame), `rng` and `pitch` in each session, as Procedure 2 reads them (a `pitch` above −45 means the phone was not looking steeply down: say so)"))
+  for (const field of ['px', 'pz', 'rng', 'pitch']) assert.ok((PROBE_KEYS as readonly string[]).includes(field), `the probe line has no ${field}`)
   assert.ok(flat(section(PROC2)).includes('A `line.pitch` above −45 means the phone was not looking steeply down'), 'the same rule, in the same words, as Procedure 2')
   assert.ok(flat(section(PROC2)).includes('from no more than 2 m away, the phone looking steeply down'))
 })
 
-test('Procedure 8 step 6 loads the page with verbose for the aspect line, which the build prints once about 4 s after the camera starts, and leaves verbose out of the other loads', () => {
-  const text = flat(section(PROC8))
-  assert.ok(text.includes('It is printed once, about 4 s after the camera starts, and step 6 reads it: load the page for that step with `?debug=remote,tag,verbose` and leave `verbose` out everywhere else, because it fills the relay\'s 50-message buffer with the scanner\'s ticks.'))
-  assert.ok(text.includes('**Arm it.** `npm run qr -- "?debug=remote,probe,tag"`'), 'the main loads carry no verbose: step 3 needs probe lines with no gap')
-  // The build: one console.log of the line, from a timer of 4000 ms that is armed when the camera stream arrives; and the relay mirrors console.log only under verbose.
-  const eighthwall = read('src/ar/eighthwall.ts')
-  assert.match(eighthwall, /private _armAspectDiagnostic\(\): void \{[\s\S]*?console\.log\('\[8thwall\]\[aspect\]'[\s\S]*?\}, 4000\)\s*\n\s*\}/)
-  const relay = read('src/debug/remote-log.ts')
-  assert.match(relay, /if \(hasDebugFlag\('verbose'\)\)/)
-  assert.ok(/^\| 6 \| Focal factor and projection\./m.test(section(PROC8)))
-})
-
-test('Procedure 8: the floor cells give the pixel sides and angles the document states, and only the 1 m cell is in pose range', () => {
-  const text = flat(section(PROC8))
-  const f = 720
-  const height = 1.4
-  const side = (sizeMm: number, d: number): number => (f * (sizeMm / 1000) * height) / (d * d + height * height)
-  // The same side from the line of sight: f x size / range x cos(angle off the normal).
-  for (const d of [1, 2, 3, 5]) {
-    const range = Math.hypot(d, height)
-    assert.ok(Math.abs(side(200, d) - ((f * 0.2) / range) * (height / range)) < 1e-9)
-  }
-  assert.deepEqual([1, 2, 3, 5].map((d) => Math.round(side(200, d))), [68, 34, 18, 7])
-  assert.ok(side(200, 5) > 7.4 && side(200, 5) < 7.6)
-  assert.ok(text.includes('for the 200 mm tag that is 68 px at 1 m, 34 px at 2 m, 18 px at 3 m and 7.5 px at 5 m'))
-  assert.ok(side(200, 1) >= 40 && side(200, 2) < 40 && side(200, 2) >= 24 && side(200, 3) < 24 && side(200, 5) < 24)
-  assert.ok(text.includes('Only the 1 m floor cell is in pose range, the 2 m cell is in identity range, and the 3 m and 5 m cells lie below the 24 pixel identity limit: they are recorded, for the horizontal-mount policy, and not judged.'))
-  assert.ok(text.includes('the side is f × size × 1.4 ÷ (*d*² + 1.4²)'))
-  assert.deepEqual([1, 2, 3, 5].map((d) => Math.round((Math.atan(d / height) * 180) / Math.PI)), [36, 55, 65, 74])
-  assert.ok(text.includes('atan(*d* ÷ 1.4): 36° at 1 m, 55° at 2 m, 65° at 3 m and 74° at 5 m'))
-  assert.ok(text.includes('For a wall cell, Range is *r* and Angle is *a* off the tag\'s normal. For a floor cell, Range is the distance *d* along the floor'))
-  // Step 4 names the statistic and an instrument for the temperature.
-  const [, , writeDown, pass] = stepCells(PROC8)[3]!
-  assert.ok(writeDown!.includes('the median and the 95th percentile of their sum for a frame'))
-  assert.ok(writeDown!.includes('Android: the `temperature` line of `adb shell dumpsys battery`, in tenths of a degree Celsius; iPhone: none to read, so cool, warm or hot by hand'))
-  assert.ok(pass!.includes('The 95th percentile of the detector\'s time is at most 100 ms a frame, the budget at 10 Hz (adopted;'))
-})
-
-test('Procedure 8: the tag sizes, hold times, run lengths, tape lengths and print scales it repeats are one figure each, and the steps it groups are the ones it describes', () => {
-  const text = flat(section(PROC8))
-  const steps = stepCells(PROC8)
-  // Sheets and tags: 160 mm on A4, 200 mm and 230 mm on A3, the same three sizes in the pixel-range sentence and the complete grid.
-  assert.ok(text.includes('A4 with the 160 mm tag and A3 with the 200 mm and 230 mm tags'))
-  assert.ok(text.includes('The complete grid adds the 160 mm and 230 mm tags in the same cells (32 more)'))
-  assert.ok(text.includes('Measure the 100 mm scale bar and the black square of every print with a steel rule'))
-  assert.ok(text.includes('at a focal length f of 720 px'))
-  // One height for the phone over the floor tag, everywhere it is written, and the floor marks are the grid's ranges.
-  const heights = [...text.matchAll(/(\d+(?:\.\d+)?) m (?:above each|up)|÷ (1\.4)\)|atan\(\*d\* ÷ (1\.4)\)|\+ (1\.4)²/g)].map((m) => m[1] ?? m[2] ?? m[3] ?? m[4])
-  assert.ok(heights.length >= 4 && heights.every((height) => height === '1.4'), `the phone's height over the floor tag is written as ${heights}`)
-  assert.ok(text.includes('tape marks 1, 2, 3 and 5 m from it along the floor and hold the phone 1.4 m above each'))
-  assert.ok(steps[1]![1]!.startsWith('Grid. On each phone, hold still for 2 s in each cell.'))
-  // Step 4: five minutes at 10 Hz is 3,000 frames, then five with no tag. Step 5: the sweep is 30 degrees a second.
-  assert.equal(5 * 60 * 10, 3_000)
-  assert.ok(steps[3]![1]!.startsWith('Time and heat. Run 5 minutes at 10 Hz on the oldest iPhone and the oldest Android, pointed at the tag, then 5 minutes with no tag'))
-  assert.ok(steps[4]![1]!.includes('sweep the phone past it at about 30° a second'))
-  // The tape: 2.000 m in steps 6 and 8 (the same check), and Procedure 3's 3.000 m in step 7.
-  assert.deepEqual([...steps[5]![1]!.matchAll(/\d+\.000/g)].map((m) => m[0]), ['2.000'])
-  assert.deepEqual([...steps[5]![2]!.matchAll(/\d+\.000/g)].map((m) => m[0]), ['2.000'])
-  assert.deepEqual([...steps[7]![1]!.matchAll(/\d+\.000/g)].map((m) => m[0]), ['2.000'])
-  assert.deepEqual([...steps[7]![2]!.matchAll(/\d+\.000/g)].map((m) => m[0]), ['2.000'])
-  assert.deepEqual([...steps[6]![2]!.matchAll(/\d+\.000/g)].map((m) => m[0]), ['3.000'])
-  // The two mis-scaled prints: 95% and 105%, named once in the action and once in the reading they should give.
-  assert.ok(steps[7]![1]!.startsWith('Prints at 95% and 105%. Print the sheet at 95% and at 105%, measure each'))
-  assert.ok(steps[7]![3]!.includes('read about 1.05 (95%) and 0.95 (105%)'))
-  assert.ok(steps[6]![3]!.includes('Within 3% of each other (the spec\'s 3%, adopted).') && steps[7]![3]!.includes('flagged as off by more than 3%'))
-  // What the closing paragraph says about the steps is what the steps are.
-  assert.ok(text.includes('Steps 4 to 6 set constants (the frame rate, the lag, the focal factor per model) and do not pass or fail the detector. Steps 7 and 8 say whether a wrong unit or a mis-scaled print is caught.'))
-  assert.ok(/^Time and heat/.test(steps[3]![1]!) && /^Lag/.test(steps[4]![1]!) && /^Focal factor/.test(steps[5]![1]!) && /^Unit from the print/.test(steps[6]![1]!) && /^Prints at/.test(steps[7]![1]!))
-  assert.ok(text.includes('so 3 million is the least that shows under 1e-6'))
-})
-
-test('Procedure 8 holds the spec\'s pass lines in the figures it adopts, each labelled adopted, and the print tolerance is the resolution of the rule', () => {
-  const steps = stepCells(PROC8)
-  // Step 1: a print is within 0.5% of its size, and the rule reads to 0.5 mm: on the 100 mm scale bar those are the same number.
-  assert.ok(steps[0]![3]!.includes('Each print is within 0.5% of its size (adopted)'))
-  assert.ok(flat(section(PROC8)).includes('with a steel rule, to 0.5 mm'))
-  assert.equal(0.5 / 100, 0.005)
-  // Step 2: detection in at least 90% of frames at 3 m, at 10 and 40 degrees, on every phone, and the 60 degree cells recorded and not judged.
-  assert.ok(steps[1]![3]!.includes('The 200 mm wall tag is found in at least 90% of frames at 3 m, at 10° and 40°, on every phone (the spec names no angle: this reading is adopted, and the 60° cells are recorded, not judged). Below that on any phone: **fail**'))
-  // Step 3: 10 cm at a 5 m probe. Step 5: a reprojection rms of 0.8 px. Step 6: the factor 0.98 to 1.02 and P[8], P[9] at zero, P[5] over P[0] within 0.5% of cols over rows.
-  assert.ok(steps[2]![3]!.includes('(the spec\'s 10 cm at a 5 m probe: with five sessions the p95 is the largest)'))
-  assert.ok(steps[4]![3]!.includes('One lag is lowest on all three phones and its rms is at most 0.8 px (the adopted reprojection gate).'))
-  assert.ok(steps[5]![3]!.includes('The factor is between 0.98 and 1.02 (adopted: 2% of focal length is 6 cm at 3 m)'))
-  assert.ok(steps[5]![3]!.includes('`P[5]` ÷ `P[0]` is within 0.5% of `cols` ÷ `rows`'))
-  assert.ok(steps[5]![3]!.includes('`P[8]` and `P[9]` read 0 and'))
-  // Step 3: the frame is defined from about 2 m and 40 degrees to the side (the coaching the flow gives), and the tap is 2 m from a mark 5 m from the tag, which is 3 m from the tag.
-  assert.ok(steps[2]![1]!.includes('from about 2 m, 40° to the side, sweeping sideways') && steps[2]![1]!.includes('walk to about 3 m from the tag on the normal, hold the phone looking steeply down about 2 m from P'))
-  assert.equal(5 - 3, 2)
-  // The grid: wall tag at 1, 2, 3 and 5 m and 10, 40 and 60 degrees is 12 cells, and the floor tag adds 4.
-  assert.ok(steps[1]![1]!.includes('the 200 mm wall tag at 1, 2, 3 and 5 m, at 10°, 40° and 60° (12 cells), and the 200 mm floor tag at 1, 2, 3 and 5 m (4)'))
-  assert.ok(flat(section(PROC8)).includes('with its centre 1.2 m above the floor'))
-  assert.ok(flat(section(PROC8)).includes('hold the phone 1.4 m above each'))
-  // The detection and falsity gates: any fail of step 2, 3 or 9 sends the project to the AprilTag build.
-  assert.ok(flat(section(PROC8)).includes('A fail in step 2, 3 or 9 switches the shipping detector to the AprilTag build.'))
-})
-
-test('Procedure 8: a print that is too small or too large moves the detected range by the inverse of its scale, as the document says', () => {
-  const text = flat(section(PROC8))
-  // The build is told the nominal size, so a print at scale s reads a range of 1 / s times the true one.
-  assert.ok(Math.abs(1 / 0.95 - 1.05) < 0.005 && Math.abs(1 / 1.05 - 0.95) < 0.005)
-  assert.ok(text.includes('the other two read about 1.05 (95%) and 0.95 (105%)'))
-  // Focal length scales the range the same way: 2% of 3 m is 6 cm, and 3% is the line for the unit check.
-  assert.ok(text.includes('Within 3% of each other') && text.includes('off by more than 3%'))
-  // The unit under responsive scale comes from the tape of Procedure 3: the session distance between the two taps over 3.000 m.
-  assert.ok(text.includes('(`line.sepM` ÷ 3.000)'))
-  assert.ok(flat(section(PROC3)).includes('Tape exactly **3.000 m**'))
-  // The 0.3 m of camera travel the unit estimate needs is the spec's.
-  assert.ok(text.includes('move the phone at least 0.3 m while it looks at the tag'))
-})
-
-test('Procedure 8 marks every readout the build does not write yet, names only debug flags that exist or are marked, and holds the adopted-not-measured line', () => {
-  const body = section(PROC8)
-  assert.ok(flat(body).includes('**adopted, not measured** (ADR 0005 rule 5)'))
+test('Procedures 3, 6 and 8 name only debug flags the build knows, and Procedure 8 holds the adopted-not-measured line and states no lag as a fact', () => {
   const flagsSource = read('src/shared/debug-flags.ts')
   const known = new Set([...flagsSource.slice(flagsSource.indexOf('export type DebugFlag')).matchAll(/\| '(\w+)'/g)].map((m) => m[1]!))
-  assert.ok(known.has('remote') && known.has('probe') && known.has('pose') && known.has('verbose'))
+  for (const flag of ['remote', 'probe', 'pose', 'verbose', 'tag', 'tagneg']) assert.ok(known.has(flag), `the parse of debug-flags.ts reads ${flag}`)
   for (const procedure of [PROC3, PROC6, PROC8]) {
     for (const chunk of chunks(section(procedure))) {
       for (const list of chunk.matchAll(/\?debug=([A-Za-z,]+)/g)) {
-        for (const flag of list[1]!.split(',')) {
-          if (known.has(flag)) continue
-          assert.ok(/after WP-14b/.test(chunk), `${flag} is not a debug flag the build knows and is not marked "after WP-14b" where it appears: ${chunk.slice(0, 120)}`)
-        }
+        for (const flag of list[1]!.split(',')) assert.ok(known.has(flag), `${flag} is not a debug flag the build knows: ${chunk.slice(0, 120)}`)
       }
     }
   }
-  // Readouts that only the detector's debug output has, each marked where it appears.
-  for (const later of ['stage times', 'ambiguity ratio', 'fused', 'candidate quads', 'rms error in pixels', 'scale ratio', '`P[8]`']) {
-    for (const chunk of chunks(body).filter((c) => c.toLowerCase().includes(later.toLowerCase()))) {
-      assert.ok(/after WP-14[ab]/.test(chunk), `"${later}" is a readout the build does not write yet and is not marked "after WP-14a" or "after WP-14b" where it appears`)
-    }
-  }
-  // What is in the build today, and so needs no marker, is really there.
-  const eighthwall = read('src/ar/eighthwall.ts')
-  for (const field of ['fit:', 'canvas:', 'frame:', 'fovYDeg:', 'projectionAspect:', 'crop:']) assert.ok(eighthwall.includes(field), `the [8thwall][aspect] line has no ${field}`)
-  assert.ok(existsDoc('`fit`, `canvas`, `frame`, `fovYDeg`, `projectionAspect` and `crop`'))
-})
-
-function existsDoc(text: string): boolean {
-  return flat(DOC).includes(text)
-}
-
-test('Procedure 8 has nine steps, each with something to write down and a pass line, and none of them states the previous-frame claim', () => {
   const body = section(PROC8)
-  const rows = body.split('\n').filter((line) => /^\| \d+ \|/.test(line))
-  assert.equal(rows.length, 9)
-  assert.deepEqual(rows.map((row) => Number(/^\| (\d+) \|/.exec(row)![1])), [1, 2, 3, 4, 5, 6, 7, 8, 9])
-  for (const row of rows) {
-    const cells = row.split('|')
-    assert.equal(cells.length, 6, `${row.slice(0, 40)}: an action, what to write down and a pass line`)
-    assert.ok(/at least|at most|within|between|both|zero|one lag|record only|the 200 mm|each|the factor/i.test(cells[4]!), `${row.slice(0, 40)}: no pass line`)
-  }
-  // The pairing of an image with a pose is a hypothesis until step 5 fits it: the document asks for the lag and claims nothing about it.
+  assert.ok(flat(body).includes('**adopted, not measured** (ADR 0005 rule 5)'))
+  // Which pose goes with a frame's pixels is a hypothesis until Part D fits it: the document asks for the lag and claims none.
+  assert.ok(flat(body).includes('is a hypothesis'))
   assert.doesNotMatch(body, /previous frame|one frame behind|frame behind|lags the pose/i)
-  assert.ok(flat(body).includes('a lag of 0, 1 and 2 frames'))
 })

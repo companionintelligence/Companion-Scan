@@ -260,6 +260,7 @@ export interface TagObservation {
 export type FusionRejection =
   | 'no-observations'
   | 'intrinsics'
+  | 'too-small'
   | 'corner-fit'
   | 'range'
   | 'view-angle'
@@ -299,8 +300,15 @@ export interface FusedTagPose {
    * because that is part of what one calibration's pose can be trusted to.
    */
   poseSpreadM: number
-  /** The same robust RMS for the per-frame tag orientations about the fused one, in degrees. */
+  /** The same robust RMS for the per-frame tag orientations about the fused one, in degrees: the whole rotation, tilt and spin as well as heading. */
   rotationSpreadDeg: number
+  /**
+   * The robust scatter, in degrees, of the per-frame HEADING about the fused one: the bearing of the axis the Place frame is built on (`tagHeadingAxis`,
+   * `./tag-mount.ts`: a wall tag's outward normal, a horizontal tag's printed up axis), which is the one rotation a tag fixes for the frame, because roll and
+   * pitch come from gravity. `1.4826 x` the median absolute deviation, which is the standard deviation for Gaussian scatter in one dimension. NaN when no
+   * frame survived, or when the fused normal is between the wall and horizontal limits (`classifyMount`): such a tag has no frame and so no heading.
+   */
+  headingSpreadDeg: number
   /** Median per-frame reprojection RMS of the chosen solutions, in pixels. */
   reprojectionRmsPx: number
   /** Median camera-to-tag distance over the frames kept, in metres (metric through the printed size). */
@@ -311,10 +319,11 @@ export interface FusedTagPose {
   nFramesOffered: number
   /**
    * Why the frames that were offered and not kept were left out, by the first gate each failed: the numbers a
-   * caller turns into guidance ("keep the marker uncovered" for `cornerFit`, "move closer" for `range`). Outlier
-   * frames dropped by consensus after the gates are `nFramesOffered` minus these minus `nFrames`.
+   * caller turns into guidance ("move closer" for `tooSmall`, "keep the marker uncovered" for `cornerFit`). Outlier
+   * frames dropped by consensus after the gates (far from the others, or with a normal more than
+   * `maxNormalDeviationDeg` from theirs) are `nFramesOffered` minus these minus `nFrames`.
    */
-  dropped: { intrinsics: number; cornerFit: number; range: number; viewAngle: number; reprojection: number; unsolved: number }
+  dropped: { intrinsics: number; tooSmall: number; cornerFit: number; range: number; viewAngle: number; reprojection: number; unsolved: number }
   /** Session units per metre the spread and position were converted with (1 = the runtime is metric). */
   sessionUnitsPerMetre: number
   /** True when the two mirror solutions could not be told apart over these frames. */
@@ -322,20 +331,11 @@ export interface FusedTagPose {
 }
 
 /**
- * The measured fields a `'fiducial'` calibration records, so that `status: 'verified'` can be
- * derived from them and from nothing else (ADR 0005 rule 3). See the "what the next wave must add"
- * note in the WP-14a report for how this lands in `src/world/types.ts`.
+ * The measured fields a `'fiducial'` calibration records, so that `status: 'verified'` can be derived from them
+ * and from nothing else (ADR 0005 rule 3). Declared in `src/world/fiducial-evidence.ts`, a leaf with no imports,
+ * so that the schema and the server can read it without importing the AR provider (ADR 0002); re-exported here.
  */
-export interface FiducialEvidence {
-  tagId: number
-  family: string
-  printedSizeMm: number
-  poseSpreadM: number
-  rotationSpreadDeg: number
-  reprojectionRmsPx: number
-  rangeM: number
-  nFrames: number
-}
+export type { FiducialEvidence, FiducialMount, FiducialScaleSource, FiducialSizeSource } from '../../world/fiducial-evidence.ts'
 
 /**
  * What a printed sheet's QR code says. The tag itself only carries its id; the Place, room and
@@ -351,6 +351,15 @@ export interface TagPayload {
   placeId: string
   /** Null for a tag that belongs to the Place as a whole. */
   roomId: string | null
-  /** Edge length of the printed black square, in millimetres, as the sheet was generated. */
+  /** Edge length of the printed black square, in millimetres, as the sheet was generated: its OUTER edge (the black ring's). */
   printedSizeMm: number
+  /** How the sheet is to be mounted, when the sheet says: on a wall, or lying flat. Absent when it does not say. */
+  mount?: 'wall' | 'horizontal'
+  /** The black square's centre above the floor as mounted, millimetres, when the sheet says (it needs `mount`). The frame's floor is this far below the tag when no floor has been fitted. */
+  mountHeightMm?: number
+  /**
+   * The second tag of a two-tag sheet: its id, and where its centre is from this tag's, on the sheet, millimetres (x to the right, y up
+   * the sheet). The spacing is the sheet's own, so it is exact whatever the wall is like.
+   */
+  partner?: { tagId: number; dxMm: number; dyMm: number }
 }

@@ -134,6 +134,12 @@ export interface DetectorOptions {
   maxCandidates?: number
   /** Report only these ids. */
   ids?: readonly number[]
+  /**
+   * Time the stages of each `detect()` into `DetectorStats.stageMs` (device experiment DX8 asks where the milliseconds
+   * go on a phone). Off by default: it reads the clock about ten times a frame, and a frame's detections are the same
+   * with it on or off.
+   */
+  profile?: boolean
 }
 
 /**
@@ -264,21 +270,68 @@ export function refinementWindowPx(cellPx: number, level: number): number {
   return Math.min(REFINE_CELL_FRACTION * cellPx, Math.max(REFINE_WINDOW_BASE_PX, REFINE_WINDOW_PER_LEVEL * 2 ** level + REFINE_WINDOW_EXTRA_PX))
 }
 
-/** What the last `detect()` did, for tests and for tuning. */
+/**
+ * What the last `detect()` did, for tests and for tuning.
+ *
+ * ## `candidates` and `decodeAttempts` are the negative-corpus counters
+ *
+ * The WP-14b gate on false accepts is a rate on frames that contain no tag (`?debug=tagneg` counts them on a phone,
+ * `tests/unit/node/fiducial_detector.test.ts` on synthetic ones): any detection on such a frame is a false accept.
+ * Two of these numbers are the denominators that rate is stated against, and they are not the same number.
+ *
+ * - `candidates` is every quad the geometry stage found, before anything was decoded: the "candidate quads" the gate
+ *   counts (a rate not above 1e-6 per candidate quad, shown at 95 % confidence by about 3 million of them with no
+ *   false accept, which is about 100 000 frames of a room). It does not depend on the decode budget.
+ * - `decodeAttempts` is the quads that were sampled and compared with the dictionary. The dictionary's own false-accept
+ *   arithmetic (see `DEFAULT_MAX_HAMMING`) is per quad that REACHED the matcher, which is `decodeAttempts` less
+ *   `rejected.offFrame`, `.contrast`, `.border` and `.quiet`. When the decode budget ran out (`capped`), some candidates
+ *   were never attempted, so a corpus that is often capped says less than its candidate count suggests.
+ *
+ * They are counters of the last frame only; a caller that wants a corpus adds them up (`TagNegativeCounter` in
+ * `tag-debug.ts`).
+ */
 export interface DetectorStats {
-  /** Quads that came out of the geometry stage. */
+  /** Quads that came out of the geometry stage. The negative-corpus denominator; see above. */
   candidates: number
   /** Places those quads sit at: one tag found at two pyramid levels, or a tag and the halo around it, is one. */
   groups: number
   /** Quads given the cheap look (see `precheckLimits`) because there were more of them than the budget could decode. */
   prechecked: number
-  /** Quads that were sampled and compared with the dictionary. */
+  /** Quads that were sampled and compared with the dictionary. See above for how it relates to `candidates`. */
   decodeAttempts: number
   /** True when the decode budget ran out with quads left unread: the frame is too busy to be sure there is no tag in it. */
   capped: boolean
   detections: number
   /** Why decode attempts failed, by first failing test. */
   rejected: { offFrame: number; contrast: number; border: number; quiet: number; match: number; ids: number }
+  /**
+   * Milliseconds spent in each stage of this `detect()`: the luma plane, the pyramid, finding and grouping quads, the
+   * cheap look at quads over the budget, edge refinement, and sampling plus matching. Present only when the detector was
+   * made with `profile: true`. The stages add up to the whole call to within the clock's resolution.
+   */
+  stageMs?: StageMs
+}
+
+/** The stages `DetectorStats.stageMs` is split into. */
+export interface StageMs {
+  luma: number
+  pyramid: number
+  quads: number
+  precheck: number
+  refine: number
+  decode: number
+}
+
+/** Reads the clock between stages, when profiling. */
+class StageTimer {
+  readonly ms: StageMs = { luma: 0, pyramid: 0, quads: 0, precheck: 0, refine: 0, decode: 0 }
+  private last = performance.now()
+  /** Charge the time since the last lap to `stage`. */
+  lap(stage: keyof StageMs): void {
+    const now = performance.now()
+    this.ms[stage] += now - this.last
+    this.last = now
+  }
 }
 
 /** The options a detector actually runs with: every default filled in, `maxHamming` clamped to what the family can correct. */
@@ -295,6 +348,7 @@ export interface ResolvedDetectorOptions {
   refineCorners: boolean
   maxCandidates: number
   ids: ReadonlySet<number> | null
+  profile: boolean
 }
 
 function emptyStats(): DetectorStats {
@@ -370,6 +424,7 @@ function resolveOptions(dictionary: Dictionary, o: DetectorOptions): ResolvedDet
     refineCorners: o.refineCorners ?? true,
     maxCandidates: option('maxCandidates', o.maxCandidates, DEFAULT_MAX_CANDIDATES, 1, 1e6, true),
     ids,
+    profile: o.profile ?? false,
   }
 }
 
@@ -473,8 +528,12 @@ export class FiducialDetector {
     if (!Number.isInteger(width) || !Number.isInteger(height)) throw new RangeError(`fiducial image: ${width}x${height} is not a whole number of pixels`)
     if (width < 16 || height < 16) return []
 
+    const timer = o.profile ? new StageTimer() : null
+    if (timer) stats.stageMs = timer.ms
     const full = toLuma(image, s)
+    timer?.lap('luma')
     const levels = buildLevels(full, width, height, o, s)
+    timer?.lap('pyramid')
 
     const candidates: Candidate[] = []
     for (const level of levels) findCandidates(level, o, s, candidates)
@@ -485,6 +544,7 @@ export class FiducialDetector {
     // and stopped at the first that reads.
     const groups = groupCandidates(candidates)
     stats.groups = groups.length
+    timer?.lap('quads')
 
     // Decoding costs about as much as everything else together, and a busy wall (tiles, shelves, a window
     // with panes) can give hundreds of quads. When there are more than the budget can decode, look at each
@@ -509,6 +569,7 @@ export class FiducialDetector {
         else rest.push(other)
       }
       order = [...likely, ...rest]
+      timer?.lap('precheck')
     }
 
     const found: FiducialDetection[] = []
@@ -521,7 +582,7 @@ export class FiducialDetector {
         }
         attempts++
         stats.decodeAttempts++
-        const det = this.readCandidate(full, width, height, cand, stats)
+        const det = this.readCandidate(full, width, height, cand, stats, timer)
         if (!det) continue
         if (o.ids && !o.ids.has(det.id)) stats.rejected.ids++
         else found.push(det)
@@ -531,10 +592,11 @@ export class FiducialDetector {
     }
     stats.detections = found.length
     found.sort((a, b) => b.quality - a.quality)
+    timer?.lap('decode')
     return found
   }
 
-  private readCandidate(full: Uint8Array, w: number, h: number, cand: Candidate, stats: DetectorStats): FiducialDetection | null {
+  private readCandidate(full: Uint8Array, w: number, h: number, cand: Candidate, stats: DetectorStats, timer: StageTimer | null): FiducialDetection | null {
     const o = this.options
     const s = this.scratch
     const dict = this.dictionary
@@ -564,7 +626,9 @@ export class FiducialDetector {
       }
     }
 
+    timer?.lap('refine')
     const read = sampleAndMatch(full, w, h, corners, dict, o, s, stats.rejected)
+    timer?.lap('decode')
     if (!read) return null
 
     const k = read.rotation

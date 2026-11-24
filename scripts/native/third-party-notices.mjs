@@ -81,6 +81,15 @@ export const SUPPLIED_TEXTS = {
   'rust:dlopen2_derive': ['dlopen2-LICENSE.txt'],
 }
 
+/**
+ * npm packages whose package.json declares no licence, though the licence file they ship states one, keyed by
+ * `npm:<name>`. Only used when neither the lockfile nor the package.json names a licence, so a package that later
+ * declares one is reported as it declares it.
+ */
+export const DECLARED_LICENCES = {
+  'npm:locar': { licence: 'MIT', source: 'https://github.com/AR-js-org/locar.js' },
+}
+
 /** Crates that ship no licence file, and the crate from the same repository, under the same licence, whose files apply. */
 export const CRATE_TEXTS_FROM = { 'alloc-stdlib': 'alloc-no-stdlib' }
 
@@ -171,12 +180,13 @@ function addNpmPackages(notices, bundledModules) {
     const pkg = existsSync(join(dir, 'package.json')) ? readJson(join(dir, 'package.json')) : {}
     const shipped = licenceFiles(dir)
     const supplied = shipped.length ? [] : SUPPLIED_TEXTS[`npm:${name}`] ?? []
+    const declared = DECLARED_LICENCES[`npm:${name}`]
     notices.add({
       group: 'npm',
       name,
       version: entry.version,
-      licence: entry.license ?? pkg.license ?? 'not declared',
-      source: repositoryOf(pkg) ?? `https://www.npmjs.com/package/${name}/v/${entry.version}`,
+      licence: entry.license ?? pkg.license ?? declared?.licence ?? 'not declared',
+      source: repositoryOf(pkg) ?? declared?.source ?? `https://www.npmjs.com/package/${name}/v/${entry.version}`,
       note: shipped.length ? undefined : supplied.length ? suppliedNote('package', supplied)
         : `The package ships no licence file; its package.json declares ${entry.license ?? 'no licence'}.`,
     }, shipped.length ? shipped : supplied.map(suppliedText))

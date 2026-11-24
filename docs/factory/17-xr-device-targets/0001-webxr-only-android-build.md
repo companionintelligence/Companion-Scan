@@ -1,5 +1,5 @@
 > **Type:** Infra
-> **Wave:** 16-xr-device-targets
+> **Wave:** 17-xr-device-targets
 > **Branch:** `feat/xreal-aura-target`
 > **Commit style:** `feat(webxr-build): summary`
 > **Design:** this ticket is the spec; the build page is `docs/targets/android-webxr.md`

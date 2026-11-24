@@ -1,5 +1,5 @@
 /**
- * Companion Scan world editor.
+ * Spatial Editor (served at /editor): the multi-scan world editor.
  *
  * Loads a WorldProject manifest, places many GLB scans in one ENU/Y-up Three.js
  * scene, exposes per-layer visibility, and persists scan/object edits as
@@ -13,6 +13,9 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js'
 import { SceneEditor, SEMANTIC_TAGS, PendingSaves, dragToleranceFor, isDragRelease, objectRenderable, type EditSaveState, type ViewMode } from './editor'
+import { mountObjectPanel, type ObjectPanel } from './object-panel'
+import { mountShareMenu, type ShareMenu } from './share-menu'
+import { mountViewMenu, type ViewMenu } from './view-menu'
 import { MeasureTool } from './measure'
 import { collectDetections, hasLabelledAncestor } from './detections'
 import { GeoMap, type ProjectLocationEntry } from './geomap'
@@ -51,11 +54,20 @@ import { readReconstructionQuality, reconstructionVerdictFor } from './reconstru
 import { redrawScanMeta, scanMetaHtmlFor } from './scan-calibration-chip'
 import { createFrameReference } from './frame-banner'
 import { jobRowMarkup } from './job-row'
-import { distanceM, enuToGeo, hasGeoPose, matrixTranslation } from '../world/geo'
+import { distanceM, enuToGeo, hasGeoPose, matrixTranslation, originDecalPlan } from '../world/geo'
 import { compassNeedleRad } from '../world/enu'
-import { LAYER_LABELS, LAYER_ORDER, LAYERS_HIDDEN_BY_DEFAULT } from '../world/layers'
-import { buildAnchorMarker, buildAnchorPin } from '../world/anchor-marker'
+import {
+  FLAG_LAYER,
+  LAYER_LABELS,
+  LAYER_ORDER,
+  LAYERS_HIDDEN_BY_DEFAULT,
+  VIEW_FLAGS,
+  type ViewFlagState,
+  type ViewLayerFacts,
+} from '../world/layers'
+import { buildAnchorPin } from '../world/anchor-marker'
 import { sessionAnchorPositions } from '../world/anchor-placement'
+import { buildOriginDecal, COMMITTED_ORIGIN_NAME } from '../world/origin-decal'
 import { registerPWA } from '../pwa'
 import { iconLabel } from '../ui/icons'
 import { qrCodeSvg } from '../ui/qr-code'
@@ -81,6 +93,7 @@ import {
   FRAME_LAYER_TYPES,
   hiddenObjects,
   layerCountText,
+  layerHasContent,
   layersWithContent,
   listedLayerTypes,
   unhidePatch,
@@ -302,6 +315,27 @@ const loadedSplats = new Map<string, LoadedSplat>()
 // Trained-splat sidecars attached per scan (splat-train job output).
 const scanSplatLayers = new Map<string, ScanSplatLayer>()
 let scanSplatVisible = false
+/**
+ * The Spatial Editor panels. Each mounts once here and binds its own DOM and events. The viewer
+ * supplies state and server calls through the deps, so a panel changes without touching this file.
+ */
+const viewMenu: ViewMenu = mountViewMenu({
+  readFlags: readViewFlags,
+  writeFlags: writeViewFlags,
+  facts: viewFacts,
+})
+const shareMenu: ShareMenu = mountShareMenu()
+const objectPanel: ObjectPanel = mountObjectPanel({
+  selected: () => selectedTransformTarget ?? editor.selectedObject,
+  targetIdOf: stableObjectId,
+  thingFor: thingForTarget,
+  rename: renameSelectedObject,
+  // The Save Transform button's queue key, so a typed value and a button press of one object replace each other.
+  saveTransform: (obj) => editSaves.save(`transform:${obj.uuid}`, () => saveSelectedTransform(obj)),
+  // A typed value moves the object as a drag does: the readout, the HUD and the unsaved-move markers all follow.
+  moved: () => transformControls?.dispatchEvent({ type: 'objectChange' }),
+  setInspectorTitle: (name) => setText('inspector-title', name),
+})
 
 /**
  * 4D person layers — a splat sequence per scan, played on a clock.
@@ -815,7 +849,7 @@ async function loadWorldProject(): Promise<void> {
     world = scopedWorld
     currentProject = projects.find(project => project.projectId === activeProjectId) ?? null
     refreshExpectedAnchorPins()
-    document.title = `${scopedWorld.name} - Companion Scan Spatial Editor`
+    document.title = `${scopedWorld.name} - Spatial Editor`
     setText('sidebar-title', scopedWorld.name)
     document.getElementById('viewer-placeholder')!.style.display = scopedWorld.scans.length ? 'none' : 'flex'
 
@@ -1172,7 +1206,7 @@ async function saveProjectHierarchy(): Promise<void> {
     knownProjects = knownProjects.map(project => project.projectId === updated.projectId ? updated : project)
     if (world) world.name = updated.name
     setText('sidebar-title', updated.name)
-    document.title = `${updated.name} - Companion Scan Spatial Editor`
+    document.title = `${updated.name} - Spatial Editor`
     renderProjectHierarchyEditor()
     renderProjectSwitcher()
     renderItemsPanel()
@@ -2098,9 +2132,9 @@ function createCameraFrustumMesh(size: number, depth: number): THREE.LineSegment
 }
 
 /**
- * Adds a calibration-anchor marker for scans with a real calibration — a
- * GPS-only-placed scan's local origin is just wherever AR tracking booted,
- * not a marked physical point, so rendering a decal there would mislead.
+ * Adds the calibrated origin for scans with a real calibration. A GPS-only-placed
+ * scan's local origin is just wherever AR tracking booted, not a marked physical
+ * point, so drawing a decal there would mislead.
  *
  * The marker belongs on the calibration's reference point — the invariant every
  * calibration method (retired 3-point, one-tap, two-point) shares, since the
@@ -2123,11 +2157,17 @@ function createCameraFrustumMesh(size: number, depth: number): THREE.LineSegment
  * would stay on project zero instead of following the landmark. A scan from
  * before that field existed falls back to localToWorld, as this always did.
  *
- * No bearing is passed here (unlike the live capture-side decal): the whole
+ * The marker is the shared origin decal (`buildOriginDecal` in
+ * src/world/origin-decal.ts), the one the scanner commits. Its heading arrow
+ * runs from the landmark to the heading marker, both in the root's own
+ * coordinates, so once the root's matrix is applied it ends on the red heading
+ * pin. Only the two-point tier records a separation, so only it gets an arrow.
+ *
+ * No north yaw is passed here (unlike the live capture-side decal): the whole
  * root's own rotation may come from either calibration method or a
  * gizmo-drag override, so there's no single "true north" axis to derive
- * from it after the fact — the ring+crosshair alone marks the anchor point;
- * the north tick is a live-capture-only refinement.
+ * from it after the fact. The decal then draws no north tick, and its ring is
+ * dimmed the way a decal without a compass fix always is.
  */
 function addAnchorMarker(
   root: THREE.Object3D,
@@ -2145,17 +2185,17 @@ function addAnchorMarker(
     scan.calibrationMethod === 'two-point-ground' ? scan.calibrationSeparationM : null,
   )
 
-  const marker = buildAnchorMarker()
-  marker.position.set(landmark.x, landmark.y, landmark.z)
-  marker.userData['scanId'] = scan.scanId
-  root.add(marker)
-  addLayerNode(layers, 'anchor', marker)
+  // The decal's group sits at the plan's origin, the landmark; the arrow points at the heading marker.
+  const decal = buildOriginDecal(originDecalPlan(landmark, headingMarker, null), 'committed')
+  decal.userData['scanId'] = scan.scanId
+  root.add(decal)
+  addLayerNode(layers, 'anchor', decal)
 
   // The pair this scan actually placed: the landmark at project zero and the
   // heading marker on +Z at the separation this session measured. Those are
   // project-space points and these pins are children of the root, so each sits
   // at the root-local point that localToWorld sends there — the same inverse as
-  // the marker above — and not at (0,0,0) and (0,0,separation), which are
+  // the decal above — and not at (0,0,0) and (0,0,separation), which are
   // session coordinates and land somewhere else entirely.
   //
   // Red against the stored frame's white: both landmarks are project zero by
@@ -3447,6 +3487,7 @@ function syncEditPanel(obj: THREE.Object3D, openEdit = true): void {
     data.floorName ? `Floor: ${escHtml(data.floorName)}` : '',
   ].filter(Boolean).join('<br>')
   notesEl.value = tagInfo?.notes ?? data.notes ?? ''
+  objectPanel.sync(obj, nameEl.textContent ?? '')
 
   const grid = document.getElementById('tag-grid')!
   const activeTag = tagInfo?.tag ?? data.tag
@@ -3459,6 +3500,7 @@ function syncEditPanel(obj: THREE.Object3D, openEdit = true): void {
 }
 
 function updateTransformReadout(): void {
+  objectPanel.syncTransform()
   if (!selectedTransformTarget) return
   selectedTransformTarget.updateMatrix()
   const data = editor.getInspectorData(selectedTransformTarget)
@@ -3532,6 +3574,10 @@ if (TEST_HOOKS_ENABLED) {
       selectFirstLod: (scanId: string) => { name: string; objectId: string; filename: string; gizmoAttached: boolean } | null
       worldTransform: () => { position: [number, number, number]; scale: [number, number, number] } | null
       nudgeAndSave: (dx: number, dy: number, dz: number) => Promise<boolean>
+      selectFirstMesh: (scanId: string) => { name: string; objectId: string } | null
+      selectScanRoot: (scanId: string) => { name: string } | null
+      firstMeshVisible: (scanId: string) => boolean | null
+      originDecal: (scanId: string) => { decal: boolean; arrow: boolean; north: boolean } | null
     }
   }).__editorTest = {
     selectFirstLod(scanId: string) {
@@ -3552,6 +3598,46 @@ if (TEST_HOOKS_ENABLED) {
         objectId: stableObjectId(found),
         filename: loaded.manifest.filename,
         gizmoAttached: transformControls?.object === found,
+      }
+    },
+    // Selects a scan's root through the real selection path, for the scan-root rules in the object panel.
+    selectScanRoot(scanId: string) {
+      const loaded = loadedScans.get(scanId)
+      if (!loaded) return null
+      selectEditableObject(loaded.root)
+      return { name: loaded.root.name }
+    },
+    // Selects the scan's first plain mesh through the real selection path. For specs whose
+    // synthetic GLB has no semantic LOD for selectFirstLod() to find.
+    selectFirstMesh(scanId: string) {
+      const loaded = loadedScans.get(scanId)
+      if (!loaded) return null
+      const meshes: THREE.Mesh[] = []
+      loaded.root.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) meshes.push(obj)
+      })
+      const found = meshes[0]
+      if (!found) return null
+      selectEditableObject(found)
+      return { name: found.name, objectId: stableObjectId(found) }
+    },
+    firstMeshVisible(scanId: string) {
+      const loaded = loadedScans.get(scanId)
+      if (!loaded) return null
+      const meshes: THREE.Mesh[] = []
+      loaded.root.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) meshes.push(obj)
+      })
+      return meshes[0]?.visible ?? null
+    },
+    // Which parts of a scan's calibrated origin are drawn: the decal, its heading arrow, its north tick.
+    originDecal(scanId: string) {
+      const loaded = loadedScans.get(scanId)
+      if (!loaded) return null
+      return {
+        decal: loaded.root.getObjectByName(COMMITTED_ORIGIN_NAME) !== undefined,
+        arrow: loaded.root.getObjectByName('origin heading arrow') !== undefined,
+        north: loaded.root.getObjectByName('origin north') !== undefined,
       }
     },
     worldTransform() {
@@ -3597,6 +3683,16 @@ async function saveObjectSemanticPatch(obj: THREE.Object3D): Promise<void> {
 /** Save an object's tag and notes through the Edit panel's save queue. */
 function saveSemanticEdit(obj: THREE.Object3D): Promise<boolean> {
   return editSaves.save(`semantic:${obj.uuid}`, () => saveObjectSemanticPatch(obj))
+}
+
+/**
+ * The object panel's Rename (./object-panel.ts). The name is shown as a relabel is, the GLB's own label kept under
+ * `aiLabel` (setObjectLabel), and it is saved with the object's tag and notes, in the same patch and queue as they are.
+ */
+function renameSelectedObject(obj: THREE.Object3D, name: string): Promise<boolean> {
+  setObjectLabel(obj, name)
+  editor.renameObject(obj, name)
+  return saveSemanticEdit(obj)
 }
 
 function thingForTarget(targetId: string) {
@@ -4058,6 +4154,21 @@ const registerProposalHost = {
     if (loaded) applyMatrix(loaded.root, matrix)
     updateTransformReadout()
   },
+  // "Check with photos": the same alignment check, asked to use the scan's camera photos as well (server/register/place_register_sfm.ts).
+  queuePhotoCheck: async (scanId: string) => {
+    if (!world) return
+    const response = await fetch(withAccessToken(`/worlds/${encodeURIComponent(world.shareSlug)}/jobs`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'place-register', scanId, payload: { method: 'sfm', source: 'viewer', requestedAt: new Date().toISOString() } }),
+    })
+    if (!response.ok) throw new Error(await response.text())
+    const job = await response.json() as WorldJob
+    if (!world.jobs.some((existing) => existing.jobId === job.jobId)) world.jobs.unshift(job)
+    renderWorldPanel()
+    setTimeout(() => { void refreshJobs() }, 1000)
+    return job
+  },
 }
 
 function renderLayerPanel(): void {
@@ -4138,14 +4249,6 @@ const SHARE_ROLE_LABELS: Record<string, string> = {
   owner: 'Owner',
 }
 
-/**
- * The roles listed as plain rows, in ascending order of power. `scanner` is
- * deliberately absent — it gets the standalone block above them, because it is
- * the one link whose entire job is to reach a phone, and the empty world panel
- * already tells the operator to go and open it there.
- */
-const SHARE_ROLE_ROWS = ['viewer', 'commenter', 'editor', 'owner'] as const
-
 /** Collapses every open share QR. Populated fresh on each `loadShareLinks()`. */
 const shareQrClosers: Array<() => void> = []
 
@@ -4156,12 +4259,14 @@ function closeShareQrCodes(): void {
   for (const close of shareQrClosers) close()
 }
 
-/** Empties the Share panel. A Place switch calls this, so the last Place's bearer-token links do not stay up. */
+/**
+ * Empties the SHARE menu and the Navigate menu's phone-scan link. A Place switch calls this, so the last Place's
+ * bearer-token links do not stay up. The SHARE entries are reset, not rewritten: share-menu.ts holds their listeners.
+ */
 function clearShareLinks(): void {
   closeShareQrCodes()
-  shareQrClosers.length = 0
-  const target = document.getElementById('share-links')
-  if (target) target.innerHTML = '<div class="layer-meta">Loading share links...</div>'
+  shareMenu.clear()
+  renderScannerShare(undefined)
 }
 
 /** Copy-to-clipboard wiring, shared by the scanner block and the role rows. */
@@ -4235,67 +4340,58 @@ function buildQrDisclosure(url: string, roleLabel: string, showLabel: string, si
   return { button, panel }
 }
 
+/**
+ * Fills the SHARE menu from the place's existing share links. A role with no link here is
+ * disabled and says "Coming soon". Nothing is minted (see share-menu.ts).
+ */
 async function loadShareLinks(): Promise<void> {
   if (!world) return
-  const target = document.getElementById('share-links')
-  if (!target) return
   const gen = worldGen
 
   try {
     const payload = await fetchJson<ShareLinksResponse>(`/worlds/${encodeURIComponent(world.shareSlug)}/share`)
-    // Links for a Place that has since been switched away from do not fill this panel.
+    // Links for a Place that has since been switched away from do not fill this menu.
     if (gen !== worldGen) return
-    target.innerHTML = ''
-    shareQrClosers.length = 0
-
-    const scannerUrl = payload.links['scanner']
-    if (scannerUrl) {
-      const block = document.createElement('div')
-      block.className = 'scanner-share'
-      const head = document.createElement('div')
-      head.className = 'scanner-share-head'
-      head.innerHTML = '<span>Scan with a phone</span><small>Point a phone camera here to capture into this place.</small>'
-      head.title = scannerUrl
-      const actions = document.createElement('div')
-      actions.className = 'world-link-actions'
-      const scannerQr = buildQrDisclosure(scannerUrl, SHARE_ROLE_LABELS['scanner'] ?? 'Scanner', 'Show QR', 240)
-      scannerQr.button.classList.add('primary')
-      const scannerCopy = document.createElement('button')
-      scannerCopy.type = 'button'
-      scannerCopy.className = 'copy-link-btn'
-      scannerCopy.textContent = 'Copy'
-      bindCopyLink(scannerCopy, scannerUrl)
-      actions.append(scannerQr.button, scannerCopy)
-      block.append(head, actions, scannerQr.panel)
-      target.appendChild(block)
-    }
-
-    for (const role of SHARE_ROLE_ROWS) {
-      const url = payload.links[role]
-      if (!url) continue
-      const row = document.createElement('div')
-      row.className = 'world-link-row'
-      const label = document.createElement('span')
-      const roleLabel = SHARE_ROLE_LABELS[role] ?? role
-      label.textContent = roleLabel
-      label.title = url
-      const actions = document.createElement('div')
-      actions.className = 'world-link-actions'
-      const qr = buildQrDisclosure(url, roleLabel, 'QR')
-      const copy = document.createElement('button')
-      copy.type = 'button'
-      copy.className = 'copy-link-btn'
-      copy.textContent = 'Copy'
-      bindCopyLink(copy, url)
-      actions.append(qr.button, copy)
-      row.append(label, actions)
-      target.append(row, qr.panel)
-    }
+    shareMenu.apply(payload.links)
+    renderScannerShare(payload.links['scanner'])
   } catch (error) {
-    // A failed fetch for a Place that has since been switched away from does not write to this panel.
+    // A failed fetch for a Place that has since been switched away from does not write to this menu.
     if (gen !== worldGen) return
-    target.innerHTML = `<div class="layer-meta">Share links unavailable: ${escHtml(errorMessage(error))}</div>`
+    shareMenu.apply(null, `Share links unavailable: ${errorMessage(error)}`)
+    // The last Place's phone-scan link must not stay in the Navigate menu.
+    renderScannerShare(undefined)
   }
+}
+
+/**
+ * The phone-scan link is not one of the three SHARE entries, so it is offered from the Navigate
+ * menu instead, where "Scan a Place" already points to the scanner. Its QR stays behind an
+ * explicit click, as before.
+ */
+function renderScannerShare(scannerUrl: string | undefined): void {
+  const target = document.getElementById('scanner-share-host')
+  if (!target) return
+  target.replaceChildren()
+  shareQrClosers.length = 0
+  if (!scannerUrl) return
+  const block = document.createElement('div')
+  block.className = 'scanner-share'
+  const head = document.createElement('div')
+  head.className = 'scanner-share-head'
+  head.innerHTML = '<span>Scan with a phone</span><small>Point a phone camera here to capture into this place.</small>'
+  head.title = scannerUrl
+  const actions = document.createElement('div')
+  actions.className = 'world-link-actions'
+  const scannerQr = buildQrDisclosure(scannerUrl, SHARE_ROLE_LABELS['scanner'] ?? 'Scanner', 'Show QR', 240)
+  scannerQr.button.classList.add('primary')
+  const scannerCopy = document.createElement('button')
+  scannerCopy.type = 'button'
+  scannerCopy.className = 'copy-link-btn'
+  scannerCopy.textContent = 'Copy'
+  bindCopyLink(scannerCopy, scannerUrl)
+  actions.append(scannerQr.button, scannerCopy)
+  block.append(head, actions, scannerQr.panel)
+  target.appendChild(block)
 }
 
 async function queueJob(type: WorldJobType): Promise<void> {
@@ -4418,26 +4514,92 @@ function syncViewMenu(): void {
     if (control) control.checked = checked
   }
   setChecked('view-toggle-map', geoMap.isOpen)
-  setChecked('view-toggle-points', globalLayerVisible.points)
-  setChecked('view-toggle-floor', globalLayerVisible.floor)
-  setChecked('view-toggle-mesh', globalLayerVisible.mesh)
-  setChecked('view-toggle-path', globalLayerVisible.cameraPath)
-  setChecked('view-toggle-frustums', globalLayerVisible.cameraFrustums)
-  setChecked('view-toggle-images', globalLayerVisible.rgbFrames)
   setChecked('view-toggle-grid', groundGrid?.visible ?? true)
   setChecked('view-toggle-labels', globalLayerVisible.labels)
   setChecked('view-toggle-anchors', globalLayerVisible.anchor)
+  const splatToggle = document.getElementById('splat-layer-toggle') as HTMLInputElement | null
+  if (splatToggle) splatToggle.checked = scanSplatVisible
+  // The six layer toggles are the View menu's own (./view-menu.ts).
+  viewMenu.sync()
 }
 
 function renderToolbarSummary(queueJobs: WorldJob[]): void {
   if (!world) return
-  const activeJobs = queueJobs.filter(job => job.status === 'queued' || job.status === 'processing')
+  const finished = queueJobs.filter(job => job.status === 'completed').length
+  const running = queueJobs.filter(job => job.status === 'queued' || job.status === 'processing').length
   setText('toolbar-project-name', world.name)
   setText('toolbar-scan-count', String(world.scans.length))
   // How many layer rows have something to show in this Place, not the number of layer types there are (F-19).
   setText('toolbar-layer-count', String(layersWithContent(layerContent)))
-  setText('toolbar-job-count', `${activeJobs.length}/${queueJobs.length}`)
-  document.getElementById('toolbar-jobs')?.classList.toggle('is-active', activeJobs.length > 0)
+  // Job progress: the jobs finished out of every job the Place has, with a bar.
+  setText('toolbar-job-count', `${finished} / ${queueJobs.length}`)
+  const fill = document.getElementById('toolbar-job-fill')
+  if (fill) fill.style.width = queueJobs.length > 0 ? `${Math.round((finished / queueJobs.length) * 100)}%` : '0%'
+  const jobs = document.getElementById('toolbar-jobs')
+  jobs?.classList.toggle('is-active', running > 0)
+  jobs?.setAttribute('title', `${finished} of ${queueJobs.length} jobs finished${running > 0 ? `, ${running} running` : ''}`)
+}
+
+/** The viewer's own switches, read as the View menu's flags: each layer's one switch, and the static splat's. */
+function readViewFlags(): ViewFlagState {
+  return {
+    cameraPath: globalLayerVisible.cameraPath,
+    cameraFrustums: globalLayerVisible.cameraFrustums,
+    rgbFrames: globalLayerVisible.rgbFrames,
+    detections: globalLayerVisible.detections,
+    points: globalLayerVisible.points,
+    floor: globalLayerVisible.floor,
+    mesh: globalLayerVisible.mesh,
+    splat: scanSplatVisible,
+  }
+}
+
+/**
+ * Writes the View menu's flags back through the switches the HUD buttons and the Layers rows use (F-41):
+ * setLayerVisible() for each layer whose flag changed, and "Show trained splat" for the static splat.
+ */
+function writeViewFlags(state: ViewFlagState): void {
+  for (const flag of VIEW_FLAGS) {
+    if (flag === 'splat') continue
+    const type = FLAG_LAYER[flag]
+    if (state[flag] !== globalLayerVisible[type]) setLayerVisible(type, state[flag])
+  }
+  if (state.splat !== scanSplatVisible) setScanSplatVisible(state.splat)
+}
+
+/**
+ * What this Place holds, as the View menu reads it. A layer has content by the rule of the Layers rows and the
+ * toolbar's layer count (layerContent here, layerHasContent in ./layer-rows.ts), so the three agree. The static
+ * splat is not a Layers row: it has content once a scan's trained splat is attached.
+ */
+function viewFacts(): ViewLayerFacts {
+  const withContent: Partial<Record<LayerType, boolean>> = {}
+  const unreadableTypes: Partial<Record<LayerType, boolean>> = {}
+  for (const flag of VIEW_FLAGS) {
+    const type = FLAG_LAYER[flag]
+    if (type === 'splat') continue
+    const content = layerContent(type)
+    withContent[type] = layerHasContent(type, content)
+    if ((content.frames?.unreadable ?? 0) > 0) unreadableTypes[type] = true
+  }
+  withContent.splat = scanSplatLayers.size > 0
+
+  // A scan that has not finished loading is "loading", not "empty", for any layer its manifest says it carries.
+  // A failed load is not loading: its scan row says what went wrong.
+  const pendingTypes: Partial<Record<LayerType, boolean>> = {}
+  for (const scan of world?.scans ?? []) {
+    const entry = loadedScans.get(scan.scanId)
+    if (entry?.loaded || entry?.error) continue
+    for (const layer of scan.layerIndex ?? []) {
+      if (layer.source !== 'future' && (layer.count ?? 1) > 0) pendingTypes[layer.type] = true
+    }
+  }
+  // A loaded scan whose frame set is still on its way: its camera layers are loading too.
+  for (const [scanId, entry] of loadedScans) {
+    if (!entry.loaded || !entry.manifest.frameSetUrl || scanFrames.has(scanId)) continue
+    for (const type of FRAME_LAYER_TYPES) pendingTypes[type] = true
+  }
+  return { withContent, pendingTypes, unreadableTypes }
 }
 
 // ─── Layer visibility ────────────────────────────────────────────────────────
@@ -5246,6 +5408,9 @@ document.getElementById('review-comment-submit')?.addEventListener('click', () =
 
 // Closing the Share menu collapses any open QR. The symbol encodes a bearer
 // token, so it should not survive the interaction that asked for it.
+document.getElementById('workspace-menu')?.addEventListener('toggle', (event) => {
+  if (!(event.currentTarget as HTMLDetailsElement).open) closeShareQrCodes()
+})
 document.getElementById('share-menu')?.addEventListener('toggle', (event) => {
   if (!(event.currentTarget as HTMLDetailsElement).open) closeShareQrCodes()
 })
@@ -5320,14 +5485,9 @@ viewToggle('view-toggle-map')?.addEventListener('change', (event) => {
   syncViewMenu()
 })
 
-// Each Views toggle is one layer's switch, through the same setLayerVisible() the HUD and the Layers rows use.
+// Each Views toggle is one layer's switch, through the same setLayerVisible() the HUD and the Layers rows use. The six
+// layer toggles under "Layers" are the View menu's (./view-menu.ts), which writes through the same function.
 const VIEW_LAYER_TOGGLES: Array<[string, LayerType]> = [
-  ['view-toggle-points', 'points'],
-  ['view-toggle-floor', 'floor'],
-  ['view-toggle-mesh', 'mesh'],
-  ['view-toggle-path', 'cameraPath'],
-  ['view-toggle-frustums', 'cameraFrustums'],
-  ['view-toggle-images', 'rgbFrames'],
   ['view-toggle-labels', 'labels'],
   ['view-toggle-anchors', 'anchor'],
 ]

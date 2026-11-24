@@ -33,7 +33,7 @@ build, for XREAL Aura and PICO, WebXR alone.
 
 Planning for the device targets is in wave 13:
 [factory/13-device-targets/README.md](../factory/13-device-targets/README.md). XREAL Aura and
-PICO are planned in wave 16: [factory/16-xr-device-targets/README.md](../factory/16-xr-device-targets/README.md).
+PICO are planned in wave 17: [factory/17-xr-device-targets/README.md](../factory/17-xr-device-targets/README.md).
 
 ## Builds of the merged tree
 

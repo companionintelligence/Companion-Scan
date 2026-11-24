@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>Companion Scan Spatial Editor</title>
+    <title>Spatial Editor</title>
     <link rel="manifest" href="/manifest.json" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -816,8 +816,13 @@
       .register-card { display: grid; gap: 3px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
       .register-card:last-child { border-bottom: none; }
       .register-headline { font-size: 12px; font-weight: 700; color: #72ddd4; }
-      .register-actions { display: flex; gap: 6px; margin-top: 4px; }
+      .register-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
       .register-actions .job-btn { min-height: 34px; padding: 0 12px; }
+      /* With the photo method on, a card has a block per method, the way the two differ, and what neither checked. */
+      .register-method { display: grid; gap: 3px; padding: 4px 0; }
+      .register-method-title { font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+      .register-disagree { color: #ffb86b; }
+      .register-caveat { opacity: 0.8; }
 
       .copy-link-btn,
       .job-btn,
@@ -1670,6 +1675,32 @@
       .view-mode-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 4px 9px; border-bottom: 1px solid rgba(255,255,255,.08); color: var(--ci-muted); font-size: 10px; font-weight: 700; }
       .view-toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 34px; color: var(--ci-paper); font-size: 11px; cursor: pointer; }
       .view-toggle input { width: 16px; height: 16px; accent-color: var(--ci-mint); }
+      /* Spatial Editor v1: job progress bar, View menu layers and actions, share entries, object fields. */
+      .toolbar-job-bar { display: block; width: 44px; height: 3px; margin: 3px 0 2px; border-radius: 2px; background: rgba(255,255,255,.12); overflow: hidden; }
+      #toolbar-job-fill { display: block; width: 0; height: 100%; background: var(--ci-mint); transition: width .2s ease; }
+      .view-menu-actions { display: flex; gap: 6px; margin: 0 0 8px; }
+      .view-menu-action { flex: 1 1 0; min-height: 30px; border: 1px solid rgba(114,221,212,.3); border-radius: 7px; background: rgba(114,221,212,.08); color: var(--ci-paper); font: inherit; font-size: 10px; font-weight: 800; cursor: pointer; }
+      .view-menu-action:hover { background: rgba(114,221,212,.18); }
+      .view-layer-reason { margin: -4px 0 6px; color: var(--ci-muted); font-size: 10px; line-height: 1.4; }
+      .view-layer-reason[hidden] { display: none; }
+      .view-toggle.is-disabled { color: rgba(255,255,255,.42); cursor: default; }
+      .view-toggle input:disabled { opacity: .35; cursor: not-allowed; }
+      .share-entries { display: grid; gap: 6px; }
+      .share-entry { display: grid; gap: 2px; width: 100%; padding: 9px 10px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: rgba(255,255,255,.03); color: var(--ci-paper); font: inherit; text-align: left; cursor: pointer; }
+      .share-entry:hover:not(:disabled) { border-color: rgba(114,221,212,.4); background: rgba(114,221,212,.08); color: var(--ci-mint); }
+      .share-entry:disabled { cursor: not-allowed; opacity: .6; }
+      .share-entry-label { font-size: 11px; font-weight: 800; }
+      .share-entry-note { color: var(--ci-muted); font-size: 9.5px; font-weight: 600; line-height: 1.35; }
+      .object-field { display: grid; gap: 4px; margin: 0 0 8px; color: var(--ci-muted); font-size: 10px; font-weight: 700; }
+      .object-field-row { display: flex; gap: 6px; align-items: center; }
+      .object-field-row .ci-input { flex: 1 1 auto; min-width: 0; }
+      .object-link-readout { color: var(--ci-paper); font-size: 11px; font-weight: 600; }
+      .transform-fields { display: grid; gap: 6px; margin: 8px 0 2px; }
+      .transform-fields[hidden] { display: none; }
+      .transform-field-row { display: grid; grid-template-columns: minmax(72px, auto) repeat(3, minmax(0, 1fr)); gap: 4px; align-items: center; }
+      .transform-field-label { color: var(--ci-muted); font-size: 9.5px; font-weight: 800; }
+      .transform-axis { width: 100%; min-width: 0; padding: 4px 6px; font-size: 11px; font-variant-numeric: tabular-nums; }
+      .transform-axis.is-invalid { border-color: rgba(239,154,154,.8); }
 
       .processing-flow { display: grid; gap: 8px; }
       .processing-step {
@@ -2417,21 +2448,34 @@
         <div class="toolbar-metrics" aria-label="Project statistics">
           <span class="toolbar-metric"><strong id="toolbar-scan-count">--</strong><span>scans</span></span>
           <span class="toolbar-metric"><strong id="toolbar-layer-count">--</strong><span>layers</span></span>
-          <span class="toolbar-metric jobs" id="toolbar-jobs"><strong id="toolbar-job-count">--</strong><span>jobs</span></span>
+          <span class="toolbar-metric jobs" id="toolbar-jobs" title="Jobs finished out of all jobs in this place"><strong id="toolbar-job-count">--</strong><span class="toolbar-job-bar" aria-hidden="true"><span id="toolbar-job-fill"></span></span><span>jobs</span></span>
         </div>
         <details id="view-menu">
-          <summary>Views</summary>
+          <summary>View</summary>
           <div class="view-menu-panel">
-            <span class="view-menu-heading">Scene visibility</span>
+            <div class="view-menu-actions">
+              <button type="button" class="view-menu-action" id="view-show-all">Show all</button>
+              <button type="button" class="view-menu-action" id="view-hide-all">Hide all</button>
+            </div>
+            <span class="view-menu-heading">Layers</span>
+            <div class="view-layer-list" id="view-layer-list">
+              <label class="view-toggle" data-view-layer="cameraTrail"><span>Camera trail</span><input id="view-toggle-path" type="checkbox" /></label>
+              <p class="view-layer-reason" id="view-reason-cameraTrail" hidden></p>
+              <label class="view-toggle" data-view-layer="scannedImages"><span>Scanned images &amp; frustums</span><input id="view-toggle-frustums" type="checkbox" /></label>
+              <p class="view-layer-reason" id="view-reason-scannedImages" hidden></p>
+              <label class="view-toggle" data-view-layer="detectedObjects"><span>Detected objects</span><input id="view-toggle-detections" type="checkbox" /></label>
+              <p class="view-layer-reason" id="view-reason-detectedObjects" hidden></p>
+              <label class="view-toggle" data-view-layer="hitPoints"><span>Hit points</span><input id="view-toggle-points" type="checkbox" /></label>
+              <p class="view-layer-reason" id="view-reason-hitPoints" hidden></p>
+              <label class="view-toggle" data-view-layer="planes"><span>Planes</span><input id="view-toggle-floor" type="checkbox" /></label>
+              <p class="view-layer-reason" id="view-reason-planes" hidden></p>
+              <label class="view-toggle" data-view-layer="splats"><span>Splats &amp; photogrammetry</span><input id="view-toggle-mesh" type="checkbox" /></label>
+              <p class="view-layer-reason" id="view-reason-splats" hidden></p>
+            </div>
+            <span class="view-menu-heading">Other views</span>
             <label class="view-mode-row" title="Show only matching objects. Comma or space separated; prefix a term with - to hide it, e.g. -wall -floor"><span>Filter objects</span><input class="ci-input" id="view-filter-objects" type="search" placeholder="chair, desk  ·  -wall" aria-label="Filter objects by label" /></label>
             <label class="view-mode-row"><span>Render mode</span><select class="ci-select" id="view-mode-select" aria-label="View type"><option value="solid">Solid</option><option value="points">Points</option><option value="wireframe">Wireframe</option><option value="semantic">Semantic</option></select></label>
             <label class="view-toggle"><span>GIS map</span><input id="view-toggle-map" type="checkbox" /></label>
-            <label class="view-toggle"><span>Hit points</span><input id="view-toggle-points" type="checkbox" checked /></label>
-            <label class="view-toggle"><span>Ground planes</span><input id="view-toggle-floor" type="checkbox" checked /></label>
-            <label class="view-toggle"><span>Scanned objects</span><input id="view-toggle-mesh" type="checkbox" checked /></label>
-            <label class="view-toggle"><span>Camera trail</span><input id="view-toggle-path" type="checkbox" /></label>
-            <label class="view-toggle"><span>Image frustums</span><input id="view-toggle-frustums" type="checkbox" /></label>
-            <label class="view-toggle"><span>Scanned images</span><input id="view-toggle-images" type="checkbox" /></label>
             <label class="view-toggle"><span>Ground grid</span><input id="view-toggle-grid" type="checkbox" checked /></label>
             <label class="view-toggle"><span>Tags</span><input id="view-toggle-labels" type="checkbox" checked /></label>
             <label class="view-toggle" title="Where each scan's calibration origin was placed — turn on to align repeat scans of the same place"><span>Calibration anchors</span><input id="view-toggle-anchors" type="checkbox" /></label>
@@ -2446,6 +2490,7 @@
               <span class="workspace-menu-heading">Workspace destinations</span>
               <a href="/" id="scan-place-link" class="workspace-menu-link"><span>Scan a Place</span><small>Start a camera scan or upload media.</small></a>
               <a href="/webxr.html" id="webxr-link" class="workspace-menu-link"><span>WebXR scanner</span><small>Open the browser-based WebXR scan view.</small></a>
+              <div id="scanner-share-host"></div>
               <div class="workspace-menu-divider" aria-hidden="true"></div>
               <a id="account-chip" href="/authenticate/oidc?redirect=/editor" title="Connect your Companion Intelligence Portal account">Connect account</a>
             </div>
@@ -2453,8 +2498,21 @@
           <details id="share-menu">
             <summary>Share</summary>
             <div class="share-menu-panel">
-              <span class="share-menu-heading">This place workspace</span>
-              <div id="share-links"><div class="layer-meta">Loading share links...</div></div>
+              <span class="share-menu-heading">Share this place</span>
+              <div id="share-links" class="share-entries">
+                <button type="button" class="share-entry" id="share-entry-view" disabled>
+                  <span class="share-entry-label">Copy view-only link</span>
+                  <small class="share-entry-note">Loading…</small>
+                </button>
+                <button type="button" class="share-entry" id="share-entry-comment" disabled>
+                  <span class="share-entry-label">Comment</span>
+                  <small class="share-entry-note">Loading…</small>
+                </button>
+                <button type="button" class="share-entry" id="share-entry-edit" disabled>
+                  <span class="share-entry-label">Edit</span>
+                  <small class="share-entry-note">Loading…</small>
+                </button>
+              </div>
             </div>
           </details>
         </div>
@@ -2466,7 +2524,7 @@
         <div id="sidebar">
           <button id="sidebar-collapse-btn" aria-label="Toggle sidebar" title="Collapse/expand sidebar">◀</button>
           <div id="sidebar-header">
-            <span id="sidebar-title">Companion Scan</span>
+            <span id="sidebar-title">Spatial Editor</span>
           </div>
           <div id="sidebar-tabs" role="tablist" aria-label="Project navigation">
             <button class="sidebar-tab" data-tab="world" role="tab" aria-selected="false" id="tab-btn-world" aria-controls="tab-world" title="Project" aria-label="Project"><svg class="sidebar-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 3h14v18H5z"/><path d="M8 7h8M8 11h8M8 15h5"/></svg><span class="sidebar-tab-label">Project</span></button>
@@ -2821,12 +2879,48 @@
                   <div id="edit-obj-meta" style="font-size:11px;color:rgba(255,255,255,0.4);line-height:1.7;"></div>
                 </div>
 
+                <div class="edit-section" id="edit-object-section">
+                  <div class="edit-section-title">Object</div>
+                  <label class="object-field" for="edit-obj-rename">
+                    <span>Name</span>
+                    <span class="object-field-row">
+                      <input class="ci-input" id="edit-obj-rename" type="text" maxlength="120" autocomplete="off" aria-label="Object name" />
+                      <button class="job-btn" id="edit-rename-btn" type="button">Rename</button>
+                    </span>
+                  </label>
+                  <div class="object-field">
+                    <span>Physical thing</span>
+                    <output id="edit-thing-link" class="object-link-readout">Not linked to a physical thing</output>
+                  </div>
+                  <span class="layer-meta" id="edit-object-status" aria-live="polite"></span>
+                </div>
+
                 <div class="edit-section">
                   <div class="edit-section-title">Transform</div>
                   <div class="transform-grid">
                     <button class="transform-btn active" id="transform-translate">Move</button>
                     <button class="transform-btn" id="transform-rotate">Rotate</button>
                     <button class="transform-btn" id="transform-scale">Scale</button>
+                  </div>
+                  <div class="transform-fields" id="transform-fields" role="group" aria-label="Position, rotation and scale">
+                    <div class="transform-field-row" data-field-group="position">
+                      <span class="transform-field-label" title="Metres, in the parent frame">Position (m)</span>
+                      <input class="ci-input transform-axis" id="xf-position-x" data-xf-group="position" data-xf-axis="x" type="number" step="any" aria-label="Position X (m)" />
+                      <input class="ci-input transform-axis" id="xf-position-y" data-xf-group="position" data-xf-axis="y" type="number" step="any" aria-label="Position Y (m)" />
+                      <input class="ci-input transform-axis" id="xf-position-z" data-xf-group="position" data-xf-axis="z" type="number" step="any" aria-label="Position Z (m)" />
+                    </div>
+                    <div class="transform-field-row" data-field-group="rotation">
+                      <span class="transform-field-label" title="Euler XYZ, degrees">Rotation (°)</span>
+                      <input class="ci-input transform-axis" id="xf-rotation-x" data-xf-group="rotation" data-xf-axis="x" type="number" step="any" aria-label="Rotation X (degrees)" />
+                      <input class="ci-input transform-axis" id="xf-rotation-y" data-xf-group="rotation" data-xf-axis="y" type="number" step="any" aria-label="Rotation Y (degrees)" />
+                      <input class="ci-input transform-axis" id="xf-rotation-z" data-xf-group="rotation" data-xf-axis="z" type="number" step="any" aria-label="Rotation Z (degrees)" />
+                    </div>
+                    <div class="transform-field-row" data-field-group="scale">
+                      <span class="transform-field-label" title="Unitless multiplier; zero is rejected">Scale</span>
+                      <input class="ci-input transform-axis" id="xf-scale-x" data-xf-group="scale" data-xf-axis="x" type="number" step="any" aria-label="Scale X" />
+                      <input class="ci-input transform-axis" id="xf-scale-y" data-xf-group="scale" data-xf-axis="y" type="number" step="any" aria-label="Scale Y" />
+                      <input class="ci-input transform-axis" id="xf-scale-z" data-xf-group="scale" data-xf-axis="z" type="number" step="any" aria-label="Scale Z" />
+                    </div>
                   </div>
                   <button class="job-btn" id="edit-save-transform" style="width:100%;margin-top:7px;">Save Transform</button>
                 </div>
@@ -2917,6 +3011,7 @@
                   </button>
                 </div>
               </div>
+
             </div>
           </div>
         </div>

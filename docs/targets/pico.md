@@ -18,7 +18,7 @@ Scan has two ways onto a PICO headset, and neither has run on one yet:
    [Web, WebXR](web-webxr.md) target, and it needs no build. PICO documents WebXR in its browser
    on both generations.
 
-Plan: [wave 16](../factory/16-xr-device-targets/README.md).
+Plan: [wave 17](../factory/17-xr-device-targets/README.md).
 
 ## The devices and the platform, as PICO's documentation describes them
 
@@ -56,7 +56,7 @@ is, how to make it, and what was checked. These are the reasons for it on this d
   SDK, needs `minSdk` and `compileSdk` 35, Kotlin 2.0 or later, and PICO's own versions of
   Jetpack Compose modules. The shell is a Java Capacitor app with `minSdk` 24, so a native PICO
   runtime would be a separate app, as the Quest app is
-  ([ticket 0005](../factory/16-xr-device-targets/0005-native-pico-capture.md)).
+  ([ticket 0005](../factory/17-xr-device-targets/0005-native-pico-capture.md)).
 
 ## The capture path to try first
 
@@ -98,7 +98,7 @@ macOS, and this work was done on Linux. The build's own status is on
 There is no checklist for these devices yet. This list is what the first run should write down,
 with the date, the device and its PICO OS version, back into [Status](#status) and into
 [AR_DEVICE_SUPPORT.md](../operations/AR_DEVICE_SUPPORT.md). The answers decide
-[ticket 0005](../factory/16-xr-device-targets/0005-native-pico-capture.md).
+[ticket 0005](../factory/17-xr-device-targets/0005-native-pico-capture.md).
 
 1. **The platform.** Record what no page gives:
    - the PICO OS version (Settings, General, About);
@@ -137,7 +137,7 @@ with the date, the device and its PICO OS version, back into [Status](#status) a
 - **Camera frames:** PICO documents them for apps only through the Camera Pack in its Unity SDK.
   In the APK or the browser a capture may get poses and hit tests and no images.
 - **A native capture app** for PICO would be a separate app, like `meta/` for Quest
-  ([ticket 0005](../factory/16-xr-device-targets/0005-native-pico-capture.md)). Its one documented
+  ([ticket 0005](../factory/17-xr-device-targets/0005-native-pico-capture.md)). Its one documented
   route to frames is a Unity app with Camera Pack, so it would not share code with the Kotlin Quest app.
 - **Not run:** no PICO headset, and no PICO Emulator, which runs on Windows and macOS only.
 - **The build's own gaps** (the ARCore notice, the portrait lock, the store's implied features, the

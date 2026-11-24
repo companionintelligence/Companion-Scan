@@ -4,6 +4,7 @@ import type { PreflightVerdict } from './preflight'
 import type { AnchorCapability } from './anchors'
 import type { FrameDiscontinuity, TrackingDiagnostics } from './frame-epoch'
 import type { ScaleKind, ScaleMode } from '../world/scale-mode'
+import type { CameraFrame, CameraFrameOptions, CameraFrameSubscription } from './camera-frame-feed.ts'
 
 /** 6-DoF camera pose from the AR runtime */
 export interface Pose {
@@ -91,6 +92,17 @@ export interface ARProvider {
    * `timeoutMs`, so the UI can recover instead of waiting forever.
    */
   captureFrame(timeoutMs?: number): Promise<RawFrame>
+
+  /**
+   * Camera frames, each with the pose and projection it goes with, at up to `options.maxHz`: the feed the printed-marker
+   * detector reads (src/ar/camera-frame-feed.ts has what a frame is, what the feed costs and what it never does).
+   *
+   * Optional. `EighthWallProvider` delivers, from the camera pixel array it already has for `captureFrame()` and at no cost
+   * while nobody is subscribed. `WebXRProvider` answers with a subscription whose `status` is `'unsupported'` and says why, so
+   * a flow can tell the person, and delivers nothing. A provider without the member is read as unsupported: the native
+   * provider has none while its ScanAR session runs, and has the web runtime's after a hand-over (src/ar/native.ts).
+   */
+  onCameraFrame?(cb: (frame: CameraFrame) => void, options: CameraFrameOptions): CameraFrameSubscription
   /**
    * Synchronous hit-test at normalised screen coords (0–1, 0–1).
    * Returns null when no SLAM feature point is found beneath the coordinate.

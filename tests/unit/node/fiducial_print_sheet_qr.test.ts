@@ -19,19 +19,29 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildSheet } from '../../../scripts/print-fiducial.mjs'
+import { buildSheet, buildTwoTagSheet } from '../../../scripts/print-fiducial.mjs'
+import { CSCAN5_V1 } from '../../../src/ar/fiducial/dictionary.ts'
 import { qrCodeSvg } from '../../../src/ui/qr-code.ts'
 import { qrcodegen } from '../../../src/third-party/qrcodegen/qrcodegen.ts'
 import { serializeTagPayload } from '../../../src/ar/fiducial/payload.ts'
-import { parseSheet } from '../../support/fiducial-sheet.ts'
+import { assertBalancedSvg, parseSheet } from '../../support/fiducial-sheet.ts'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const ROOT = join(HERE, '..', '..', '..')
 const SNAPSHOTS = join(HERE, 'fiducial-sheet')
 const SCRIPT = join(ROOT, 'scripts', 'print-fiducial.mjs')
 
+/** The 5x5 family, as the first two snapshots were made; the generator's default is the 6x6 family now (see `sheet6` and `pair`). */
 function sheet(args: Partial<Parameters<typeof buildSheet>[0]> = {}) {
-  return buildSheet({ tagId: 7, sizeMm: 120, placeId: 'place-kitchen-1', roomId: 'room-a', page: 'a4', qrSvg: qrCodeSvg, ...args })
+  return buildSheet({ tagId: 7, sizeMm: 120, placeId: 'place-kitchen-1', roomId: 'room-a', page: 'a4', dictionary: CSCAN5_V1, qrSvg: qrCodeSvg, ...args })
+}
+
+function sheet6(args: Partial<Parameters<typeof buildSheet>[0]> = {}) {
+  return buildSheet({ tagId: 7, sizeMm: 140, placeId: 'place-kitchen-1', roomId: 'room-a', page: 'a4', qrSvg: qrCodeSvg, ...args })
+}
+
+function pair(args: Partial<Parameters<typeof buildTwoTagSheet>[0]> = {}) {
+  return buildTwoTagSheet({ tagIds: [3, 4], spacingMm: 500, sizeMm: 150, placeId: 'place-hall-9', roomId: null, page: 'a1', mount: 'wall', mountHeightMm: 1200, qrSvg: qrCodeSvg, ...args })
 }
 
 function snapshotMatches(name: string, svg: string) {
@@ -45,9 +55,11 @@ function snapshotMatches(name: string, svg: string) {
   assert.equal(svg === expected, true, `${name} differs from its snapshot (first difference at byte ${[...svg].findIndex((c, i) => c !== expected[i])})`)
 }
 
-test('snapshot: a 120 mm tag on A4 and a 200 mm tag on A3 are byte-for-byte what was reviewed', () => {
+test('snapshot: a 120 mm tag on A4 and a 200 mm tag on A3 (5x5 family), a 140 mm tag of the 6x6 family on A4, and a pair of 150 mm tags 500 mm apart on A1, are byte-for-byte what was reviewed', () => {
   snapshotMatches('id7-120mm-a4.svg', sheet().svg)
   snapshotMatches('id23-200mm-a3.svg', sheet({ tagId: 23, sizeMm: 200, page: 'a3', placeId: 'place-hall-9', roomId: null }).svg)
+  snapshotMatches('cscan6-id7-140mm-a4.svg', sheet6().svg)
+  snapshotMatches('cscan6-pair-ids3-4-150mm-500mm-a1.svg', pair().svg)
 })
 
 test('the QR code encodes exactly the payload line', () => {
@@ -66,39 +78,30 @@ test('the QR code encodes exactly the payload line', () => {
   assert.match(p.qr.svg, /width="36" height="36"/)
 })
 
-/** Every start tag has its end tag, in order, and no stray angle bracket is left in text or attributes. */
-function assertBalanced(svg: string): void {
-  const stack: string[] = []
-  let last = 0
-  for (const m of svg.matchAll(/<(\/?)([A-Za-z][\w:-]*)([^<>]*?)(\/?)>/g)) {
-    const between = svg.slice(last, m.index)
-    assert.ok(!between.includes('<') && !between.includes('>'), `a raw angle bracket in text near byte ${m.index}`)
-    last = m.index + m[0].length
-    if (m[1]) {
-      assert.equal(stack.pop(), m[2], `</${m[2]}> closes the wrong element`)
-    } else if (!m[4]) {
-      stack.push(m[2]!)
-    }
-  }
-  assert.deepEqual(stack, [], 'unclosed elements')
-  assert.ok(svg.startsWith('<svg ') && svg.endsWith('</svg>\n'))
-}
-
 test('every sheet in the snapshots is a well-formed document', () => {
-  assertBalanced(readFileSync(join(SNAPSHOTS, 'id7-120mm-a4.svg'), 'utf8'))
-  assertBalanced(readFileSync(join(SNAPSHOTS, 'id23-200mm-a3.svg'), 'utf8'))
+  for (const name of ['id7-120mm-a4.svg', 'id23-200mm-a3.svg', 'cscan6-id7-140mm-a4.svg', 'cscan6-pair-ids3-4-150mm-500mm-a1.svg']) assertBalancedSvg(readFileSync(join(SNAPSHOTS, name), 'utf8'))
 })
 
 test('the command line writes the same bytes as the builder, and says what to run when the QR renderer cannot load', () => {
   const dir = mkdtempSync(join(tmpdir(), 'fiducial-sheet-'))
   try {
     const out = join(dir, 'm.svg')
-    const args = ['--id', '7', '--size-mm', '120', '--place-id', 'place-kitchen-1', '--room-id', 'room-a', '--page', 'a4', '--out', out]
+    const args = ['--id', '7', '--size-mm', '120', '--place-id', 'place-kitchen-1', '--room-id', 'room-a', '--page', 'a4', '--family', 'cscan-5x5-v1', '--out', out]
     execFileSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, ...args], { stdio: 'pipe' })
     assert.equal(readFileSync(out, 'utf8'), sheet().svg)
 
-    const piped = execFileSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--id', '7', '--place-id', 'place-kitchen-1', '--room-id', 'room-a', '--size-mm', '120', '--page', 'a4'], { stdio: 'pipe' }).toString()
+    const piped = execFileSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--id', '7', '--place-id', 'place-kitchen-1', '--room-id', 'room-a', '--size-mm', '120', '--page', 'a4', '--family', 'cscan-5x5-v1'], { stdio: 'pipe' }).toString()
     assert.equal(piped, sheet().svg, 'standard output is the same sheet')
+
+    // With no --family the sheet is the default family's: the 6x6 one.
+    const dflt = execFileSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--id', '7', '--place-id', 'place-kitchen-1', '--room-id', 'room-a', '--size-mm', '140', '--page', 'a4'], { stdio: 'pipe' }).toString()
+    assert.equal(dflt, sheet6().svg)
+    assert.ok(dflt.includes('data-family="cscan-6x6-v1"'))
+
+    // A pair, with a mount and its height, from the command line.
+    const pairOut = join(dir, 'pair.svg')
+    execFileSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--ids', '3,4', '--spacing-mm', '500', '--size-mm', '150', '--place-id', 'place-hall-9', '--page', 'a1', '--mount', 'wall', '--mount-height-mm', '1200', '--out', pairOut], { stdio: 'pipe' })
+    assert.equal(readFileSync(pairOut, 'utf8'), pair().svg)
 
     const noFlag = spawnSync(process.execPath, ['--no-warnings', SCRIPT, ...args], { encoding: 'utf8' })
     assert.equal(noFlag.status, 2)
@@ -106,7 +109,12 @@ test('the command line writes the same bytes as the builder, and says what to ru
 
     const missing = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--id', '7'], { encoding: 'utf8' })
     assert.equal(missing.status, 2)
-    assert.match(missing.stderr, /--id and --place-id are required/)
+    assert.match(missing.stderr, /--place-id and exactly one of --id and --ids are required/)
+    const both = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--id', '7', '--ids', '1,2', '--place-id', 'p'], { encoding: 'utf8' })
+    assert.equal(both.status, 2)
+    const unknownFamily = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--id', '7', '--place-id', 'p', '--family', 'tag36h11'], { encoding: 'utf8' })
+    assert.equal(unknownFamily.status, 2)
+    assert.match(unknownFamily.stderr, /unknown family "tag36h11"/)
 
     const tooBig = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--id', '7', '--place-id', 'p', '--size-mm', '400', '--page', 'a3'], { encoding: 'utf8' })
     assert.equal(tooBig.status, 2)

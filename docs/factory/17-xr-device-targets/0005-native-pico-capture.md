@@ -1,5 +1,5 @@
 > **Type:** Native / PICO
-> **Wave:** 16-xr-device-targets
+> **Wave:** 17-xr-device-targets
 > **Branch:** `feat/pico-capture-app`
 > **Commit style:** `feat(pico): summary`
 > **Design:** to be settled from 0004's results, and recorded in an ADR before any code
