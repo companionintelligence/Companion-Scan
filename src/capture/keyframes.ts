@@ -109,6 +109,16 @@ const UPLOAD_RETRIES = 3
 /** Longest one keyframe upload may take before it counts as failed (as the fixed 20 s it was). */
 const UPLOAD_TIMEOUT_MS = 20_000
 
+/**
+ * Whether a failed keyframe upload is worth another attempt. A 5xx (or anything else that is not a 4xx) is; a 4xx is
+ * the request's own fault and is not, except 408 Request Timeout and 429 Too Many Requests, which HTTP defines as
+ * "try again later". Those wait out the same back-off as a network error.
+ */
+export function keyframeUploadRetryable(status: number): boolean {
+  if (status === 408 || status === 429) return true
+  return !(status >= 400 && status < 500)
+}
+
 export class KeyframeStreamer {
   private _opts: Required<KeyframeStreamerOptions>
   private _state: StreamerState = 'idle'
@@ -498,7 +508,7 @@ export class KeyframeStreamer {
         // skips the retry loop: re-POSTing only queues another copy.
         if (isQueuedOffline(resp)) return false
         if (resp.ok) return true
-        if (resp.status >= 400 && resp.status < 500) return false // not retryable
+        if (!keyframeUploadRetryable(resp.status)) return false
       } catch { /* network error or timeout — retry */ } finally {
         clearTimeout(timeout)
         if (this._inflight === attemptControl) this._inflight = null
