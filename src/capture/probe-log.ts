@@ -70,8 +70,9 @@
  * JSON, so the line is kept inside that by construction (numbers are bounded and words are cut), and
  * the test builds the longest line the bounds allow and measures it against the relay's own constant.
  * The orientation sample and the sampler's columns would not fit the relay's first cut of 500 characters (the
- * longest line the bounds allow was 484 characters without them), so the relay's cut was raised to 740, which is
- * above the longest line with both in it and below what the server keeps of a message (`CLIENT_LOG_MSG_MAX_CHARS`,
+ * longest line the bounds allow was 484 characters without them), so the relay's cut was raised: to 740 then, and to
+ * 880 since the fit summary joined the line (`MAX_MSG_CHARS`, src/debug/remote-log.ts). It is above the longest line
+ * with all of them in it and below what the server keeps of a message (`CLIENT_LOG_MSG_MAX_CHARS`,
  * server/wp-a-client-logs.ts); a test holds the three together.
  *
  * Inert unless armed: the listeners are only added when the page was loaded with `probe` in

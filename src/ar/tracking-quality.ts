@@ -18,6 +18,8 @@
  * cosmetic: they set the bounding box that downstream metric fits key off, so
  * splat-align and COLMAP inherit a scale that is wrong by an order of magnitude.
  */
+import { FRAME_JUMP_TRANSLATION_M } from './frame-epoch.ts'
+import { isUnstableTrackingReason } from './tracking-reasons.ts'
 
 /**
  * The statuses the runtimes publish, plus `UNKNOWN` for runtimes that report
@@ -75,21 +77,12 @@ export function trackingIsUsable(status: string | null | undefined): boolean {
 // against on every later visit, so a tap taken while the map is shifting is
 // worth far more to refuse than a stray point is to drop.
 
-/**
- * Reasons that make a frame unfit for placement even beside a status that reads
- * NORMAL. They are read from the runtime's `trackingReason`. INITIALIZING is the one
- * 8th Wall documents (see `TrackingStatus` above); RELOCALIZING, TOO_MUCH_MOTION and
- * NOT_ENOUGH_TEXTURE are not in its documentation and are refused in case the engine
- * reports them (DX4 logs which reasons occur). A reason only ever makes the verdict
- * worse: one that is on this list refuses a frame, and none turns a refused status into a
- * passing one. A reason that is not on this list changes nothing, the status decides.
- */
-const UNSTABLE_REASONS: ReadonlySet<string> = new Set([
-  'INITIALIZING',
-  'RELOCALIZING',
-  'TOO_MUCH_MOTION',
-  'NOT_ENOUGH_TEXTURE',
-])
+// The reasons that make a frame unfit for placement even beside a status that reads NORMAL are the one set in
+// ./tracking-reasons.ts, which `classifyTracking()` (./frame-epoch.ts) reads too: INITIALIZING, which 8th Wall documents
+// (see `TrackingStatus` above); RELOCALIZING, TOO_MUCH_MOTION and NOT_ENOUGH_TEXTURE, which it does not and are refused
+// in case the engine reports them; and the native layers' EXCESSIVE_MOTION and INSUFFICIENT_FEATURES (DX4 logs which
+// reasons occur). A reason only ever makes the verdict worse: one that is in the set refuses a frame, and none turns a
+// refused status into a passing one. A reason that is not in the set changes nothing, the status decides.
 
 /**
  * Whether a calibration marker may be placed in a frame the runtime reports as
@@ -100,22 +93,27 @@ const UNSTABLE_REASONS: ReadonlySet<string> = new Set([
  * | status                                           | reason                       | stable |
  * | ------------------------------------------------ | ---------------------------- | ------ |
  * | NORMAL                                           | none, UNSPECIFIED, or unknown| yes    |
- * | NORMAL                                           | INITIALIZING, RELOCALIZING, TOO_MUCH_MOTION, NOT_ENOUGH_TEXTURE | no |
+ * | NORMAL                                           | one of UNSTABLE_TRACKING_REASONS (./tracking-reasons.ts) | no |
  * | LIMITED, NOT_AVAILABLE, INITIALIZING             | any                          | no     |
  * | UNSPECIFIED (no status said yet)                 | any                          | no     |
  * | any other string, including a different case     | any                          | no     |
- * | UNKNOWN, empty or absent (the runtime has no signal: WebXR) | none or UNSPECIFIED | yes |
+ * | UNKNOWN, empty or absent (the runtime has no signal yet) | none or UNSPECIFIED | yes |
  * | UNKNOWN, empty or absent                         | a bad reason                 | no     |
  *
  * **Closed, unlike `trackingIsUsable()`.** A status this build does not know, or
  * UNSPECIFIED, is not evidence of tracking, so it does not pass:
  * the cost is a tap that has to wait, and it shows. The one open case is a
- * runtime that publishes no status at all. Refusing there would stop WebXR from
- * ever calibrating, and nothing here could tell it from a healthy session, so
- * its only guards are the ones that read the poses: a burst frame with no
- * viewer pose is reported as NOT_AVAILABLE (refused above), a camera that steps
- * farther than `BURST_POSE_JUMP_M` between two frames of a burst, and the time
- * check in `placementDisturbed()`.
+ * runtime that publishes no status at all. Refusing there would stop a runtime
+ * with no signal from ever calibrating, and nothing here could tell it from a
+ * healthy session, so its only guards are the ones that read the poses: a burst
+ * frame with no viewer pose is reported as NOT_AVAILABLE (refused above), a
+ * camera that steps farther than `BURST_POSE_JUMP_M` between two frames of a
+ * burst, and the time check in `placementDisturbed()`. WebXR is no longer that
+ * case once it has a frame: its burst frames carry the status its
+ * `trackingStatus()` derives from the viewer pose (`statusOfViewerPose` in
+ * webxr.ts, FN-036), so an emulated pose is LIMITED and refused here. Whether a
+ * runtime ever reports `emulatedPosition` during a real loss is for a device run
+ * (DX6); iwer, the emulator the mock pages use, never does.
  *
  * **Needs a device.** That an iPhone reaches NORMAL, and what the runtime reports
  * while it does not, has not been seen on a phone: only the documented LIMITED and
@@ -126,7 +124,7 @@ export function trackingIsStableForPlacement(
   status: string | null | undefined,
   reason?: string | null,
 ): boolean {
-  if (reason && UNSTABLE_REASONS.has(reason)) return false
+  if (isUnstableTrackingReason(reason)) return false
   if (!status || status === 'UNKNOWN') return true
   return status === 'NORMAL'
 }
@@ -144,10 +142,11 @@ export const TRACKING_RECOVERING_TEXT = 'Hold still, tracking is recovering'
  * taps (`getTrackingDiagnostics().poseJumps`, src/ar/frame-epoch.ts), and 8th Wall's burst frames carry it.
  *
  * **Adopted, not measured (ADR 0005 rule 5).** The same figure as `FRAME_JUMP_TRANSLATION_M` in frame-epoch.ts, the floor
- * under the translation that tracker reads as a jump between every pair of frames, and kept equal to it by hand: this one
- * judges two frames of a burst by position alone. DX4 (frame shifts and drift over a walk) sizes both.
+ * under the translation that tracker reads as a jump between every pair of frames, and taken from it, so the two cannot
+ * part (FN-035): this one judges two frames of a burst by position alone. DX4 (frame shifts and drift over a walk) sizes
+ * both.
  */
-export const BURST_POSE_JUMP_M = 0.30
+export const BURST_POSE_JUMP_M = FRAME_JUMP_TRANSLATION_M
 
 /**
  * Whether two camera positions, taken in consecutive frames, are farther apart than a hand can move in one frame.

@@ -35,6 +35,7 @@
 import { inferViaServer } from './server.ts'
 import type { RawDetection } from './prompt'
 import { INFER_MODE_KEY } from '../shared/storage-keys.ts'
+import { blobToDataUrl } from '../capture/frame-image.ts'
 
 export type InferMode = 'server' | 'webgpu'
 
@@ -288,11 +289,3 @@ export class InferenceRouter {
   }
 }
 
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = reject
-    reader.readAsDataURL(blob)
-  })
-}

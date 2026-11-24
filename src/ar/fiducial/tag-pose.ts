@@ -45,6 +45,7 @@
  */
 import type { Pose } from '../provider.ts'
 import type { Quat, Vec3 } from '../../world/types.ts'
+import { quatFromRotationMatrix } from '../../shared/pose-math.ts'
 import type {
   CameraIntrinsics,
   CornerFit,
@@ -187,37 +188,13 @@ export function quatToMatrix(q: Quat): number[] {
   ]
 }
 
+/**
+ * The unit quaternion of a row-major rotation matrix: Shepperd's method (src/shared/pose-math.ts, shared with the
+ * native codec's pose decode), then divided by its norm, so a matrix a rounding error off orthonormal still gives a
+ * unit quaternion.
+ */
 export function matrixToQuat(m: Mat3): Quat {
-  const tr = m[0]! + m[4]! + m[8]!
-  let x: number
-  let y: number
-  let z: number
-  let w: number
-  if (tr > 0) {
-    const s = Math.sqrt(tr + 1) * 2
-    w = 0.25 * s
-    x = (m[7]! - m[5]!) / s
-    y = (m[2]! - m[6]!) / s
-    z = (m[3]! - m[1]!) / s
-  } else if (m[0]! > m[4]! && m[0]! > m[8]!) {
-    const s = Math.sqrt(1 + m[0]! - m[4]! - m[8]!) * 2
-    w = (m[7]! - m[5]!) / s
-    x = 0.25 * s
-    y = (m[1]! + m[3]!) / s
-    z = (m[2]! + m[6]!) / s
-  } else if (m[4]! > m[8]!) {
-    const s = Math.sqrt(1 + m[4]! - m[0]! - m[8]!) * 2
-    w = (m[2]! - m[6]!) / s
-    x = (m[1]! + m[3]!) / s
-    y = 0.25 * s
-    z = (m[5]! + m[7]!) / s
-  } else {
-    const s = Math.sqrt(1 + m[8]! - m[0]! - m[4]!) * 2
-    w = (m[3]! - m[1]!) / s
-    x = (m[2]! + m[6]!) / s
-    y = (m[5]! + m[7]!) / s
-    z = 0.25 * s
-  }
+  const { x, y, z, w } = quatFromRotationMatrix(m)
   const n = Math.hypot(x, y, z, w) || 1
   return { x: x / n, y: y / n, z: z / n, w: w / n }
 }

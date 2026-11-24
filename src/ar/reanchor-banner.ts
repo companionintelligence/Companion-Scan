@@ -27,6 +27,7 @@
  */
 import type { Prompt, ReanchorView } from './reanchor-flow.ts'
 import { CHECK_DRIFT_LABEL, CHECK_DRIFT_TITLE } from './reanchor-copy.ts'
+import { listenForCanvasTaps } from './canvas-taps.ts'
 
 export const BANNER_ID = 'reanchor-banner'
 export const CHECK_BUTTON_ID = 'check-drift-btn'
@@ -186,16 +187,9 @@ export function createReanchorView(options: ReanchorViewOptions): ReanchorView {
     doc.body.appendChild(check)
 
     // One single-finger tap is `touchstart` and then `pointerdown`, so `pointerdown` skips touch, as the calibration
-    // card's does (src/ar/project-calibration.ts). Neither calls `preventDefault`: the tap is for whoever else listens.
-    canvas.addEventListener('touchstart', (event: TouchEvent) => {
-      const touch = event.touches[0]
-      if (event.touches.length !== 1 || !touch) return
-      tapAt(touch.clientX, touch.clientY)
-    }, { passive: true })
-    canvas.addEventListener('pointerdown', (event: PointerEvent) => {
-      if (event.pointerType === 'touch') return
-      tapAt(event.clientX, event.clientY)
-    })
+    // card's does: both read a tap through ./canvas-taps.ts. Neither calls `preventDefault`: the tap is for whoever else
+    // listens. The banner lives as long as the page, so its listeners are never removed.
+    listenForCanvasTaps(canvas, tapAt)
 
     parts = { banner, text, detail, actions, check }
     return parts

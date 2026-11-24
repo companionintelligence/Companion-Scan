@@ -50,7 +50,8 @@ import type { CalibrationReferencePhoto, Vec3 } from '../world/types.ts'
 import type { TwoPointFrame } from './calibration-commit.ts'
 import { buildDistanceRing } from './calibration-guides.ts'
 import type { CalibrationStage } from './one-point-offer.ts'
-import { referenceCrosshairPixels, ringRadiiFromStoredPoints, type ReferencePhotoRole } from './reference-photo.ts'
+import { ringRadiiFromStoredPoints, type ReferencePhotoRole } from './reference-photo.ts'
+import { loadReferencePhotoInto, placeReferenceCrosshair } from './reference-photo-view.ts'
 import {
   COMPARE_HEAD,
   NOT_STORED_DISTANCE_STATUS,
@@ -348,13 +349,9 @@ export function createReturnVisitAids(options: ReturnVisitAidsOptions): ReturnVi
 
   function positionCrosshair(slot: Slot): void {
     if (!slot.photo || !slot.img || !slot.cross) return
-    const { left, top } = referenceCrosshairPixels(slot.photo.tapPoint, {
-      width: slot.img.clientWidth,
-      height: slot.img.clientHeight,
-    })
-    // The crosshair is in the figure's own space, and the picture is centred in it when it is held to less than the width.
-    slot.cross.style.left = `${(slot.img.offsetLeft ?? 0) + left}px`
-    slot.cross.style.top = `${(slot.img.offsetTop ?? 0) + top}px`
+    // The crosshair is in the figure's own space, and the picture is centred in it when it is held to less than the
+    // width: the shared placement adds the picture's offset (./reference-photo-view.ts).
+    placeReferenceCrosshair(slot.cross, slot.img, slot.photo.tapPoint)
   }
 
   /** A slot with no picture says why in its place, and shows no figure: an empty frame would read as a photo of nothing. */
@@ -375,29 +372,26 @@ export function createReturnVisitAids(options: ReturnVisitAidsOptions): ReturnVi
     }
     slot.state = 'loading'
     say(slot, 'loading')
-    // A loader that throws before it returns a promise is a loader that failed, as one that rejects is.
-    void Promise.resolve()
-      .then(() => load(photo))
-      .catch(() => null)
-      .then((src) => {
-        if (disposed) {
-          // The modal has gone: a blob nobody will show is released here, and not left to leak.
-          if (src && src.startsWith('blob:')) URL.revokeObjectURL(src)
-          return
-        }
-        if (!src || !slot.img || !slot.figure) {
-          slot.state = 'failed'
-          say(slot, 'failed')
-          return
-        }
-        if (src.startsWith('blob:')) objectUrls.push(src)
-        slot.img.onload = () => positionCrosshair(slot)
-        slot.img.src = src
-        slot.figure.hidden = false
+    // A loader that throws before it returns a promise is a loader that failed, as one that rejects is; and once the modal
+    // has gone, a blob nobody will show is released (./reference-photo-view.ts).
+    const figure = slot.figure
+    void loadReferencePhotoInto({
+      photo,
+      load,
+      img: figure ? slot.img : null,
+      isCurrent: () => !disposed,
+      keepObjectUrl: (url) => objectUrls.push(url),
+      reveal: () => {
+        if (figure) figure.hidden = false
         if (slot.note) slot.note.hidden = true
         slot.state = 'shown'
-        positionCrosshair(slot)
-      })
+      },
+      placeCrosshair: () => positionCrosshair(slot),
+    }).then((outcome) => {
+      if (outcome !== 'failed') return
+      slot.state = 'failed'
+      say(slot, 'failed')
+    })
   }
 
   /** The room above the card for the panel, now, or null when it cannot be measured or the card is not under it. */

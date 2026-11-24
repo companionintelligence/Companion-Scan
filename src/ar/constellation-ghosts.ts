@@ -20,6 +20,7 @@
 import * as THREE from 'three'
 import { buildAnchorMarker } from '../world/anchor-marker.ts'
 import type { GhostPoint } from './constellation-flow.ts'
+import { disposeObject3D } from '../scene/dispose.ts'
 
 /** The name every ghost ring carries, as the stored pair's did. */
 export const GHOST_NAME = 'calibration stored reference'
@@ -66,15 +67,8 @@ export function drawStoredConstellation(parent: THREE.Object3D, ghosts: readonly
   return added
 }
 
-function dispose(root: THREE.Object3D): void {
-  root.traverse((child) => {
-    const drawable = child as Partial<THREE.Mesh>
-    drawable.geometry?.dispose()
-    const material = drawable.material
-    if (Array.isArray(material)) material.forEach((m) => m.dispose())
-    else material?.dispose()
-  })
-}
+/** The one dispose traversal (src/scene/dispose.ts), which the calibration modal uses too. */
+const dispose = disposeObject3D
 
 /** The live layer: ghosts that follow the markers while they are adjusted. */
 export interface GhostLayer {

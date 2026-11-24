@@ -288,14 +288,18 @@ test('points that could not be fitted at all draw the pair\'s two rings and the 
 
 // ── Purity of the file itself ────────────────────────────────────────────────────────────────────────
 
-test('the file reads no DOM and no Deno API, and imports only three, the anchor decal and the flow\'s types', () => {
+test('the file reads no DOM and no Deno API, and imports only three, the anchor decal, the flow\'s types and the shared dispose', () => {
   const source = readFileSync(resolve(ROOT, 'src/ar/constellation-ghosts.ts'), 'utf8')
   const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
   assert.ok(!/\b(document|window|navigator|localStorage|sessionStorage)\b/.test(code), 'no DOM')
   assert.ok(!/\bDeno\b/.test(code), 'no Deno API')
   assert.deepEqual(
     [...code.matchAll(/^import\s+(?:type\s+)?[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1]),
-    ['three', '../world/anchor-marker.ts', './constellation-flow.ts'],
+    ['three', '../world/anchor-marker.ts', './constellation-flow.ts', '../scene/dispose.ts'],
   )
+  // The dispose traversal the modal shares (wave 14, FN-037) is as pure: three's types and nothing else.
+  const dispose = readFileSync(resolve(ROOT, 'src/scene/dispose.ts'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+  assert.deepEqual([...dispose.matchAll(/^import\s+(?:type\s+)?[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1]), ['three'])
+  assert.ok(/^import type \* as THREE from 'three'/m.test(dispose))
   assert.ok(/^import type \{ GhostPoint \} from '\.\/constellation-flow\.ts'/m.test(code), 'the flow is a type import, so nothing of it runs here')
 })

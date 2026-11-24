@@ -7,6 +7,7 @@
  *   3. Returns { blob, pose, timestamp } to the caller
  */
 import type { ARProvider } from '../ar/provider'
+import { FRAME_JPEG_MAX_LONG_EDGE_PX, FRAME_JPEG_QUALITY, blobToDataUrl, encodeFrameJpeg } from './frame-image.ts'
 
 export interface CaptureResult {
   blob: Blob
@@ -28,8 +29,8 @@ export interface CaptureModuleOptions {
 }
 
 const DEFAULTS: Required<CaptureModuleOptions> = {
-  maxLongEdgePx: 1280,
-  jpegQuality: 0.8,
+  maxLongEdgePx: FRAME_JPEG_MAX_LONG_EDGE_PX,
+  jpegQuality: FRAME_JPEG_QUALITY,
 }
 
 /** Re-encode once at this quality when the first pass exceeds the size cap */
@@ -37,12 +38,12 @@ const MAX_BLOB_BYTES = 1_500_000
 const FALLBACK_QUALITY = 0.65
 
 export class CaptureModule {
+  private readonly provider: ARProvider
   private _opts: Required<CaptureModuleOptions>
 
-  constructor(
-    private readonly provider: ARProvider,
-    opts: CaptureModuleOptions = {},
-  ) {
+  // A plain field rather than a parameter property, so the Node tests (type stripping only) can load this module.
+  constructor(provider: ARProvider, opts: CaptureModuleOptions = {}) {
+    this.provider = provider
     this._opts = { ...DEFAULTS, ...opts }
   }
 
@@ -50,25 +51,14 @@ export class CaptureModule {
     const frame = await this.provider.captureFrame(timeoutMs)
     const { pixels, width, height, pose, timestamp } = frame
 
-    // Build an ImageBitmap from the raw RGBA array, then draw to OffscreenCanvas
-    // downscaled to maxLongEdgePx to encode as JPEG (small, good for VLM
-    // inference — bboxes are normalized 0..1 so downstream is resolution-agnostic)
-    // Copy into a plain ArrayBuffer to satisfy the ImageData constructor
-    const imageData = new ImageData(new Uint8ClampedArray(pixels), width, height)
-    const bitmap = await createImageBitmap(imageData)
-
-    const scale = Math.min(1, this._opts.maxLongEdgePx / Math.max(width, height))
-    const w = Math.round(width * scale)
-    const h = Math.round(height * scale)
-    const oc = new OffscreenCanvas(w, h)
-    const ctx = oc.getContext('2d') as OffscreenCanvasRenderingContext2D
-    ctx.drawImage(bitmap, 0, 0, w, h)
-    bitmap.close()
-
-    let blob = await oc.convertToBlob({ type: 'image/jpeg', quality: this._opts.jpegQuality })
-    if (blob.size > MAX_BLOB_BYTES) {
-      blob = await oc.convertToBlob({ type: 'image/jpeg', quality: FALLBACK_QUALITY })
-    }
+    // Downscaled to maxLongEdgePx and encoded as JPEG (./frame-image.ts, which the keyframes use too): small, good for
+    // VLM inference — bboxes are normalized 0..1 so downstream is resolution-agnostic. Only this encoder re-encodes once
+    // at a lower quality when the first pass is too big for the inference request.
+    const blob = await encodeFrameJpeg(pixels, width, height, {
+      maxLongEdgePx: this._opts.maxLongEdgePx,
+      quality: this._opts.jpegQuality,
+      fallback: { maxBytes: MAX_BLOB_BYTES, quality: FALLBACK_QUALITY },
+    })
 
     return { blob, pose, timestamp, frameWidth: width, frameHeight: height }
   }
@@ -141,11 +131,3 @@ export class CaptureModule {
   }
 }
 
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = reject
-    reader.readAsDataURL(blob)
-  })
-}

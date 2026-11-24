@@ -11,6 +11,7 @@
  */
 import type { GroundEstimate } from '../scene/pointcloud.ts'
 import type { Vec3 } from '../world/types.ts'
+import { rotateVectorByQuat } from '../shared/pose-math.ts'
 
 /**
  * How far a tap may sit from the tracked floor before it is questioned.
@@ -255,16 +256,8 @@ export function floorRayPoint(camera: RayCamera, x: number, y: number, floorY: n
 
   const tanHalf = Math.tan((fovYDeg * Math.PI) / 360)
   const d = { x: (2 * x - 1) * aspect * tanHalf, y: (1 - 2 * y) * tanHalf, z: -1 }
-  const [qx, qy, qz, qw] = [q.x / norm, q.y / norm, q.z / norm, q.w / norm]
-  // v' = v + w t + q x t, with t = 2 q x v, q the vector part.
-  const tx = 2 * (qy * d.z - qz * d.y)
-  const ty = 2 * (qz * d.x - qx * d.z)
-  const tz = 2 * (qx * d.y - qy * d.x)
-  const dir = {
-    x: d.x + qw * tx + (qy * tz - qz * ty),
-    y: d.y + qw * ty + (qz * tx - qx * tz),
-    z: d.z + qw * tz + (qx * ty - qy * tx),
-  }
+  // The ray's direction in the session frame: the camera-space direction turned by the camera's rotation.
+  const dir = rotateVectorByQuat(q, d)
   if (!(dir.y < -1e-9)) return null
 
   const t = (floorY - p.y) / dir.y

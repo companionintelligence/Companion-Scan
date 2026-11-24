@@ -19,8 +19,16 @@
  * without a cast.
  */
 import type { Quat, Vec3 } from '../world/types'
+import { cameraHeadingDeg, wrapDeg } from '../shared/pose-math.ts'
 
-const RAD_TO_DEG = 180 / Math.PI
+/**
+ * `wrapDeg` and the heading (`yawDegFromQuat`, which src/shared/pose-math.ts names `cameraHeadingDeg` to tell it from
+ * the twist between two orientations) live in src/shared/pose-math.ts with the rest of the pose maths (wave 14, F-40).
+ * They are exported from here too, under the names they always had: src/world/frame-fit.ts, src/ar/closure.ts and the
+ * tests import them from this path.
+ */
+export { wrapDeg }
+export const yawDegFromQuat = cameraHeadingDeg
 
 /** The pose shape this module needs — structurally `ARProvider`'s `Pose`. */
 export interface PoseLike {
@@ -35,68 +43,6 @@ export interface PoseDelta {
   offsetM: { x: number; y: number; z: number }
   /** Signed yaw difference, wrapped to (-180, 180]. Positive is counter-clockwise about +Y. */
   yawDeg: number
-}
-
-/**
- * Compass-style heading about the vertical axis, in degrees, from a rotation
- * quaternion — the device's forward axis projected onto the horizontal plane.
- *
- * This is the convention `src/viewer/viewer.ts`'s `updateWorldHud()` already
- * uses (`atan2` of `camera.getWorldDirection()`), and it agrees with
- * `src/world/geo.ts`'s `composeYUpTransform()` and `world/anchor-marker.ts`.
- * Keeping them in agreement matters: a yaw printed by this readout has to mean
- * the same thing as a yaw fed into a calibration transform, or the benchmark
- * measures one convention while the wave tunes another.
- *
- * **Not** the standard Y-Euler extraction, which an earlier version of this
- * used. That formula agrees with the projected-forward heading only when pitch
- * is zero, and the benchmark protocol explicitly has the operator point the
- * device at the floor: at a 50-degree downward hold it reported 20.4 degrees
- * for a true heading of 30, a 9.6-degree error against a benchmark whose
- * rotational drift target is 5. The instrument's own error was nearly twice
- * the threshold it exists to measure.
- *
- * Near-vertical pitch degrades the forward axis's horizontal projection toward
- * zero length, where its direction is noise. The device's up axis is exactly
- * horizontal in that pose and carries the same heading, so whichever of the two
- * has the longer horizontal projection is used. For a yaw-then-pitch rotation
- * both yield the identical angle, so the switch is seamless rather than a step.
- *
- * The up axis must be flipped when the device is tilted back rather than
- * forward: pointing straight down its up axis lies along the heading, but
- * pointing straight up it lies against it, and using it unflipped puts the
- * readout 180 degrees out for exactly half of the poses it exists to rescue.
- *
- * Identity rotation returns 0. Roll is not modelled; a handheld scanning device
- * has little, and "heading" is not well defined under large roll anyway.
- */
-export function yawDegFromQuat(q: Quat): number {
-  const { x, y, z, w } = q
-
-  // Body +Z (forward) and +Y (up) rotated into world space — the third and
-  // second columns of the quaternion's rotation matrix.
-  const fx = 2 * (x * z + w * y)
-  const fy = 2 * (y * z - w * x)
-  const fz = 1 - 2 * (x * x + y * y)
-  const ux = 2 * (x * y - w * z)
-  const uz = 2 * (y * z + w * x)
-
-  if (Math.hypot(fx, fz) >= Math.hypot(ux, uz)) {
-    return Math.atan2(fx, fz) * RAD_TO_DEG
-  }
-  // Tilted back (forward axis rising) means the up axis points behind the
-  // heading, not along it.
-  const flip = fy < 0 ? 1 : -1
-  return Math.atan2(flip * ux, flip * uz) * RAD_TO_DEG
-}
-
-/** Wrap an angle in degrees to (-180, 180]. */
-export function wrapDeg(deg: number): number {
-  const wrapped = ((deg + 180) % 360 + 360) % 360 - 180
-  // ((-180 + 180) % 360) maps exactly -180 onto -180; normalise to +180 so the
-  // range is half-open and a 180-degree turn reads the same whichever way the
-  // operator walked around the loop.
-  return wrapped === -180 ? 180 : wrapped
 }
 
 /**

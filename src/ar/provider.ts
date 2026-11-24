@@ -215,8 +215,10 @@ export interface ARProvider {
    * `server/splat/splat_train_dataset.ts` turns that into the `fl_x`/`fl_y`
    * of the Brush training dataset, so an implementation's fallback constant
    * does not stay local to the viewer: it reaches reconstruction looking like
-   * a measured focal length. `EighthWallProvider` currently always returns its
-   * 60° fallback — see the note there.
+   * a measured focal length. `EighthWallProvider` reads it from the engine's
+   * `reality.intrinsics` projection on every frame that carries one
+   * (`projectionFovYDeg`, src/shared/pose-math.ts), and answers its 60°
+   * fallback only until the first such frame.
    */
   getCameraFovY(): number
 
@@ -277,8 +279,9 @@ export interface ARProvider {
    * provider passes it through as the engine spelled it. The documentation lists `INITIALIZING`
    * and `UNSPECIFIED` (https://8thwall.org/docs/api/engine/xrcontroller/pipelinemodule); the
    * other names this app treats as unstable (`RELOCALIZING`, `TOO_MUCH_MOTION`,
-   * `NOT_ENOUGH_TEXTURE`, see tracking-quality.ts) are handled in case the engine reports them, and
-   * DX4 logs which ones a phone does. Absent where the runtime has none.
+   * `NOT_ENOUGH_TEXTURE`, and the native layers' `EXCESSIVE_MOTION` and `INSUFFICIENT_FEATURES`: the
+   * one set in tracking-reasons.ts) are handled in case the engine reports them, and DX4 logs which
+   * ones a phone does. Absent where the runtime has none.
    * Nothing branches on it yet: the `?debug=probe` line (src/capture/probe-log.ts) records
    * it, so that a run which saw a frame shift can say what tracking reported at the time.
    *

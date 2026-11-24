@@ -11,6 +11,13 @@ import test, { type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { GeoTracker, type GeoFix } from '../../../src/geo/geo-tracker.ts'
 
+/**
+ * This device has said yes to the address lookup (src/geo/geocode-consent.ts). Since wave 14 (F-08) nothing goes to the
+ * geocoder without one; what a lookup does once allowed is what this file tests, and
+ * tests/unit/node/wp-capture-core-geo-privacy.test.ts tests the asking.
+ */
+const LOOKUPS_ALLOWED = { answer: (): boolean => true, ask: async (): Promise<boolean> => true }
+
 interface FakePosition {
   coords: { latitude: number, longitude: number, accuracy: number, altitude: number | null }
   timestamp: number
@@ -38,7 +45,7 @@ function at(place: { lat: number, lng: number }, nudge = 0): FakePosition {
 }
 
 function newTracker(): Tracker {
-  return new GeoTracker() as unknown as Tracker
+  return new GeoTracker({ geocodeConsent: LOOKUPS_ALLOWED }) as unknown as Tracker
 }
 
 function json(body: unknown, status = 200): Response {
@@ -191,14 +198,14 @@ test('a fix restored from an earlier session keeps its address only while the fi
 
   // The same cell: about a metre from the restored fix, inside the same four-decimal cell.
   firstFix = at(ROOM_A, 0.00001)
-  const same = await new GeoTracker().start()
+  const same = await new GeoTracker({ geocodeConsent: LOOKUPS_ALLOWED }).start()
   assert.equal(same?.address, 'Old Street, Old Town', 'the same room keeps the address it had')
   assert.equal(same?.displayAddress, 'Old Street, Old Town, Nowhere')
   assert.deepEqual(same?.addressComponents, { city: 'Old Town' })
 
   // A different cell: the restored address belongs to the place the fix came from, so it is cleared.
   firstFix = at(ROOM_B)
-  const moved = await new GeoTracker().start()
+  const moved = await new GeoTracker({ geocodeConsent: LOOKUPS_ALLOWED }).start()
   assert.equal(moved?.address, null, 'a new room starts without the old address')
   assert.equal(moved?.displayAddress, null)
   assert.equal(moved?.addressComponents, null)
