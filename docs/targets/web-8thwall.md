@@ -30,6 +30,8 @@ iPad Safari, which have no WebXR AR.
   starts, tracks NORMAL and fits the camera to the canvas, but only about 2 starts in 8 get past
   the camera stream to video; the rest stall there. Expect to press Start more than once
   ([AR_DEVICE_SUPPORT.md](../operations/AR_DEVICE_SUPPORT.md#xreal-beam-pro)).
+- **Build.** The web bundle built at commit `81e437c`, the tree `main` merged as `e897380`
+  (#282), on 2026-11-23 ([Builds of the merged tree](README.md#builds-of-the-merged-tree)).
 - **The automated tests use a scripted engine, not the real one.**
   `public/test-fixtures/xr8-mock.js`, loaded with `?mock=xr8`, sends poses, feature points and a
   fake camera feed. Playwright cannot drive Safari on a real iPhone (`playwright.config.ts`).

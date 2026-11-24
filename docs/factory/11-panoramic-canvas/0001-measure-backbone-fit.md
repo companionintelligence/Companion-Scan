@@ -16,7 +16,7 @@ capability or an off-box subsystem.
 The paper reports *training* compute — 8× RTX A6000 (48 GB) for 72.5 wall-clock hours — and
 **no inference VRAM or latency figure at all**. Everything downstream would otherwise rest on
 an arithmetic guess: 8B at fp16 is ~16 GB of weights, plus activations and canvas tokens,
-against `beta-1`'s 23.98 GiB per card. That is plausibly enough and might comfortably not be.
+against the ROCm host's 23.98 GiB per card. That is plausibly enough and might comfortably not be.
 
 Wave 10 is the cautionary case in the other direction: 4DAnyone needed 43.3 GiB on one CUDA
 device, nothing on the fleet came close, and the whole wave had to be shaped around that. The
@@ -55,7 +55,7 @@ it is short: nothing in the repo currently loads an 8B model, and `.env.example`
 ~44 GB of KV cache, which is itself a strong hint that context length, not weights, is what will
 decide this. Measure with the context actually needed for a canvas, not the default.
 
-**`beta-1` is ROCm, not CUDA** (2× Radeon RX 7900 XTX, ROCm 6.4). Ollama supports ROCm; a
+**The ROCm host is ROCm, not CUDA** (2× Radeon RX 7900 XTX, ROCm 6.4). Ollama supports ROCm; a
 PyTorch/transformers adapter stack with Flash Attention 2 does not, without work. Measure the
 Ollama path, and record that distinction — it is the difference between "the backbone fits" and
 "the eventual adapters can be hosted here".
@@ -107,7 +107,7 @@ None.
 
 ## Definition of Done
 
-- [ ] `qwen3-vl:8b` pulled on `beta-1` and its **peak VRAM** recorded, at a context sized for a
+- [ ] `qwen3-vl:8b` pulled on the ROCm host and its **peak VRAM** recorded, at a context sized for a
       canvas rather than the model default
 - [ ] **Latency** recorded for one canvas-sized image + question, at 320×240 and 640×480
 - [ ] The same two numbers recorded for the existing `qwen3-vl:4b`, which is what 0005 ships
@@ -130,7 +130,7 @@ and the procedure is repeatable by someone else.
       reader can tell whether they still apply
 
 ```bash
-# on beta-1
+# on the ROCm host
 ollama pull qwen3-vl:8b
 rocm-smi --showmeminfo vram      # baseline, then again under load
 # time one canvas-sized request through the running server
@@ -151,7 +151,7 @@ rocm-smi --showmeminfo vram      # baseline, then again under load
   a pass here does not guarantee the eventual adapters fit. — **Mitigation:** say so explicitly
   in the recorded decision. This measures the backbone, which is a *necessary* condition, not a
   sufficient one.
-- **Risk:** `beta-1` is ROCm and the adapter stack expects CUDA (Flash Attention 2). — **Mitigation:**
+- **Risk:** the ROCm host is ROCm and the adapter stack expects CUDA (Flash Attention 2). — **Mitigation:**
   record the distinction. A backbone that fits on ROCm still leaves a porting question, and that
   is exactly the shape wave 10 hit.
 - **Risk:** The context window, not the weights, is the binding constraint —
@@ -163,7 +163,7 @@ rocm-smi --showmeminfo vram      # baseline, then again under load
 
 ## Subtasks
 
-1. [ ] Pull `qwen3-vl:8b` on `beta-1`; record baseline and loaded VRAM
+1. [ ] Pull `qwen3-vl:8b` on the ROCm host; record baseline and loaded VRAM
 2. [ ] Time one canvas-sized request at 320×240 and at 640×480; record tokens-in
 3. [ ] Repeat for `qwen3-vl:4b`
 4. [ ] Write the procedure into `docs/testing/DEVICE_TESTING.md`

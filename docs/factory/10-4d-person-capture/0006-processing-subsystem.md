@@ -20,8 +20,8 @@ Measured, not assumed. Upstream 4DAnyone's own `docs/inference_performance.md` (
 6-view full-orbit configuration at **43.3 GiB peak CUDA allocation**, with denoising alone taking 7.8 min on an
 H200 and 22.9 min on an RTX A6000.
 
-Probed on the tailnet 2026-08-24: `beta-1` is 2× Radeon RX 7900 XTX at **23.98 GiB each**, ROCm
-6.4.0-47, **no CUDA**. `beta-red` is a 10 GiB RTX 3080. Nothing else on the fleet has a usable
+Probed on the tailnet 2026-08-24: the ROCm host has 2× Radeon RX 7900 XTX at **23.98 GiB each**, ROCm
+6.4.0-47, **no CUDA**. Another host has a 10 GiB RTX 3080. Nothing else on the fleet has a usable
 GPU. That is a ~1.8× per-device VRAM shortfall against a model that does not shard across cards,
 on the wrong vendor's stack. Upstream lists "Low-memory inference (<32 GB)" as **not done**, and
 even that would not fit.
@@ -258,7 +258,7 @@ cd subsystems/4d-capture && npm install && npm test && npm run stub
   posture from scanning empty rooms. — **Mitigation:** out of scope to decide here, but the
   README must state where clips travel, and ADR 0006 (0008) must answer it.
 - **Risk:** Disk. Hundreds of `.sog` files per take plus 4DAnyone's intermediate dense videos is
-  large, and `beta-1` is already at 89% full. — **Mitigation:** clean intermediates after a
+  large, and the ROCm host is already at 89% full. — **Mitigation:** clean intermediates after a
   successful run; document the per-take footprint once measured.
 
 ## Subtasks

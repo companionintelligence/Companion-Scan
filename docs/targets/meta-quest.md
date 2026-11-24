@@ -15,7 +15,9 @@ Plan: [wave 13](../factory/13-device-targets/README.md), tickets 0005 and 0006.
   - Its one panel holds the server address, start and stop, frame and upload counts, and the splat viewer.
 - **Frames** come from the left passthrough camera through Camera2, after the runtime permission
   `horizonos.permission.HEADSET_CAMERA` (and `android.permission.CAMERA`) is granted.
-  - The stream is 1280×960 YUV_420_888.
+  - The stream is YUV_420_888. The app asks for 1280×960; when the camera does not offer that
+    size, it takes the offered size closest to it in area and says so on the panel
+    (`chooseSize` in `capture/PassthroughCamera.kt`, the warning in `capture/CaptureController.kt`).
   - Intrinsics, lens pose and distortion are read from the camera's characteristics.
 - **Head pose** comes from `Scene.getViewerPose()`:
   - It is sampled every frame into a ring buffer on the same clock as the camera timestamps.
@@ -41,7 +43,8 @@ Plan: [wave 13](../factory/13-device-targets/README.md), tickets 0005 and 0006.
 
 **Builds here, not run on a headset** (2026-11-23).
 
-- `./gradlew testDebugUnitTest assembleDebug` in `meta/` passes: 81 JVM unit tests in 13 classes, and a debug APK of about 101 MB. ONNX Runtime adds about 36 MB of that.
+- `./gradlew testDebugUnitTest assembleDebug` in `meta/` passes: 81 JVM unit tests in 13 classes, and a debug APK of about 101 MB. ONNX Runtime adds about 36 MB of that. It passed again on commit `81e437c`, the tree `main` merged as `e897380` (#282) ([Builds of the merged tree](README.md#builds-of-the-merged-tree)).
+- No workflow builds `meta/` or runs its tests: those runs were local.
 - The unit tests cover:
   - the pose conversions, against the server's `poseToMatrix` and the SDK's own pose classes;
   - the uploader, against an HTTPS mock server;
@@ -96,6 +99,9 @@ The Quest Browser checks for the web path stay in [web-webxr.md](web-webxr.md#te
 - Sign-in for native apps (ticket 0010).
 - The display-time pose stamp is a heuristic. Frame times are start of exposure, with no rolling-shutter correction.
 - Frames upload as pinhole. Distortion is saved only in the local recording.
+- The vision hook runs on streamed frames whenever a model is loaded, whether or not a capture is
+  running (`onCameraFrame` in `capture/CaptureController.kt` has no capturing check for it). Its
+  only output is a text summary on the panel.
 - mq3drecon was not run here. Its reader takes the image size from the camera's active array, so the recording fits only if that is 1280×960.
 - Licences:
   - The Meta Spatial SDK is under the Meta Platform Technologies SDK License Agreement, which must be reviewed before the app is distributed.

@@ -37,7 +37,7 @@ work doesn't stall the decision.
   integration if renamed — 0009 froze them for a reason that doesn't change here.
 - Do not touch `history/ORIGINAL_REQUEST.md` — removed from Files impacted,
   2026-08-16. It doesn't contain a "Companion Scan" hit at all (only an unrelated
-  literal working-directory path, `/Users/liam/devel/3d/CI-Web-XR-Scan`, from the
+  literal working-directory path, `/Users/<user>/devel/3d/CI-Web-XR-Scan`, from the
   original request record), and 0009's implementation already established the
   precedent that this file is an immutable historical record, not live docs — editing
   it would be revisionist regardless of what naming decision this ticket implements.

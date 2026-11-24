@@ -32,7 +32,7 @@ If anything fails here, fix it before AR testing — see Triage below.
 
 ## Checklist A — iPhone Safari (8th Wall SLAM)
 
-Suggested devices: `iphone182`, `liam-ipad-pro`.
+Suggested devices: an iPhone and an iPad Pro.
 
 | # | Step | Expected result |
 |---|------|-----------------|
@@ -117,8 +117,8 @@ disposal to follow `session.end()`. None of that is reachable from a unit test;
 the automated coverage in `anchor_calibration.test.ts` deliberately does not
 touch the renderer at all.
 
-Needs an **ARCore-backed Android** (`galaxy-tab-s9-ultra` or
-`liams-tab-s8-ultra`). iPhone/Safari does *not* exercise this code — no
+Needs an **ARCore-backed Android** (the Galaxy Tab S9 Ultra or
+the Tab S8 Ultra). iPhone/Safari does *not* exercise this code — no
 `immersive-ar`, so it runs the 8th Wall provider instead. Quest browser is a
 useful second data point because its controller-driven input hits the
 `pointerdown` path a touchscreen never does, but is not required.
@@ -184,7 +184,7 @@ readout lines and the compass app's reading.
 
 | Device | Android | Chrome | ARCore | 1 decal | 2 world-locked | 3 no flicker | 4 north | 5 scan ok | 6 restart | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|
-| liams-tab-s8-ultra | 16 | 151.0.7922.169 | 1.55.261550593 | — | — | — | — | — | — | 2026-08-23, driven over MCP. Session reached, decal not: see below. |
+| Galaxy Tab S8 Ultra | 16 | 151.0.7922.169 | 1.55.261550593 | — | — | — | — | — | — | 2026-08-23, driven over MCP. Session reached, decal not: see below. |
 
 **Partial run, 2026-08-23 — what a remote MCP session can and cannot reach.**
 Driven from a desk, device stationary. Established:
@@ -316,7 +316,7 @@ ADR 0010).
 
 Copy per test session:
 
-| Step | iphone182 | liam-ipad-pro | z-fold7 | tab-s8-ultra | Notes |
+| Step | iPhone | iPad Pro | Z Fold7 | Tab S8 Ultra | Notes |
 |------|-----------|---------------|---------|--------------|-------|
 | Smoke page all green | | | | | |
 | A2/B2 permissions from tap | | | | | |
@@ -1246,9 +1246,9 @@ floor and Angle is the one the 1.4 m height gives, atan(*d* ÷ 1.4): 36° at 1 m
 
 At minimum one of each provider path — they share no tracking source:
 
-- **8th Wall SLAM**: `iphone182` or `liam-ipad-pro` (Safari)
-- **WebXR**: `galaxy-tab-s9-ultra` or `liams-tab-s8-ultra` (Chrome, needs ARCore)
-- **Native ARKit and ARCore** (the Scan shells, `ScanAR`): an iPhone with ARKit, with and without LiDAR (Checklist D), and an ARCore phone or tablet with Google Play Services for AR installed (`galaxy-tab-s9-ultra`, in the Android shell)
+- **8th Wall SLAM**: an iPhone or an iPad Pro (Safari)
+- **WebXR**: the Galaxy Tab S9 Ultra or the Tab S8 Ultra (Chrome, needs ARCore)
+- **Native ARKit and ARCore** (the Scan shells, `ScanAR`): an iPhone with ARKit, with and without LiDAR (Checklist D), and an ARCore phone or tablet with Google Play Services for AR installed (the Galaxy Tab S9 Ultra, in the Android shell)
 
 ## Remote-controlled testing (android-remote-control-mcp)
 
@@ -1286,14 +1286,14 @@ the matching environment variable below.
 
 | Tailnet host | Tailscale IP | Device | `.mcp.json` server | Token env var |
 |---|---|---|---|---|
-| `liams-tab-s8-ultra` | 100.86.76.113 | Galaxy Tab S8 Ultra (SM-X900) | `android-tab-s8-ultra` | `ANDROID_MCP_TOKEN_TAB_S8_ULTRA` |
-| `galaxy-tab-s9-ultra` | 100.102.92.116 | Galaxy Tab S9 Ultra (SM-X910) | `android-tab-s9-ultra` | `ANDROID_MCP_TOKEN_TAB_S9_ULTRA` |
-| `beam-pro-1` | 100.127.78.6 | XREAL X4000 | `android-beam-pro-1` | `ANDROID_MCP_TOKEN_BEAM_PRO_1` |
-| `beam-pro` | 100.97.126.117 | XREAL X4200 | `android-beam-pro` | `ANDROID_MCP_TOKEN_BEAM_PRO` |
+| `<tab-s8-host>` | `<tailnet IP>` | Galaxy Tab S8 Ultra (SM-X900) | `android-tab-s8-ultra` | `ANDROID_MCP_TOKEN_TAB_S8_ULTRA` |
+| `<tab-s9-host>` | `<tailnet IP>` | Galaxy Tab S9 Ultra (SM-X910) | `android-tab-s9-ultra` | `ANDROID_MCP_TOKEN_TAB_S9_ULTRA` |
+| `<beam-pro-1-host>` | `<tailnet IP>` | XREAL X4000 | `android-beam-pro-1` | `ANDROID_MCP_TOKEN_BEAM_PRO_1` |
+| `<beam-pro-host>` | `<tailnet IP>` | XREAL X4200 | `android-beam-pro` | `ANDROID_MCP_TOKEN_BEAM_PRO` |
 
 ### Connecting Claude Code (tailnet — preferred)
 
-`.mcp.json` points each server at `http://<host>.capybara-ulmer.ts.net:8080/mcp`,
+`.mcp.json` points each server at `http://<host>.<tailnet>.ts.net:8080/mcp`,
 with every token left as a `${...}` placeholder. Claude Code expands those
 placeholders from its process environment. On Windows, persist the four values
 for your user account:

@@ -40,8 +40,8 @@ opened inside a WebXR-enabled iOS browser such as HelloXR.
   started an `immersive-ar` session and showed the HUD over it: Checklist B steps 1 and 2.
   Tracking, capture and the calibration decal (B2 steps 1 to 6) need a person carrying the device,
   and are unverified ([DEVICE_TESTING.md](../testing/DEVICE_TESTING.md#results--b2)).
-  [AR_DEVICE_SUPPORT.md](../operations/AR_DEVICE_SUPPORT.md) lists that tablet's WebXR path as
-  UNVERIFIED.
+  [AR_DEVICE_SUPPORT.md](../operations/AR_DEVICE_SUPPORT.md) records that session start and
+  lists the tablet's tracking and capture as UNVERIFIED.
 - **A device without ARCore cannot run it: verified.** On an XREAL Beam Pro, which has no ARCore,
   `isSessionSupported('immersive-ar')` answers true and `requestSession()` then rejects with
   `NotSupportedError`. Nothing in the app can fix that; the device needs Google Play Services for
@@ -52,6 +52,8 @@ opened inside a WebXR-enabled iOS browser such as HelloXR.
   The headset editor has three Playwright tests on the iwer Quest 3 emulator and no run on a Quest
   ([DEVICE_TEST_KIT.md](../testing/DEVICE_TEST_KIT.md#surfaces)).
 - **iOS through HelloXR: no run is recorded.**
+- **Build.** The same web bundle as the 8th Wall target built at commit `81e437c`, the tree `main`
+  merged as `e897380` (#282) ([Builds of the merged tree](README.md#builds-of-the-merged-tree)).
 - **Automated.** `?ar=webxr&mock=webxr` installs the iwer emulation runtime
   (`src/test/webxr-emulation.ts`), and the `mock-webxr-*` and `mock-xr-world` specs run on it in
   headless Chromium.

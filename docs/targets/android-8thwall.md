@@ -23,8 +23,12 @@ starts on the 8th Wall engine and never on the phone's ARCore session.
 - **A build switch and its unit test only.** The switch came with
   `tests/unit/node/native_ar_runtime_select.test.ts`, which checks that `8thwall` forces 8th Wall
   and every other value forces nothing.
-- **No build of it is recorded.** No script and no workflow sets `VITE_AR_RUNTIME`: the
-  Native Release and Mobile Build workflows build the default, native-first APK.
+- **Built once, locally.** At commit `81e437c`, the tree `main` merged as `e897380` (#282), the
+  steps under [Build](#build) made a debug APK of about 41 MB, whose main web chunk differs from the
+  default build's ([Builds of the merged tree](README.md#builds-of-the-merged-tree)). That build
+  ran from a script outside this repository. No script in the repository and no workflow sets
+  `VITE_AR_RUNTIME`: the Native Release and Mobile Build workflows build the default, native-first
+  APK.
 - **Not run on a device.** The 8th Wall path has not run inside the shell on any build
   ([mobile/README.md](../../mobile/README.md#gates)). The one 8th Wall device result is in Android
   Chrome, not in the shell: on an XREAL Beam Pro, about 2 starts in 8 reach video
@@ -41,7 +45,7 @@ starts on the 8th Wall engine and never on the phone's ARCore session.
 
 ## Build
 
-Derived from the code; no one has recorded running it. `scripts/native/build-web.mjs` refuses a
+These are the steps the 2026-11-23 build ran. `scripts/native/build-web.mjs` refuses a
 `.env` file that sets a `VITE_` variable, and passes the environment it was started with to Vite,
 so set the variable on the command line. From `mobile/`, after `npm ci` in the repo root:
 
@@ -81,7 +85,7 @@ Without a device: `npm run test:native-ar` runs `native_ar_runtime_select.test.t
 
 ## Known gaps
 
-- No build, install or run of this APK is recorded.
+- No workflow builds this APK, and no install or run of it is recorded.
 - The two Android builds replace each other on a device, so comparing ARCore and 8th Wall on one
   phone means reinstalling.
 - The XR Engine licence sign-off that gates any store build applies here as in the default build

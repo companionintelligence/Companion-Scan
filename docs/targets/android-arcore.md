@@ -43,12 +43,15 @@ ARCore session as the AR runtime. It is the scanner and the editor. The full she
 - **Not run on a device.** AR capture, the pause, resume and destroy hooks, the origin anchor and
   the sign-in return (its intent filter and Custom Tabs) have not run on a phone
   ([mobile/README.md](../../mobile/README.md#native-ar-capture)).
-- **Build: compiled before the branches were merged.** `./gradlew assembleDebug` (JDK 21, SDK 36)
-  compiled, and `./gradlew testDebugUnitTest` passed the origin file's round trip
-  (`OriginAnchorStoreTest`), as recorded with #268 (`f6b993d`). No Gradle run has been made on the
-  merged tree. A debug APK build, an install and launch on an Android 16 emulator, and the start
-  screen were observed before the merge too, on a tree that registered a different plugin
-  ([DEVICE_TEST_KIT.md](../testing/DEVICE_TEST_KIT.md#surfaces)).
+- **Build: the merged tree builds.** At commit `81e437c`, the tree `main` merged as `e897380`
+  (#282), a local `./gradlew assembleDebug` made a debug APK of about 41 MB, and the Mobile Build
+  workflow's Android job built one too (run 45260987425, 2026-11-23;
+  [Builds of the merged tree](README.md#builds-of-the-merged-tree)). Neither ran the Android unit
+  tests: `./gradlew testDebugUnitTest` last passed the origin file's round trip
+  (`OriginAnchorStoreTest`) with #268 (`f6b993d`), before the merge. No build of the merged tree has
+  been installed on a phone or an emulator. A debug APK build, an install and launch on an Android
+  16 emulator, and the start screen were observed before the merge, on a tree that registered a
+  different plugin ([DEVICE_TEST_KIT.md](../testing/DEVICE_TEST_KIT.md#surfaces)).
 - **Web side: tested without a device.** `npm run test:native-ar` covers the codec, the provider
   against a fake plugin (with the fallback) and the runtime choice. `tests/mock-native-ar.spec.ts`
   runs the scanner in Chromium on a stand-in plugin and checks the handover to the 8th Wall mock.

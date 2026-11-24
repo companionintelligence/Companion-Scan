@@ -16,17 +16,17 @@ labels: factory
 
 `main.ts` computes `ALLOWED_ORIGIN_PREFIX` from a raw `Deno.env.get('TAILSCALE_HOSTNAME')`
 read, falling straight through to the hardcoded historical default
-(`https://liambook.capybara-ulmer.ts.net`) whenever that env var isn't explicitly set —
+(`https://<dev-machine>.<tailnet>.ts.net`) whenever that env var isn't explicitly set —
 even on a machine where Tailscale is installed, running, and perfectly capable of
 reporting its own hostname. `vite.config.ts` already solves this correctly with
 `resolveHostname()`, which shells out to `tailscale status --json` before giving up.
 Port that same resolution order into `main.ts` so both halves of the app agree on the
 server's own hostname without an operator having to set `TAILSCALE_HOSTNAME` by hand.
 
-**Confirmed live, not theoretical:** running `npm start` on `everxr-01` (no
-`TAILSCALE_HOSTNAME` set) produced `[vite] Hostname: everxr-01.capybara-ulmer.ts.net
+**Confirmed live, not theoretical:** running `npm start` on a deploy host (no
+`TAILSCALE_HOSTNAME` set) produced `[vite] Hostname: <deploy-host>.<tailnet>.ts.net
 (via tailscale cli)` from the Vite process and `[server] CORS origin prefix:
-https://liambook.capybara-ulmer.ts.net` from the Deno process, in the same boot, on the
+https://<dev-machine>.<tailnet>.ts.net` from the Deno process, in the same boot, on the
 same machine — the two processes disagreed about their own address.
 
 ## Non-goals
@@ -56,7 +56,7 @@ precedence order, same inputs, same fallback:
    3000ms timeout; on any failure (not installed, not running, timeout), fall through.
 3. A `<hostname>.ts.net.crt` file in the current working directory (left by
    `tailscale cert`) — strip the `.crt` suffix.
-4. Historical hardcoded default: `liambook.capybara-ulmer.ts.net` (same constant name,
+4. Historical hardcoded default: `<dev-machine>.<tailnet>.ts.net` (same constant name,
    `FALLBACK_HOSTNAME`, as `vite.config.ts:8`).
 
 `ALLOWED_ORIGIN_PREFIX`'s own precedence is unchanged and must stay outermost: an
@@ -99,28 +99,28 @@ None — no data model changes, only a boot-time hostname-resolution helper.
       shared-in-spirit) behavior instead of asserting a sharing that doesn't exist.
 - [x] Starting `npm start` on a Tailscale-connected machine with no `TAILSCALE_HOSTNAME`
       env var set produces matching hostnames in `[vite] Hostname: ...` and the new
-      `[server] Hostname: ...` log lines. Verified live on `everxr-01`: both now log
-      `everxr-01.capybara-ulmer.ts.net (via tailscale cli)`.
+      `[server] Hostname: ...` log lines. Verified live on a deploy host: both now log
+      `<deploy-host>.<tailnet>.ts.net (via tailscale cli)`.
 - [x] `GET /worlds/:slug/share` (via `shareLinks()` → `viteBaseUrlFromEnv()`) returns
       links pointing at the real auto-detected host in that same scenario, not
-      `liambook.capybara-ulmer.ts.net`. Verified: all four role links now read
-      `https://everxr-01.capybara-ulmer.ts.net:5173/...`.
+      `<dev-machine>.<tailnet>.ts.net`. Verified: all four role links now read
+      `https://<deploy-host>.<tailnet>.ts.net:5173/...`.
 
 ## Tests
 
 - [x] Live boot test: on a tailnet-connected machine, unset `TAILSCALE_HOSTNAME`, run
       `npm start`, confirm the Vite and server hostname logs match. — Confirmed on
-      `everxr-01`: both `[vite] Hostname:` and `[server] Hostname:` logged
-      `everxr-01.capybara-ulmer.ts.net (via tailscale cli)`.
+      a deploy host: both `[vite] Hostname:` and `[server] Hostname:` logged
+      `<deploy-host>.<tailnet>.ts.net (via tailscale cli)`.
 - [x] Regression test: with `TAILSCALE_HOSTNAME` explicitly set, confirm it still wins
       outright (no change to existing env-var precedence). — Confirmed:
       `TAILSCALE_HOSTNAME=explicit-test.example.ts.net` produced
       `[server] Hostname: explicit-test.example.ts.net (via env)`.
 - [x] Fallback test: with Tailscale not running/not installed, no env var set, and no
       `*.ts.net.crt` in the repo root, confirm `main.ts` still falls back to
-      `liambook.capybara-ulmer.ts.net` rather than crashing or hanging. — Confirmed: run
+      `<dev-machine>.<tailnet>.ts.net` rather than crashing or hanging. — Confirmed: run
       from an empty temp cwd with Tailscale stripped from `PATH` produced
-      `[server] Hostname: liambook.capybara-ulmer.ts.net (via default)` and the server
+      `[server] Hostname: <dev-machine>.<tailnet>.ts.net (via default)` and the server
       still booted normally.
 
 ```
@@ -175,7 +175,7 @@ npm start
 3. [x] Add the `[server] Hostname: X (via Y)` boot log alongside the existing
        `[server] CORS origin prefix: ...` log.
 4. [x] Fix the stale comment at `main.ts:67-68`.
-5. [x] Manually verify on a real tailnet machine (`everxr-01`) that the Vite and
+5. [x] Manually verify on a real tailnet machine (a deploy host) that the Vite and
        server hostname logs now agree, and that a freshly generated share link resolves
        to the real host. `deno task check` also passes with no type errors.
 
