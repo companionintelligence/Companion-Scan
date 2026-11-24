@@ -90,7 +90,21 @@ All are in `docs/factory/atlas.html`:
 
 ## Verified
 
-To be filled in from the port's gate runs.
+On the port's branch, 2026-11-24:
+
+- `npm run verify`, run one step at a time: 100 of 100 steps pass. That is main's 98, plus
+  `test:view-layers` (15 tests) and `test:object-transform` (6).
+- The test box, chromium-mock, one worker, no retries: `mock-spatial-editor` (7 tests),
+  `mock-editor-inventory`, `mock-anchor-layer` and `mock-ui-desktop` pass, 23 of 23.
+- The full test box, six workers, no retries: 216 passed and 4 failed. Two are main's known
+  failures, `mock-editor-homes` and `mock-splat-toolbox`. The other two, `mock-optimize-scan-job-update`
+  and `mock-scan-load-dedup`, wait on a real optimize job in the server's queue under short
+  timeouts, and both passed when run again on their own.
+- Not run:
+  - `tests/ar-scan.spec.ts` ("viewer.html loads", which now expects the sidebar title "Spatial
+    Editor"): it needs a live server, and the test box does not run it;
+  - a live Scan server with real scans;
+  - any device.
 
 ## Not covered in v1
 
@@ -103,6 +117,8 @@ To be filled in from the port's gate runs.
 - The compass arrow and the calibration record text ("Heading unverified", the floor-check bypass) are
   not drawn. Both wait on decisions outside this wave; ticket 0005 covers the origin marker only.
 - Not run against a live Scan server with real scans; the Playwright spec mocks the backend.
+- The screenshots under `docs/ui-flow/` still show the menus as they were before this wave: the test
+  box rewrites them on every run, and the port restored them rather than commit a run's images.
 - Requests from the v1 plan review that were not made, because they conflict with the product
   note or with the brief, and need an owner decision first: changing the six View layers (the
   note lists detected objects and splats, and the review list drops them); share revoke (the
