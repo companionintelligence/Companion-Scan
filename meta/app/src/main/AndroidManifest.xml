@@ -47,6 +47,17 @@
                 <category android:name="com.oculus.intent.category.VR" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- The sign-in return from the system browser: the server redirects to
+                 com.companionintelligence.scan.quest://auth?code=… once the Companion Account sign-in is done
+                 (auth/SignInReturn.kt, server/portal_auth.ts shell=quest). singleTask above sends it to the running
+                 activity's onNewIntent. A code alone is useless without the PKCE verifier only this app holds. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.companionintelligence.scan.quest" android:host="auth" />
+            </intent-filter>
         </activity>
     </application>
 </manifest>

@@ -14,14 +14,15 @@ import android.widget.ScrollView
 import android.widget.TextView
 
 /**
- * The 2D panel: server address, start and stop, counters and upload state, local dataset switch, the vision
- * hook's status and the splat viewer. Plain Android views built in code, hosted by a Spatial SDK
+ * The 2D panel: server address and sign-in, start and stop, counters and upload state, local dataset switch, the
+ * vision hook's status and the splat viewer. Plain Android views built in code, hosted by a Spatial SDK
  * ViewPanelRegistration (ImmersiveActivity.registerPanels). [render] must run on the main thread.
  */
 class ControlPanel(private val actions: Actions) {
 
     interface Actions {
         fun onSaveAddress(text: String)
+        fun onSignIn()
         fun onStartCapture()
         fun onStopCapture()
         fun onRecordDatasetChanged(on: Boolean)
@@ -37,6 +38,8 @@ class ControlPanel(private val actions: Actions) {
         val message: String?,
         val camera: String,
         val cameraError: Boolean,
+        /** Whether the app holds a Companion Account session for the saved server, and for whom. */
+        val signIn: String,
         val headPose: String,
         val capture: String,
         val upload: String,
@@ -50,6 +53,7 @@ class ControlPanel(private val actions: Actions) {
 
     private var message: TextView? = null
     private var camera: TextView? = null
+    private var signIn: TextView? = null
     private var headPose: TextView? = null
     private var capture: TextView? = null
     private var upload: TextView? = null
@@ -73,7 +77,7 @@ class ControlPanel(private val actions: Actions) {
             text(
                 context,
                 "Scans the room with the left passthrough camera and sends keyframes to your Companion Scan server " +
-                    "over HTTPS. Sign-in is not supported yet: a server with sign-in on refuses these uploads.",
+                    "over HTTPS. If your server has sign-in on, sign in with your Companion Account first.",
                 15f,
             ).apply { setTextColor(Color.rgb(180, 186, 196)) },
         )
@@ -91,6 +95,8 @@ class ControlPanel(private val actions: Actions) {
         }
         column.addView(address)
         column.addView(button(context, "Save address") { actions.onSaveAddress(address.text.toString()) })
+        column.addView(button(context, "Sign in with Companion Account") { actions.onSignIn() })
+        signIn = status(context).also { column.addView(it) }
 
         column.addView(section(context, "Capture"))
         column.addView(
@@ -154,6 +160,7 @@ class ControlPanel(private val actions: Actions) {
         last = s
         set(message, s.message.orEmpty())
         set(camera, "Camera: ${s.camera}")
+        set(signIn, "Sign-in: ${s.signIn}")
         camera?.setTextColor(if (s.cameraError) Color.rgb(255, 150, 120) else Color.WHITE)
         set(headPose, "Head pose: ${s.headPose}")
         set(capture, "Capture: ${s.capture}")

@@ -36,6 +36,25 @@ class SplatSourceTest {
     }
 
     @Test
+    fun aNameAskedOfTheServerMustBeOneItServes() {
+        // GET /scans/:filename serves <scan>.splat.ply; a plain .ply or an .spz falls to the .glb-only route (FN-174).
+        assertTrue(refused("kitchen.ply").contains("splat.ply"))
+        assertTrue(refused("kitchen.spz").contains("splat.ply"))
+        assertTrue(refused("https://scan.example.ts.net/scans/kitchen.ply").contains("splat.ply"))
+        assertEquals("https://scan.example.ts.net/scans/kitchen.splat.ply", remote("https://scan.example.ts.net/scans/kitchen.splat.ply").url.toString())
+        // Another host, or another path on this one, is not the scans route: the SDK's own formats are tried.
+        assertEquals("https://other.example/x/room.ply", remote("https://other.example/x/room.ply").url.toString())
+        assertEquals("https://scan.example.ts.net/files/room.ply", remote("https://scan.example.ts.net/files/room.ply").url.toString())
+        // A server behind a path prefix: its scans route is under the prefix.
+        val prefixed = "https://scan.example.ts.net/scan/".toHttpUrl()
+        assertTrue((SplatSource.resolve("https://scan.example.ts.net/scan/scans/a.ply", prefixed) as SplatSource.Resolved.Refused).reason.contains("splat.ply"))
+        assertTrue(SplatSource.resolve("a.splat.ply", prefixed) is SplatSource.Resolved.Remote)
+        // A local file is read by the SDK, not served: .ply and .spz both.
+        assertNull(SplatSource.acceptance("room.ply"))
+        assertNull(SplatSource.acceptance("room.spz"))
+    }
+
+    @Test
     fun httpPathsAndMissingServersAreRefused() {
         assertTrue(refused("http://scan.example.ts.net/scans/a.ply").contains("http://"))
         refused("ftp://scan.example.ts.net/a.ply")

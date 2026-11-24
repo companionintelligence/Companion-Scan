@@ -1,10 +1,7 @@
 package com.companionintelligence.scan;
 
 import android.content.Context;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.ImageFormat;
-import android.graphics.Matrix;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
 import android.media.Image;
@@ -26,7 +23,6 @@ import com.google.ar.core.Point;
 import com.google.ar.core.PointCloud;
 import com.google.ar.core.Pose;
 import com.google.ar.core.Session;
-import com.google.ar.core.TrackingFailureReason;
 import com.google.ar.core.TrackingState;
 import com.google.ar.core.exceptions.CameraNotAvailableException;
 import com.google.ar.core.exceptions.NotYetAvailableException;
@@ -94,7 +90,8 @@ class ScanARRenderer implements GLSurfaceView.Renderer {
     private final GLSurfaceView view;
     private final Session session;
     private final boolean depthEnabled;
-    private final int hitGrid;
+    /** Samples per side of the hits grid. start() may change it on a running session, from the UI thread. */
+    private volatile int hitGrid;
     private final int sensorOrientation;
     private final int viewWidth;
     private final int viewHeight;
@@ -107,6 +104,7 @@ class ScanARRenderer implements GLSurfaceView.Renderer {
     private final float[] quadTexCoordsTransformed = new float[8];
     private volatile boolean sessionResumed;
     private Frame lastFrame;
+    /** Whether this session has tracked once: until it has, a pause with no reason is the session starting (ScanARRules.trackingName). */
     private boolean everTracked;
     private TrackingState lastTrackingState;
     private String lastTrackingName = "";
@@ -126,7 +124,7 @@ class ScanARRenderer implements GLSurfaceView.Renderer {
         this.view = view;
         this.session = session;
         this.depthEnabled = depthEnabled;
-        this.hitGrid = Math.max(2, Math.min(hitGrid, 40));
+        this.hitGrid = ScanARRules.clampHitGrid(hitGrid);
         this.sensorOrientation = sensorOrientation;
         this.viewWidth = viewWidth;
         this.viewHeight = viewHeight;
@@ -190,7 +188,7 @@ class ScanARRenderer implements GLSurfaceView.Renderer {
         if (state == TrackingState.TRACKING) {
             everTracked = true;
         }
-        String name = trackingName(camera);
+        String name = ScanARRules.trackingName(state, camera.getTrackingFailureReason(), everTracked);
         if (state != lastTrackingState || !name.equals(lastTrackingName)) {
             lastTrackingState = state;
             lastTrackingName = name;
@@ -244,6 +242,15 @@ class ScanARRenderer implements GLSurfaceView.Renderer {
     /** The origin's pose as ARCore last refined it, as x, y, z, qx, qy, qz, qw, or null when no origin is set. */
     double[] liveOriginPose() {
         return originPose;
+    }
+
+    int hitGrid() {
+        return hitGrid;
+    }
+
+    /** The next hits event samples a grid of this side, kept to 2 to 40. */
+    void setHitGrid(int side) {
+        hitGrid = ScanARRules.clampHitGrid(side);
     }
 
     /** Reports a camera failure once, and again only after a frame gets through. */
@@ -333,20 +340,16 @@ class ScanARRenderer implements GLSurfaceView.Renderer {
         try {
             int w = image.getWidth();
             int h = image.getHeight();
-            YuvImage yuv = new YuvImage(toNv21(image), ImageFormat.NV21, w, h, null);
-            ByteArrayOutputStream raw = new ByteArrayOutputStream();
-            yuv.compressToJpeg(new Rect(0, 0, w, h), JPEG_QUALITY, raw);
-            Bitmap bitmap = BitmapFactory.decodeByteArray(raw.toByteArray(), 0, raw.size());
-            Matrix rotate = new Matrix();
-            rotate.postRotate(sensorOrientation);
-            Bitmap portrait = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), rotate, true);
+            // Turned upright in the YUV data and compressed once. It was compressed, decoded, turned and compressed again,
+            // which cost a second encode and a second round of JPEG loss on every keyframe.
+            byte[] upright = ScanARRules.rotateNv21(toNv21(image), w, h, sensorOrientation);
+            boolean quarterTurn = ScanARRules.isQuarterTurn(sensorOrientation);
+            width = quarterTurn ? h : w;
+            height = quarterTurn ? w : h;
+            YuvImage yuv = new YuvImage(upright, ImageFormat.NV21, width, height, null);
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            portrait.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out);
+            yuv.compressToJpeg(new Rect(0, 0, width, height), JPEG_QUALITY, out);
             jpeg = out.toByteArray();
-            width = portrait.getWidth();
-            height = portrait.getHeight();
-            bitmap.recycle();
-            portrait.recycle();
         } finally {
             image.close();
         }
@@ -357,7 +360,8 @@ class ScanARRenderer implements GLSurfaceView.Renderer {
         result.put("width", width);
         result.put("height", height);
         result.put("jpegBase64", Base64.encodeToString(jpeg, Base64.NO_WRAP));
-        result.put("transform", transformOf(camera.getPose()));
+        // The display-oriented pose, the orientation of the projection and of this portrait JPEG (see ScanARPlugin).
+        result.put("transform", transformOf(camera.getDisplayOrientedPose()));
         result.put("projection", projectionOf(camera));
         if (wantDepth && depthEnabled) {
             JSObject depth = depthOf(frame);
@@ -410,7 +414,7 @@ class ScanARRenderer implements GLSurfaceView.Renderer {
     private JSObject poseEvent(Frame frame, Camera camera, String tracking) {
         JSObject event = new JSObject();
         event.put("timestamp", frame.getTimestamp() / 1e9);
-        event.put("transform", transformOf(camera.getPose()));
+        event.put("transform", transformOf(camera.getDisplayOrientedPose()));
         event.put("projection", projectionOf(camera));
         event.put("tracking", tracking);
         return event;
@@ -443,18 +447,19 @@ class ScanARRenderer implements GLSurfaceView.Renderer {
     }
 
     private JSObject hitsEvent(Frame frame) {
+        int side = hitGrid; // read once, so a change from start() never splits one event between two grids
         JSONArray samples = new JSONArray();
-        for (int row = 0; row < hitGrid; row++) {
-            for (int col = 0; col < hitGrid; col++) {
-                float x = (col + 0.5f) / hitGrid * viewWidth;
-                float y = (row + 0.5f) / hitGrid * viewHeight;
+        for (int row = 0; row < side; row++) {
+            for (int col = 0; col < side; col++) {
+                float x = (col + 0.5f) / side * viewWidth;
+                float y = (row + 0.5f) / side * viewHeight;
                 samples.put(sample(frame, x, y));
             }
         }
         JSObject event = new JSObject();
         event.put("timestamp", frame.getTimestamp() / 1e9);
-        event.put("cols", hitGrid);
-        event.put("rows", hitGrid);
+        event.put("cols", side);
+        event.put("rows", side);
         event.put("samples", samples);
         return event;
     }
@@ -614,25 +619,6 @@ class ScanARRenderer implements GLSurfaceView.Renderer {
             }
         }
         return out;
-    }
-
-    private static String trackingName(Camera camera) {
-        switch (camera.getTrackingState()) {
-            case TRACKING:
-                return "normal";
-            case STOPPED:
-                return "notAvailable";
-            case PAUSED:
-                if (camera.getTrackingFailureReason() == TrackingFailureReason.EXCESSIVE_MOTION) {
-                    return "limited.excessiveMotion";
-                }
-                if (camera.getTrackingFailureReason() == TrackingFailureReason.INSUFFICIENT_FEATURES) {
-                    return "limited.insufficientFeatures";
-                }
-                return "limited.initializing";
-            default:
-                return "limited";
-        }
     }
 
     /** Column-major 4×4 of a pose, as the web side reads it. */

@@ -331,8 +331,14 @@ const scanArHasCameraBridge = /@objc func captureFrame/.test(read('mobile/ios/Ap
 const nativeProviderFeedsEpochs = /FrameEpochTracker/.test(read('src/ar/native.ts'))
 /** Whether any file of src imports the `ArSession` provider: if none does, it is not the route the app takes. */
 const arSessionProviderIsImported = tsFiles('src').some((file) => /from '\.{1,2}\/(?:ar\/)?native-provider(?:\.ts)?'/.test(read(file)))
-/** Only `ArSessionPlugin.java` asks Google Play to install ARCore (`requestInstall`); the plugin the app registers only asks whether it is installed. */
-const registeredAndroidPluginInstallsArcore = /requestInstall/.test(read('mobile/android/app/src/main/java/com/companionintelligence/scan/ScanARPlugin.java'))
+/**
+ * The app never reaches an ARCore install. ScanARPlugin.start() can ask Google Play for one (wave 14, F-31), but capabilities()
+ * reports `supported` only once ARCore is installed, and the page starts the native runtime only when the probe says
+ * `supported` (runtime-select.ts, chooseNativeRuntime). On a phone without ARCore the page runs 8th Wall and never calls start().
+ */
+const pageNeverReachesArcoreInstall =
+  /result\.put\("supported", installed\)/.test(read('mobile/android/app/src/main/java/com/companionintelligence/scan/ScanARPlugin.java'))
+  && /nativeSupported: probe\.supported/.test(read('src/ar/runtime-select.ts'))
 /** The generated notices carry the ARCore Additional Terms' text after Google's disclosure, so the terms are reproduced and not only linked. */
 const noticesReproduceArcoreTerms = /arcore-additional-terms\.txt/.test(read('scripts/native/third-party-notices.mjs'))
 const exportWorldHasARunner = /job\.type === 'export-world'\)\s*\{\s*await _runExportWorldJob/.test(read('server/main.ts'))
@@ -354,7 +360,7 @@ const retired: Array<{ file: string; says: RegExp; holds: boolean; because: stri
   { file: 'docs/operations/AR_DEVICE_SUPPORT.md', says: /ahead\s+of\s+the\s+natives,\s+which\s+send\s+neither\s+yet/, holds: nativeProviderFeedsEpochs, because: 'the registered provider feeds frame epochs from its poses and tracking states (src/ar/native.ts)' },
   { file: 'src/ar/anchors.ts', says: /\(src\/ar\/native-provider\.ts\)/, holds: !arSessionProviderIsImported, because: 'nothing in src imports native-provider.ts: the native route is src/ar/native.ts and the ScanAR plugin' },
   { file: 'NOTICE.md', says: /its `ArSession` plugin calls|The iOS app's `ArSession` plugin uses Apple's ARKit/, holds: !arSessionIsRegistered, because: 'the shells register ScanAR, which is what calls ARCore and ARKit; ArSession is not in the iOS target at all' },
-  { file: 'NOTICE.md', says: /Google\s+Play\s+installs\s+or\s+updates\s+when\s+an\s+AR\s+session\s+starts/, holds: !registeredAndroidPluginInstallsArcore, because: 'only the unregistered ArSessionPlugin.java calls requestInstall; ScanARPlugin.java reports ARCore unsupported until Google Play Services for AR is installed, and the scanner then runs the web runtimes' },
+  { file: 'NOTICE.md', says: /Google\s+Play\s+installs\s+or\s+updates\s+when\s+an\s+AR\s+session\s+starts/, holds: pageNeverReachesArcoreInstall, because: 'ScanARPlugin.start() can ask Google Play to install ARCore, but capabilities() reports supported only once ARCore is installed and the page starts the native runtime only when supported (runtime-select.ts), so on a phone without ARCore the scanner runs the web runtimes and the install is never asked for' },
   { file: 'mobile/README.md', says: /and a link to the terms\)/, holds: noticesReproduceArcoreTerms, because: "the generated notices carry the disclosure and then the Additional Terms' text (scripts/native/third-party-notices.mjs)" },
   { file: 'mobile/README.md', says: /passed on the current commit/, holds: true, because: 'a build result names the commit it was observed on: this one was observed on main before the branches were merged, and no build of the merged tree has run' },
   { file: 'src/ui/legal-notices.ts', says: /linked and not reproduced/, holds: noticesReproduceArcoreTerms, because: "the generated notices reproduce the Additional Terms' text after the disclosure, so only the XR Engine's Agreement is linked and not reproduced" },

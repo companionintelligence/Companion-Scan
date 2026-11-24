@@ -1,5 +1,11 @@
 package com.companionintelligence.scan.quest.pose
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.double
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -35,7 +41,8 @@ class CoordinateConversionsTest {
 
     /**
      * server/splat/splat_train_dataset.ts poseToMatrix, restated line for line: normalise the quaternion, expand
-     * it into a row-major rotation, put the position in the last column. No flip.
+     * it into a row-major rotation, put the position in the last column. No flip. It is held to the server's own
+     * output by [theRestatedServerMatrixIsTheServersOwn], so the oracle cannot drift from the function it stands for.
      */
     private fun serverPoseToMatrix(px: Double, py: Double, pz: Double, x0: Double, y0: Double, z0: Double, w0: Double): Array<DoubleArray> {
         val n = sqrt(x0 * x0 + y0 * y0 + z0 * z0 + w0 * w0).takeIf { it > 0 } ?: 1.0
@@ -65,6 +72,36 @@ class CoordinateConversionsTest {
         m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
             m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
             m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+
+    /**
+     * pose-to-matrix.fixture.json (src/test/resources) lists poses and the matrices the server's poseToMatrix makes of
+     * them, and tests/unit/deno/native_quest_pose_fixture.test.ts holds the file to the server function. A change to
+     * that function fails the Deno test; the fixture regenerated for it then fails this one, until the restatement above
+     * and Quat.toMatrix follow it (FN-171).
+     */
+    @Test
+    fun theRestatedServerMatrixIsTheServersOwn() {
+        val text = javaClass.getResourceAsStream("/pose-to-matrix.fixture.json")!!.bufferedReader().use { it.readText() }
+        val cases = (Json.parseToJsonElement(text) as JsonObject)["cases"]!!.jsonArray
+        assertTrue("the fixture lists its poses", cases.size >= 6)
+        for (entry in cases) {
+            val case = entry.jsonObject
+            val name = case["name"]!!.jsonPrimitive.content
+            val pose = case["pose"]!!.jsonObject
+            val p = pose["position"]!!.jsonObject
+            val q = pose["rotation"]!!.jsonObject
+            fun n(o: JsonObject, key: String) = o[key]!!.jsonPrimitive.double
+            val expected = case["matrix"]!!.jsonArray.map { row -> row.jsonArray.map { it.jsonPrimitive.double } }
+            val restated = serverPoseToMatrix(n(p, "x"), n(p, "y"), n(p, "z"), n(q, "x"), n(q, "y"), n(q, "z"), n(q, "w"))
+            val rotation = Quat(n(q, "x"), n(q, "y"), n(q, "z"), n(q, "w")).toMatrix()
+            for (r in 0 until 4) {
+                for (c in 0 until 4) {
+                    assertEquals("$name: the restated poseToMatrix, m[$r][$c]", expected[r][c], restated[r][c], 1e-12)
+                    if (r < 3 && c < 3) assertEquals("$name: Quat.toMatrix, m[$r][$c]", expected[r][c], rotation[r][c], 1e-12)
+                }
+            }
+        }
+    }
 
     // ── Spatial SDK → Companion Scan ────────────────────────────────────────────────────────────────────────
 

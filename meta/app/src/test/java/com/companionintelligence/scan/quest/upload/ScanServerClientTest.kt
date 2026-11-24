@@ -70,7 +70,11 @@ class ScanServerClientTest {
         assertEquals(FailKind.SIGN_IN_REQUIRED, signIn.kind)
         assertEquals(ScanServerClient.SIGN_IN_MESSAGE, signIn.reason)
 
-        assertEquals(FailKind.SIGN_IN_REQUIRED, (ScanServerClient.classify(403, "") as CallResult.Fail).kind)
+        val refused = ScanServerClient.classify(403, "") as CallResult.Fail
+        assertEquals(FailKind.SIGN_IN_REQUIRED, refused.kind)
+        assertEquals(ScanServerClient.NOT_ALLOWED_MESSAGE, refused.reason)
+        assertEquals(12_582_912L, (ScanServerClient.classify(413, """{"error":"keyframe exceeds 12582912 bytes","maxBytes":12582912}""") as CallResult.Fail).maxBytes)
+        assertEquals(null, (ScanServerClient.classify(413, """{"maxBytes":"12"}""") as CallResult.Fail).maxBytes)
         assertTrue(ScanServerClient.classify(503, "") is CallResult.Retry)
         assertTrue(ScanServerClient.classify(500, """{"error":"x"}""") is CallResult.Retry)
         assertTrue(ScanServerClient.classify(429, "") is CallResult.Retry)

@@ -74,6 +74,13 @@ jobs:
           node scripts/native/check-versions.mjs
       - name: Build installers
         run: npm run build --prefix desktop -- ${{ matrix.tauri-args }}
+      # The desktop shell's own unit tests (main.rs, is_app_page: which addresses the window keeps as
+      # the app's). They compile the app, whose tauri::generate_context! embeds desktop/dist and the
+      # icons, so they run after the build has made both. Linux only: the code under test has no
+      # platform branch, and the release build is the one each platform needs.
+      - name: Desktop shell unit tests (Rust)
+        if: runner.os == 'Linux'
+        run: cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: scan-desktop-${{ runner.os }}
