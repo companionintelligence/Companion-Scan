@@ -128,7 +128,8 @@ test('the undo goes through the module that asks for it: the Place\'s own route,
 })
 
 test('the anchor ring is placed from the first placement, so it follows the landmark after a move', () => {
-  assert.match(fn(viewer, 'addAnchorMarker'), /sessionAnchorPositions\(\s*scan\.calibratedLocalToWorld \?\? scan\.localToWorld,/)
+  // The first placement, with the georeference's turn taken off it when the Place has one (a Place-frame point is drawn from the calibration alone).
+  assert.match(fn(viewer, 'addAnchorMarker'), /sessionAnchorPositions\(\s*sessionToProjectOfPlacement\(\s*scan\.calibratedLocalToWorld \?\? scan\.localToWorld,/)
 })
 
 test('a patch for an object that is the scan root is not replayed as a move of the scan', () => {
@@ -199,7 +200,9 @@ test('the first placement is stamped when a world is built and on every read, ah
   const synth = fn(server, 'synthesizeWorld')
   inOrder(synth, /stampFirstSightPlacements\(world, \(\) => undefined\)/, 'await writeWorldUnlocked(world)', 'a new world is stamped before it is written')
   const refresh = fn(server, 'refreshWorldScans')
-  const stamp = /stampFirstSightPlacements\(world, \(filename\) => storedByFilename\.get\(filename\)\?\.meta\['projectTransform'\]\)/
+  // What a calibration puts a scan at is where the Place's georeference carries it (`calibratedPlacement`, server/world/world_origin.ts),
+  // which is the sidecar's projectTransform as it is for a Place with none.
+  const stamp = /stampFirstSightPlacements\(world, \(filename\) => worldOrigin\.calibratedPlacement\(worldOrigin\.placementFactsFor\(placement, filename\), calibrating\)\)/
   assert.match(refresh, stamp)
   // After the additions, so a scan first seen in this read is stamped in it, and before the world is written.
   inOrder(refresh, 'additions.map', stamp, 'stamped after the additions')

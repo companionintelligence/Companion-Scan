@@ -56,6 +56,7 @@
 import type { Context, Hono } from 'hono'
 import type {
   GeoPose,
+  ProjectGeoreference,
   Quat,
   ScanManifest,
   SplatAlignManifest,
@@ -65,6 +66,7 @@ import type {
   Vec3,
 } from '../src/world/types.ts'
 import { type DetectObjectRecord, parseDetectRecords } from '../src/world/detect-objects.ts'
+import { georeferenceBlock } from '../src/world/georef.ts'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -144,6 +146,13 @@ export interface PushDeps {
    * well as at its own timeout (F-27).
    */
   signal?: AbortSignal
+  /**
+   * The Place the scan belongs to, as far as where it is on Earth: its georeference (null when it has none) and the version it was
+   * stored at. When given, an event that has a `spatial_frame` carries a `georeference` block in it, or an explicit null; a
+   * georeference gives every scan one. An uncalibrated scan with no fit in a Place with none ships no `spatial_frame` at all, as
+   * before. Absent, `spatial_frame` is exactly what it was before a Place could be georeferenced.
+   */
+  place?: { georeference: ProjectGeoreference | null; georefVersion: number }
 }
 
 // ── Core push ─────────────────────────────────────────────────────────────────
@@ -560,7 +569,12 @@ function applyTransform(m: number[], p: Vec3): Vec3 {
  * `location` is expressed in; relating the two is the geo-anchoring work, not
  * this fit.
  */
-function spatialFrame(align: SplatAlignManifest | null, scan: ScanManifest, fit: MetricFit | null) {
+function spatialFrame(
+  align: SplatAlignManifest | null,
+  scan: ScanManifest,
+  fit: MetricFit | null,
+  place: PushDeps['place'],
+) {
   const params = align?.params ?? ({} as SplatAlignManifest['params'])
   return {
     units: 'm',
@@ -586,10 +600,15 @@ function spatialFrame(align: SplatAlignManifest | null, scan: ScanManifest, fit:
     fit_status: align?.status ?? null,
     fit_at: align?.createdAt ?? null,
     splat_path: align?.plyPath ?? null,
+    // Where the Place's frame is on Earth: the origin (the Place frame's landmark), the TRUE bearing of the frame's +Z axis, how sure
+    // each is and who set it, or an explicit null when the Place has none. Only when the caller says which Place this is.
+    ...(place ? { georeference: georeferenceBlock(place.georeference, place.georefVersion) } : {}),
     caveat:
       'The project frame is the Place metric frame, not the ENU frame `location` uses — this fit '
-      + 'does not place the splat on Earth. When `metric` is false nothing in this event converts a '
-      + 'splat-space length to metres, and `scale` must not be used to try.',
+      + 'does not place the splat on Earth. `georeference`, when present and not null, relates the Place '
+      + 'metric frame to the Earth (its origin and the true bearing of its +Z axis, approximate to the '
+      + 'accuracy it states); null means the Place has none. When `metric` is false nothing in this event '
+      + 'converts a splat-space length to metres, and `scale` must not be used to try.',
   }
 }
 
@@ -978,8 +997,8 @@ export async function pushScanToMemory(
         : {}),
       // What this scan measures in. Present whenever there is something real to
       // say about scale — an alignment fit, or the scan's own calibration tier.
-      ...(alignManifest || scan.calibrationMethod
-        ? { spatial_frame: spatialFrame(alignManifest, scan, fit) }
+      ...(alignManifest || scan.calibrationMethod || deps.place?.georeference
+        ? { spatial_frame: spatialFrame(alignManifest, scan, fit, deps.place) }
         : {}),
       // Capture-time detections: label + world position + confidence per Thing,
       // qualified by their own frame block for the same reason the splat boxes are.
@@ -997,7 +1016,15 @@ export async function pushScanToMemory(
           lon: geo.lng ?? null,
           address: geo.address ?? null,
           display_address: geo.displayAddress ?? null,
+          // The phone's compass heading when the scan was exported: where the phone happened to point, from MAGNETIC north (a web compass
+          // is magnetic on every platform). It is not the heading of the scan or of its frame, which is what the old name `bearing` was
+          // read as; the heading of the Place frame is `spatial_frame.georeference.bearingDeg`, true north.
+          device_heading_at_export: geo.bearing ?? null,
+          northReference: 'magnetic',
+          // DEPRECATED, kept so a consumer that still reads it does not break: the same number as `device_heading_at_export`, with the
+          // meaning it always had and never said. It will be removed.
           bearing: geo.bearing ?? null,
+          deprecated_keys: { bearing: 'device_heading_at_export' },
           accuracy_m: geo.accuracyM ?? null,
         }
         : null,
