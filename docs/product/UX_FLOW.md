@@ -444,7 +444,7 @@ The two senses of "4D" are distinguished in ADR 0006.
 | `semantic-pass` | ⚠ | `semantic-report`; job list only |
 | `depth-reconstruct` | ⚠ | `depth-plan`; job list only |
 | `lingbot-map-reconstruct` | ✅ | `lingbot-map.manifest.json` + `.point-cloud.ply` + `.poses.json` + `.lingbot.glb`; **Layers → LingBot-Map** |
-| `floor-plan` | ✅ | `.floor-plan.json` + `.svg` + manifest, from the LingBot-Map cloud, in its own units; auto-chains after `lingbot-map-reconstruct` unless `FLOORPLAN_AUTO=0`; **Layers → Floor plan** (numbers, the drawing, two downloads) |
+| `floor-plan` | ✅ | `.floor-plan.json` + `.svg` + manifest, from the LingBot-Map cloud fitted to the capture's AR poses, in metres when the capture measured them; auto-chains after `lingbot-map-reconstruct` unless `FLOORPLAN_AUTO=0`; **Layers → Floor plan** (numbers, the drawing, two downloads) |
 | `splat-train` | ✅ | `.splat.ply` (+ `.compressed.ply` + manifest); **Splat tools**: "Trained splat ready — N gaussians", toggle, Download .ply |
 | `splat-detect` | ✅ | `.interactions.json` (+ manifest); **Splat tools → Detect objects**; 3D boxes and their captions in the viewport |
 | `splat-finish` | ✅ | `.sog` + `.compressed.ply` (+ manifest); auto-chains after `splat-train` unless `SPLAT_FINISH_AUTO=0`; Download .sog |

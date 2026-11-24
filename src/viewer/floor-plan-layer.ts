@@ -7,14 +7,15 @@
  *   /scans/<base>.floor-plan.json           the plan: walls, room outline, area
  *   /scans/<base>.floor-plan.svg            the plan drawn, shown as the section's preview
  *
- * Not a scene layer. The plan is a 2D drawing in the LingBot-Map cloud's own frame and units, not geometry in the
- * scan's frame, so it adds no row to the Scene layers list and no switch to the View menu: a `floor` row that drew
- * nothing would be the checkbox that switches nothing (F-19). It is shown the way the other job outputs in the Layers
- * tab are, in its own section (viewer.html, `#floor-plan-section`).
+ * Not a scene layer. The plan is a 2D drawing, in the capture's AR session frame once the job has fitted the cloud to
+ * the keyframes' AR poses (its manifest's `units` and `frame` say so), and nothing draws it in the 3D scene yet. So it
+ * adds no row to the Scene layers list and no switch to the View menu: a `floor` row that drew nothing would be the
+ * checkbox that switches nothing (F-19). It is shown the way the other job outputs in the Layers tab are, in its own
+ * section (viewer.html, `#floor-plan-section`).
  *
  * Pure apart from the `fetcher` it is handed, so a unit test drives it with canned responses.
  */
-import type { FloorPlanManifest, ScanManifest } from '../world/types.ts'
+import type { FloorPlanManifest, FloorPlanUnits, ScanManifest } from '../world/types.ts'
 import { artifactProblemText, readArtifact, type ArtifactRead } from './artifact-read.ts'
 import { scanArtifactBase } from './splat-layer.ts'
 import type { SplatJobRequest } from './splat-toolbox.ts'
@@ -80,26 +81,53 @@ export interface FloorPlanPanelView {
   planVersion: string | null
 }
 
-/** The status line of a plan that is there. Says what the numbers are, and what they are not. */
-export const FLOOR_PLAN_READY_TEXT =
-  'Floor plan ready. Derived from the LingBot-Map points, not surveyed: its numbers are in that reconstruction\'s own units, which are metres only if it was metric.'
+/**
+ * The status line of a plan that is there, by the units its manifest names. Says what the numbers are, and what they
+ * are not. A plan with no `units` was drawn before the fit to the capture existed: its numbers are the cloud's.
+ */
+export function floorPlanReadyText(units: FloorPlanUnits | undefined): string {
+  const fitted = 'Floor plan ready. Derived from the LingBot-Map points, fitted to the capture\'s AR poses for scale and up'
+  switch (units) {
+    case 'm':
+      return `${fitted}, in metres. Not surveyed.`
+    case 'm-estimated':
+      return `${fitted}, in approximate metres: the AR runtime estimated its scale. Not surveyed.`
+    case 'session':
+      return `${fitted}, in that AR session's own units, which are not known to be metres. Not surveyed.`
+    default:
+      return 'Floor plan ready. Derived from the LingBot-Map points, not surveyed: its numbers are in that reconstruction\'s own units, which are metres only if it was metric.'
+  }
+}
 
 const plural = (count: number, one: string, many: string): string => `${count} ${count === 1 ? one : many}`
 
-/** Numbers to the precision the worker rounds to, with no unit: the cloud's units are not known to be metres. */
+/** Numbers to the precision the worker rounds to. */
 function measure(value: number, digits: number): string {
   return value.toFixed(digits)
 }
 
-/** The numbers line of an `ok` manifest: walls, rooms, area and ceiling height, each only when it was measured. */
+/**
+ * The numbers line of an `ok` manifest: walls, rooms, area and ceiling height, each only when it was measured, with
+ * "m" and "m²" only when the plan is in metres.
+ */
 export function floorPlanStatsText(manifest: FloorPlanManifest): string {
+  const metric = manifest.units === 'm' || manifest.units === 'm-estimated'
   const bits = [plural(manifest.wallCount ?? 0, 'wall', 'walls')]
   if (manifest.roomCount) bits.push(plural(manifest.roomCount, 'room', 'rooms'))
-  if (typeof manifest.areaM2 === 'number' && manifest.roomCount) bits.push(`area ${measure(manifest.areaM2, 1)}`)
-  if (typeof manifest.ceilingHeightM === 'number' && manifest.ceilingHeightM > 0) {
-    bits.push(`ceiling ${measure(manifest.ceilingHeightM, 2)}`)
+  if (typeof manifest.areaM2 === 'number' && manifest.roomCount) {
+    bits.push(`area ${measure(manifest.areaM2, 1)}${metric ? ' m²' : ''}`)
   }
-  return `${bits.join(' · ')} (point-cloud units)`
+  if (typeof manifest.ceilingHeightM === 'number' && manifest.ceilingHeightM > 0) {
+    bits.push(`ceiling ${measure(manifest.ceilingHeightM, 2)}${metric ? ' m' : ''}`)
+  }
+  const note = manifest.units === 'm'
+    ? ''
+    : manifest.units === 'm-estimated'
+    ? ' (approximate metres)'
+    : manifest.units === 'session'
+    ? ' (AR session units)'
+    : ' (point-cloud units)'
+  return `${bits.join(' · ')}${note}`
 }
 
 /** The section for one scan, from what reading its manifest gave. */
@@ -116,7 +144,11 @@ export function floorPlanPanelView(read: ArtifactRead<FloorPlanManifest>): Floor
   }
   const manifest = read.value
   if (manifest.status === 'ok') {
-    return { status: FLOOR_PLAN_READY_TEXT, stats: floorPlanStatsText(manifest), planVersion: manifest.createdAt || 'ok' }
+    return {
+      status: floorPlanReadyText(manifest.units),
+      stats: floorPlanStatsText(manifest),
+      planVersion: manifest.createdAt || 'ok',
+    }
   }
   if (manifest.status === 'skipped') {
     const reason = manifest.skippedReason ?? 'no reason given'

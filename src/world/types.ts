@@ -85,8 +85,9 @@ export type WorldJobType =
   /**
    * A 2D floor plan (walls, a room outline, area, ceiling height) from the scan's LingBot-Map point cloud, written
    * beside the scan as `<base>.floor-plan.json` and `.svg` (server/floor_plan.ts). CPU and numpy only. A successful
-   * `lingbot-map-reconstruct` queues it (`FLOORPLAN_AUTO=0` turns that off). Derived, not survey-grade, and in the
-   * cloud's own units: see FloorPlanManifest.
+   * `lingbot-map-reconstruct` queues it (`FLOORPLAN_AUTO=0` turns that off). The cloud is fitted to the keyframes' AR
+   * poses first, for its scale and its up axis. Derived, not survey-grade, and in metres only when the capture's AR
+   * runtime measured in metres: see FloorPlanManifest's `units`.
    */
   | 'floor-plan'
   | 'memory-push'
@@ -1428,5 +1429,7 @@ export type {
   PanopticLiftManifest,
   SplatFinishManifest,
   SplatFinishSizes,
+  FloorPlanAlignment,
   FloorPlanManifest,
+  FloorPlanUnits,
 } from './manifests.ts'

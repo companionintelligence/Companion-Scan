@@ -26,7 +26,8 @@ their own; each is pointed at a Scan server by its https address.
   slower chain of poses (LingBot-Map, or COLMAP with a quality verdict), Gaussian-splat training
   (Brush by default, or Spirula Studio, chosen by `SPLAT_BACKEND`), then splat detection, alignment
   and compression. A LingBot-Map cloud also gets a 2D floor plan (`floor-plan`, numpy on the CPU),
-  in that cloud's own units. A person capture is reconstructed off-box in `subsystems/4d-capture/`
+  fitted to the capture's AR poses, so in metres when the capture measured in metres. A person
+  capture is reconstructed off-box in `subsystems/4d-capture/`
   ([ADR 0006](../adr/0006-person-capture-is-a-calibrated-take-and-densification-is-a-subsystem.md)).
 - **Optional tools.** Every reconstruction tool is an external program the server runs. A missing
   one makes its job complete as `skipped` with a `remediation`, so a box with none of them still

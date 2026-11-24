@@ -10,11 +10,11 @@ import { assert, assertEquals, assertStringIncludes } from './assert.ts'
 
 import {
   buildFloorPlanJobRequest,
-  FLOOR_PLAN_READY_TEXT,
   floorPlanDownloadName,
   floorPlanJsonUrl,
   floorPlanManifestUrl,
   floorPlanPanelView,
+  floorPlanReadyText,
   floorPlanStatsText,
   floorPlanSvgUrl,
   readFloorPlanManifest,
@@ -40,10 +40,19 @@ function manifest(over: Partial<FloorPlanManifest> = {}): FloorPlanManifest {
     wallCount: 4,
     roomCount: 1,
     ceilingHeightM: 2.5,
-    disclaimer: 'derived, not survey-grade; in the point cloud\'s own units',
+    disclaimer: 'derived, not survey-grade; metres, from the capture\'s AR tracking',
+    units: 'm',
+    frame: 'scan',
+    alignment: { pairedFrames: 8, scale: 3.2, residual: 0.01, orientationResidualDeg: 0.4 },
     params: { python: 'python3', workerPath: 'floor_plan_worker.py', minWallM: 0.5 },
     ...over,
   }
+}
+
+/** A manifest written before the fit to the capture: no units, the cloud's own numbers. */
+function cloudManifest(over: Partial<FloorPlanManifest> = {}): FloorPlanManifest {
+  const { units: _u, frame: _f, alignment: _a, ...rest } = manifest(over)
+  return { ...rest, disclaimer: 'derived, not survey-grade; in the point cloud\'s own units' }
 }
 
 test('the three URLs are the scan\'s base on the artifact route, encoded; a version busts the five-minute copy', () => {
@@ -84,17 +93,33 @@ test('readFloorPlanManifest: a plan, none yet, no route, and a file that is not 
 
 test('a plan that is there says what its numbers are, and offers the drawing', () => {
   const view = floorPlanPanelView({ state: 'found', value: manifest() })
-  assertEquals(view.status, FLOOR_PLAN_READY_TEXT)
-  assertStringIncludes(view.status, 'not surveyed')
-  assertStringIncludes(view.status, 'metres only if it was metric')
-  assertEquals(view.stats, '4 walls · 1 room · area 12.0 · ceiling 2.50 (point-cloud units)')
+  assertEquals(view.status, floorPlanReadyText('m'))
+  assertStringIncludes(view.status, 'fitted to the capture\'s AR poses')
+  assertStringIncludes(view.status, 'in metres. Not surveyed.')
+  assertEquals(view.stats, '4 walls · 1 room · area 12.0 m² · ceiling 2.50 m')
   assertEquals(view.planVersion, '2026-11-24T10:00:00.000Z')
 })
 
-test('the numbers line claims no unit, and leaves out what was not measured', () => {
-  assertEquals(floorPlanStatsText(manifest({ wallCount: 1, roomCount: 0, areaM2: 0, ceilingHeightM: 0 })), '1 wall (point-cloud units)')
-  assertEquals(floorPlanStatsText(manifest({ wallCount: 7, roomCount: 1, areaM2: 3408.4 })), '7 walls · 1 room · area 3408.4 · ceiling 2.50 (point-cloud units)')
-  assert(!/m²| m\b/.test(floorPlanStatsText(manifest())), 'no metre symbol')
+test('the status line and the numbers name the unit the manifest names, and metres only when it is metres', () => {
+  assertStringIncludes(floorPlanReadyText('m-estimated'), 'approximate metres')
+  assertEquals(floorPlanStatsText(manifest({ units: 'm-estimated' })), '4 walls · 1 room · area 12.0 m² · ceiling 2.50 m (approximate metres)')
+  assertStringIncludes(floorPlanReadyText('session'), 'not known to be metres')
+  const session = floorPlanStatsText(manifest({ units: 'session' }))
+  assertEquals(session, '4 walls · 1 room · area 12.0 · ceiling 2.50 (AR session units)')
+  assert(!/m²| m\b/.test(session), 'no metre symbol in session units')
+})
+
+test('a plan drawn before the fit keeps its old wording: the cloud\'s own units, no metre symbol', () => {
+  const view = floorPlanPanelView({ state: 'found', value: cloudManifest() })
+  assertStringIncludes(view.status, 'not surveyed')
+  assertStringIncludes(view.status, 'metres only if it was metric')
+  assertEquals(view.stats, '4 walls · 1 room · area 12.0 · ceiling 2.50 (point-cloud units)')
+  assert(!/m²| m\b/.test(view.stats), 'no metre symbol')
+})
+
+test('the numbers line leaves out what was not measured', () => {
+  assertEquals(floorPlanStatsText(manifest({ wallCount: 1, roomCount: 0, areaM2: 0, ceilingHeightM: 0 })), '1 wall')
+  assertEquals(floorPlanStatsText(cloudManifest({ wallCount: 7, roomCount: 1, areaM2: 3408.4 })), '7 walls · 1 room · area 3408.4 · ceiling 2.50 (point-cloud units)')
 })
 
 test('no plan, a skip, a failure and an unreadable answer each say so, and offer no drawing', () => {

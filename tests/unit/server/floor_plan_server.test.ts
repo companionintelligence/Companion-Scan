@@ -3,15 +3,16 @@
  *
  *   - POST /worlds/:slug/jobs takes the type, the pump dispatches it, and a job queued with no scan fails by name.
  *   - A scan whose session has no LingBot-Map cloud completes as skipped, with the fix in the job's own words.
- *   - With an interpreter that has numpy (the one the job would use here), a session holding a synthetic box room gets
- *     its plan: the job's artifact, the three files served with their types, the drawing under a policy that runs
- *     nothing, the manifest with no server path in it, and all three taken when the scan is deleted.
+ *   - With an interpreter that has numpy (the one the job would use here), a session holding a synthetic captured room
+ *     (its cloud in a tilted LingBot frame, its keyframes' AR poses) gets its plan: the job's artifact, the three files
+ *     served with their types, the drawing under a policy that runs nothing, the manifest with no server path in it,
+ *     and all three taken when the scan is deleted. The scan records no scale kind, so the plan is in session units.
  */
 import { assert, assertEquals, assertFalse, assertStringIncludes } from './assert.ts'
 
 import { scanIdFor } from '../../../server/scan_id.ts'
 import type { WorldJob } from '../../../src/world/types.ts'
-import { floorPlanPython, ROOM, writeBoxRoomPly } from './floor_plan_fixtures.ts'
+import { floorPlanPython, ROOM, writeCapturedRoom } from './floor_plan_fixtures.ts'
 import { filesUnder, type RunningServer, startServer } from './server_core_harness.ts'
 import * as fs from 'node:fs/promises'
 import { test } from 'node:test'
@@ -75,7 +76,7 @@ test('the floor-plan job on the server: queued, run, skipped or drawn, served, a
     async ({ root: r, scansDir, sessionsDir }) => {
       root = r
       const roomSession = await storeScan(scansDir, sessionsDir, ROOM_BASE, ROOM_SESSION)
-      await writeBoxRoomPly(`${roomSession}/lingbot-map.point-cloud.ply`)
+      await writeCapturedRoom(roomSession)
       await storeScan(scansDir, sessionsDir, BARE_BASE, BARE_SESSION)
     },
   )
@@ -105,12 +106,13 @@ test('the floor-plan job on the server: queued, run, skipped or drawn, served, a
       const job = await queue(server, { type: 'floor-plan', scanId: scanIdFor(`${ROOM_BASE}.glb`), payload: { minWallM: 0.5 } })
       const done = await settled(server, job.jobId)
       assertEquals(done.status, 'completed', why(`room: ${done.error ?? done.result}`))
-      assertStringIncludes(done.result ?? '', 'in the point cloud\'s own units')
+      assertStringIncludes(done.result ?? '', 'fitted to the capture\'s AR poses')
       const artifact = done.artifacts?.find((a) => a.type === 'floor-plan')
       assert(artifact, `no floor-plan artifact: ${JSON.stringify(done.artifacts)}`)
       assertEquals(artifact.url, `/scans/${ROOM_BASE}.floor-plan.json`)
-      const area = (artifact.metadata as { areaM2: number }).areaM2
-      assert(Math.abs(area - ROOM.width * ROOM.depth) <= 1.2, `area ${area}`)
+      const metadata = artifact.metadata as { areaM2: number; units: string }
+      assert(Math.abs(metadata.areaM2 - ROOM.width * ROOM.depth) <= 1.2, `area ${metadata.areaM2}`)
+      assertEquals(metadata.units, 'session', 'a scan that recorded no scale kind is not taken to be in metres')
 
       const manifest = await server.get(`/scans/${ROOM_BASE}.floor-plan.manifest.json`)
       assertEquals(manifest.status, 200, why('manifest'))
@@ -161,8 +163,9 @@ test('the floor-plan job on the server: queued, run, skipped or drawn, served, a
 
 /**
  * Stands in for LINGBOT_MAP_PYTHON, as the stand-in in wp-runners-signal-pump.test.ts does. Run as LingBot-Map's worker
- * it leaves a prepared reconstruction in the session (a box room and two cameras a unit apart, so the run's quality
- * verdict passes); run as the floor-plan worker it writes a small plan where it is told to. Anything else is refused.
+ * it leaves a prepared reconstruction in the session (a captured room: its cloud and its cameras, which match the
+ * session's AR keyframes, so the run's quality verdict and the floor plan's fit both pass); run as the floor-plan worker
+ * it writes a small plan where it is told to. Anything else is refused.
  */
 function interpreterStub(fixtureDir: string): string {
   return `#!/bin/sh
@@ -191,17 +194,12 @@ esac
 `
 }
 
-const IDENTITY_4 = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
-/** World-to-camera (OpenCV), as LingBot-Map writes it: this camera's centre is one unit along x. */
-const MOVED_4 = [[1, 0, 0, -1], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
-
 test('a LingBot-Map run that succeeds queues a floor plan on the same interpreter, and FLOORPLAN_AUTO=0 stops that', { skip: process.platform === 'win32' }, async (t) => {
   const tools = await makeTempDir({ prefix: 'floor-plan-chain-' })
   try {
-    await writeBoxRoomPly(`${tools}/lingbot-map.point-cloud.ply`)
-    await fs.writeFile(`${tools}/lingbot-map.poses.json`, JSON.stringify({
-      frames: [{ file: 'kf-00000.jpg', cameraToWorld: IDENTITY_4 }, { file: 'kf-00001.jpg', cameraToWorld: MOVED_4 }],
-    }))
+    // The reconstruction the stand-in leaves (cloud and poses), and the keyframes the session holds (AR poses).
+    await writeCapturedRoom(tools)
+    const keyframes = await fs.readFile(`${tools}/keyframes.jsonl`, 'utf8')
     const stub = `${tools}/python`
     await fs.writeFile(stub, interpreterStub(tools))
     await fs.chmod(stub, 0o755)
@@ -210,7 +208,7 @@ test('a LingBot-Map run that succeeds queues a floor plan on the same interprete
       await t.test(`FLOORPLAN_AUTO=${auto}`, async () => {
         const server = await startServer({ LINGBOT_MAP_PYTHON: stub, FLOORPLAN_AUTO: auto }, async ({ scansDir, sessionsDir }) => {
           const session = await storeScan(scansDir, sessionsDir, ROOM_BASE, ROOM_SESSION)
-          await fs.writeFile(`${session}/keyframes.jsonl`, `${JSON.stringify({ index: 0, file: 'kf-00000.jpg' })}\n`)
+          await fs.writeFile(`${session}/keyframes.jsonl`, keyframes)
         })
         const why = (what: string) => `${what}\n${server.log()}`
         try {
