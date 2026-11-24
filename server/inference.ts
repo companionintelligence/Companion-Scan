@@ -1,11 +1,18 @@
 /**
- * Inference engine — runs LFM2.5-VL-1.6B-ONNX locally.
+ * Inference engine — the server's object detector for /infer.
  *
  * Supports three modes (INFERENCE_MODE env):
- * 1. "ollama" (default) — POSTs to local Ollama API (Metal/AMD accelerated, zero local deps)
- * 2. "onnx"             — runs via onnxruntime-node (loaded dynamically to avoid load errors)
+ * 1. "ollama" (default) — POSTs to an Ollama API (OLLAMA_HOST, OLLAMA_MODEL; DEFAULT_MODEL_TAG in
+ *                         src/shared/model-catalog.ts). Ollama runs the model on whatever accelerator it has.
+ * 2. "onnx"             — runs LFM2.5-VL-1.6B-ONNX in this process via onnxruntime-node, on the CPU only
+ *                         (executionProviders: ['cpu'] in load()), loaded dynamically to avoid load errors
  * 3. "mock"             — deterministic colour-blob detector for tests/CI; recognises the
  *                         shared CV palette colours (test-data/cv images, xr8-mock feed)
+ *
+ * The ollama path logs counts and timing, never the model's reply: a capture is the inside of someone's room, and the
+ * reply describes it (F-07, the rule /infer in main.ts states for its own log line). The mock engine logs its palette
+ * labels, which describe the synthetic test images it exists for. The ONNX driver's own log line is in
+ * src/inference/lfm-driver.ts.
  */
 import { SPATIAL_DETECTION_PROMPT, parseDetections } from './prompt.ts'
 import type { RawDetection } from './prompt.ts'
@@ -419,10 +426,11 @@ export class InferenceEngine {
 
     const data = await res.json() as { response: string }
     const elapsed = ((Date.now() - start) / 1000).toFixed(2)
-    console.log(`[engine] Ollama inference finished in ${elapsed}s`)
-    console.log(`[engine] Model output:`, data.response)
-
-    return parseDetections(data.response)
+    const detections = parseDetections(data.response)
+    // Counts and timing only. The reply describes what is in a private room (F-07).
+    const replyLength = typeof data.response === 'string' ? data.response.length : 0
+    console.log(`[engine] Ollama inference finished in ${elapsed}s: ${detections.length} detection(s) from a ${replyLength}-character reply`)
+    return detections
   }
 
   private async _inferOnnx(imageBytes: Uint8Array): Promise<RawDetection[]> {

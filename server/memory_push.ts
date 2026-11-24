@@ -139,6 +139,11 @@ export interface PushDeps {
    */
   statFile?: (path: string) => Promise<{ size: number }>
   fetch?: typeof fetch
+  /**
+   * The job pump's deadline (server/world/world_job_pump.ts). Every request the push makes ends when it aborts, as
+   * well as at its own timeout (F-27).
+   */
+  signal?: AbortSignal
 }
 
 // ── Core push ─────────────────────────────────────────────────────────────────
@@ -836,7 +841,12 @@ export async function pushScanToMemory(
 ): Promise<MemoryPushResult> {
   if (!cfg.enabled) throw new Error('Companion Memory is not configured (CI_SERVER_URL / CI_SERVER_TOKEN)')
 
-  const doFetch = deps.fetch ?? fetch
+  const baseFetch = deps.fetch ?? fetch
+  const signal = deps.signal
+  // Each request keeps its own timeout and also ends with the pump's deadline.
+  const doFetch: typeof fetch = signal
+    ? (input, init) => baseFetch(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal })
+    : baseFetch
   const readFile = deps.readFile ?? Deno.readFile
   const readTextFile = deps.readTextFile ?? Deno.readTextFile
   const statFile = deps.statFile ?? Deno.stat

@@ -42,8 +42,8 @@ export function registerPlaceFrameRoutes(app: Hono, deps: PlaceFrameRouteDeps): 
    * `GET /projects/:id/frame-status`: where the Place's reference stands, and what replacing it would affect.
    * `FrameStatus` (src/world/frame-generations.ts): the current frame and its revision, how many of the Place's
    * scans were measured against each frame (counted from the scans' own records, not from any world), and the
-   * frames the Place held before. The scanner's "Replace this Place's reference" asks it before it confirms, and the
-   * editor's banner reads it.
+   * frames the Place held before. The scanner's "Replace this Place's reference" (src/project/frame-status.ts,
+   * src/ar/calibration-run.ts) asks it before it confirms. No editor page reads it.
    */
   app.get('/projects/:id/frame-status', async (c) => {
     const projectId = c.req.param('id')
@@ -84,7 +84,8 @@ export function registerPlaceFrameRoutes(app: Hono, deps: PlaceFrameRouteDeps): 
       return c.json({ ok: true, role: parsed.meta.role, url: framePhotoUrl(projectId, frameId, parsed.meta.role) })
     } catch (err) {
       console.error('[project frame reference-photo error]', err)
-      return c.json({ error: String(err) }, 500)
+      // The detail is logged above; a file error names a server path, which the reply does not (FN-118).
+      return c.json({ error: 'Internal server error' }, 500)
     }
   })
 

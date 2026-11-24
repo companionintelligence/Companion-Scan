@@ -12,7 +12,8 @@ import { createHash } from 'crypto'
 
 // 5173 here is just the last-resort default (matches VITE_PORT's own default in
 // main.ts/vite.config.ts). Set VITE_URL to point at a differently-ported instance.
-const BASE = process.env['VITE_URL'] ?? 'https://liambook.capybara-ulmer.ts.net:5173'
+// VITE_URL names the dev server under test; unset, this machine's own (a phone needs the tailnet name, see playwright.config.ts).
+const BASE = process.env['VITE_URL'] ?? 'https://localhost:5173'
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -662,16 +663,26 @@ test.describe('GET /rtc-signal (WebSocket)', () => {
 // ── POST /upload-summary ──────────────────────────────────────────────────────
 
 test.describe('POST /upload-summary', () => {
-  test('saves a markdown summary and returns filename', async ({ request }) => {
+  // A summary is kept with the capture session it describes, when it names one (wave 14, F-08).
+  async function sessionId(request: import('@playwright/test').APIRequestContext): Promise<string> {
+    const resp = await request.post(`${BASE}/sessions`, { data: {} })
+    expect(resp.status()).toBe(201)
+    return (await resp.json() as { sessionId: string }).sessionId
+  }
+
+  test('saves a markdown summary with its session and returns filename', async ({ request }) => {
     const content = `# Scan Summary\n\nTest run at ${new Date().toISOString()}`
+    const id = await sessionId(request)
     const resp = await request.post(`${BASE}/upload-summary`, {
       multipart: {
         file: { name: 'test-summary.md', mimeType: 'text/markdown', buffer: Buffer.from(content) },
+        sessionId: id,
       },
     })
     expect(resp.status()).toBe(200)
-    const body = await resp.json() as { filename: string }
+    const body = await resp.json() as { filename: string; sessionId: string }
     expect(body.filename.endsWith('.md')).toBeTruthy()
+    expect(body.sessionId).toBe(id)
   })
 
   test('returns 400 when no file', async ({ request }) => {
@@ -681,10 +692,21 @@ test.describe('POST /upload-summary', () => {
     expect(resp.status()).toBe(400)
   })
 
+  test('keeps a summary that names no server session apart, as it always accepted one', async ({ request }) => {
+    const file = { name: 'a.md', mimeType: 'text/markdown', buffer: Buffer.from('# a') }
+    const bodies: Array<Record<string, string | typeof file>> = [{ file }, { file, sessionId: 'local-abc' }]
+    for (const multipart of bodies) {
+      const resp = await request.post(`${BASE}/upload-summary`, { multipart })
+      expect(resp.status()).toBe(200)
+      expect((await resp.json() as { sessionId: string | null }).sessionId).toBeNull()
+    }
+  })
+
   test('sanitises filename in returned path', async ({ request }) => {
     const resp = await request.post(`${BASE}/upload-summary`, {
       multipart: {
         file: { name: '../evil/path.md', mimeType: 'text/markdown', buffer: Buffer.from('# x') },
+        sessionId: await sessionId(request),
       },
     })
     expect(resp.status()).toBe(200)
