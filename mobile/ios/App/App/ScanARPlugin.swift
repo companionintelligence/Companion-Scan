@@ -59,6 +59,8 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
         CAPPluginMethod(name: "captureFrame", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "hitTest", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveWorldMap", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "openGeoView", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "closeGeoView", returnType: CAPPluginReturnPromise),
     ]
 
     /// Event cadence, in seconds. Pose is what the overlay needs each frame; the rest is coarser.
@@ -93,6 +95,8 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
     private var savedWebViewOpaque = true
     private var savedWebViewBackground: UIColor?
     private var savedScrollBackground: UIColor?
+    /// The geo view while it is open (openGeoView). Nil otherwise.
+    private var geoView: GeoViewController?
 
     // MARK: - Capabilities
 
@@ -109,6 +113,56 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
             result["reason"] = "ARKit world tracking is not available on this device."
         }
         call.resolve(result)
+    }
+
+    // MARK: - Geo view
+
+    /// Opens the geo view: ARKit-CoreLocation's SceneLocationView on SceneKit, full screen, with one label per Place
+    /// at its pin (GeoViewController.swift). A viewer, not a capture path (ADR 0014). It runs its own ARKit session,
+    /// so it is refused while this plugin's scan session runs: ARKit runs one session at a time. The scanner's view,
+    /// configuration and saved world maps are never touched.
+    @objc func openGeoView(_ call: CAPPluginCall) {
+        guard ARWorldTrackingConfiguration.isSupported else {
+            call.reject("ARKit world tracking is not available on this device.")
+            return
+        }
+        let places = (call.getArray("places") ?? []).compactMap { ($0 as? JSObject).flatMap(GeoPlace.init) }
+        DispatchQueue.main.async {
+            guard self.arView == nil else {
+                call.reject("Stop the scan before opening the geo view: ARKit runs one session at a time.")
+                return
+            }
+            guard self.geoView == nil else {
+                call.reject("The geo view is already open.")
+                return
+            }
+            guard let presenter = self.bridge?.viewController else {
+                call.reject("The app has no view controller to show the geo view from.")
+                return
+            }
+            let controller = GeoViewController(places: places) { [weak self] in
+                self?.geoView = nil
+                self?.notifyListeners("geoViewClosed", data: [:])
+            }
+            controller.modalPresentationStyle = .fullScreen
+            self.geoView = controller
+            presenter.present(controller, animated: true) {
+                call.resolve(["shown": places.count])
+            }
+        }
+    }
+
+    /// Closes the geo view if it is open. Resolves either way.
+    @objc func closeGeoView(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let controller = self.geoView else {
+                call.resolve()
+                return
+            }
+            controller.dismiss(animated: true) {
+                call.resolve()
+            }
+        }
     }
 
     // MARK: - Session
@@ -129,6 +183,11 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
         DispatchQueue.main.async {
             guard let webView = self.bridge?.webView, let container = webView.superview else {
                 call.reject("The web view is not ready to place the camera behind.")
+                return
+            }
+            // The geo view runs its own ARKit session, and ARKit runs one at a time (openGeoView refuses the other way).
+            guard self.geoView == nil else {
+                call.reject("Close the geo view before starting a scan: ARKit runs one session at a time.")
                 return
             }
             if self.arView != nil {

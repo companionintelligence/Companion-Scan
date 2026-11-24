@@ -19,9 +19,10 @@ import { ensureShellStyles } from '../ui/shell-dialog.ts'
 const RELOAD_AFTER_MS = 900
 
 /**
- * Opens the server dialog. A saved address reloads the editor when the dialog closes,
+ * Opens the server dialog. A saved address reloads the page when the dialog closes,
  * because everything on screen was read from the old server (or from none). A server
- * that answered closes the dialog by itself.
+ * that answered closes the dialog by itself. The locar viewer (src/ar/locar-viewer.ts)
+ * uses it too.
  */
 export function changeServer(): void {
   let saved = false
