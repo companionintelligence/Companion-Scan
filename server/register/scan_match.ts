@@ -99,9 +99,14 @@
 import type {
   BoundedCorrection,
   FloorSource,
+  GlobalProbe,
   RegistrationDetails,
+  RegistrationEvidence,
   RegistrationProposal,
   RegistrationRefusal,
+  ScaleSearch,
+  StartingValue,
+  StartingValuesVerdict,
 } from '../../src/world/register-proposal.ts'
 
 // ─── Adopted constants ───────────────────────────────────────────────────────
@@ -303,6 +308,89 @@ export const AMBIGUOUS_REACH_M = 1.2
 export const MIN_DISTINCTIVENESS = 0.3
 export const MIN_ACCEPT_SCORE = 0.5
 
+// ─── The starting acceptance values (WP-15b, from R2's synthetic study) ──────
+// A pair that passes every gate above is a proposal. These six are the stricter values the research settled on for a
+// move to be OFFERED to a person: on synthetic rooms (480 negatives, among them other rooms, twin footprints, a wrong scale
+// and a perfectly symmetric room) they accepted none and accepted 69.8% of the true pairs. They are judged after the gates
+// above, by `judgeStartingValues`, and the verdict is `details.startingValues`; the job (place_register.ts) turns a proposal
+// that fails one into a refusal. `matchScans` itself still returns what its own gates say, so a caller that wants the
+// measurements without the policy has them.
+//
+// Every one is **adopted, not measured (ADR 0005 rule 5)**: R2 ran 96 trials per scenario on rooms with 35% texture churn and
+// 1% scale drift, and says in its own words that real clouds will score lower. **Revisit when** DX9 (at least 8 rooms of 3
+// sessions each: 24 same-room and 252 cross-room pairs; one pair is a smoke test, not a tuning set) gives the numbers of real
+// accepted and refused pairs. Each pair's numbers are recorded in the job's comparison rows whether it passed or not.
+
+/**
+ * The mean of the likelihood field (a Gaussian of {@link FIELD_SIGMA_M} on the distance to the nearest reference cell) over
+ * the query's cells at the best position, at least. Adopted from R2. A bare score cannot detect symmetry: a square room
+ * scores 0.96 against itself at four turns, which is what {@link MIN_GLOBAL_PEAK_RATIO} is for.
+ */
+export const MIN_FIELD_SCORE = 0.80
+
+/**
+ * The best position's score over the best score of a place elsewhere (outside the global probe's exclusion zone), at least.
+ * Adopted from R2, who read it at 1.02 for a square room with one door gap and 1.00 for a perfectly symmetric one.
+ */
+export const MIN_GLOBAL_PEAK_RATIO = 1.10
+
+/**
+ * A place elsewhere that scores at least this share of the best flags the room as symmetric. From the package brief; it is
+ * nearly the same cut as {@link MIN_GLOBAL_PEAK_RATIO} (1 / 1.10 = 0.909) written the other way up, and a pair between the
+ * two is flagged and refused as ambiguous either way.
+ */
+export const SYMMETRIC_PEAK_RATIO = 0.9
+
+/** The smallest fall in the field score, as a share of it, for a 25 cm slide in the direction it falls least. Adopted from R2: rooms 0.2, a corridor 0.07. */
+export const MIN_OBSERVABILITY = 0.12
+
+/** The share of the query's cells that must have a reference cell within {@link INLIER_GATE_M}. Adopted from R2. */
+export const MIN_QUERY_INLIER_SHARE = 0.85
+
+/**
+ * The share of the reference's cells inside the query's footprint that must have a query cell within {@link INLIER_GATE_M}.
+ * Adopted from R2 (45% of the whole reference), with one change of definition: only the reference inside the query's
+ * footprint counts, so a scan of one room placed in a walk through three is not refused for the two rooms it never saw. For
+ * two scans of about the same reach the footprint is the whole of both and the two definitions are the same.
+ */
+export const MIN_REFERENCE_COVERAGE = 0.45
+
+/** The most the lined-up cells may be apart, RMS, metres. Adopted from R2, and tighter than {@link MAX_INLIER_RESIDUAL_M}. */
+export const MAX_ACCEPT_RMS_M = 0.045
+
+/**
+ * How the likelihood field the evidence is read from is built. R2's own: a Gaussian of 10 cm on a 5 cm grid, so the score
+ * means what R2's score meant. **Adopted, not measured.** The search's own fields are blurrier at their coarse levels and
+ * sharper at the finest, and their scores are not comparable with R2's.
+ */
+export const FIELD_SIGMA_M = 0.10
+export const FIELD_STEP_M = 0.05
+
+/** How far the query slides, metres, and in how many evenly spaced directions, to read {@link MIN_OBSERVABILITY}. R2's own. */
+export const OBSERVABILITY_STEP_M = 0.25
+export const OBSERVABILITY_DIRECTIONS = 16
+
+/**
+ * The global ambiguity probe: how far it looks (metres per axis, degrees of turn each way) and the zone round the best position
+ * that is not "somewhere else" (metres in each axis, degrees of turn). The window is R2's (about 3 m and a full turn) and the
+ * zone is the package brief's (1 m and 25 degrees). **Adopted, not measured.** R2's own rule read the ratio outside a smaller
+ * zone (0.5 m, 10 degrees), which gives a lower ratio and so a stricter test; the brief's zone is used here, as the brief says.
+ */
+export const GLOBAL_PROBE_WINDOW_M = 3
+export const GLOBAL_PROBE_WINDOW_YAW_DEG = 180
+export const GLOBAL_EXCLUSION_M = 1
+export const GLOBAL_EXCLUSION_YAW_DEG = 25
+
+/**
+ * The size search made when the two scans' sessions ran in different units: this many sizes from the smallest to the largest,
+ * evenly spaced on a log scale, so the middle one is exactly 1. R2: a 10% size error was recovered in 36% of trials without it
+ * and in about 90% with it, at about ten times the cost. **Adopted from R2, not measured on a phone**: the range is its range,
+ * and DX1 (the tape test) says what units the runtimes really have.
+ */
+export const SCALE_SEARCH_MIN = 0.8
+export const SCALE_SEARCH_MAX = 1.25
+export const SCALE_SEARCH_STEPS = 11
+
 // ─── Working parameters (not thresholds) ─────────────────────────────────────
 // How the search is built. They change speed and resolution, not what is accepted. Like the thresholds above they
 // are **adopted, not measured (ADR 0005 rule 5)**: chosen on synthetic rooms for accuracy and run time, to be
@@ -361,6 +449,12 @@ export interface MatchOptions {
   maxYawDeg?: number
   /** The bound on the height change, metres. Defaults to {@link MAX_CORRECTION_DY_M}. */
   maxDyM?: number
+  /**
+   * Search the size between the two scans as well, from {@link SCALE_SEARCH_MIN} to {@link SCALE_SEARCH_MAX} times, for scans
+   * whose sessions ran in different units. About twelve times the work. The job sets it when the two scans' recorded
+   * `scaleMode`s differ. A proposal then carries a scale in its transform, and `details.scale` says which.
+   */
+  scaleSearch?: boolean
 }
 
 /** The thresholds a run used, flat, for the job artifact. */
@@ -387,6 +481,21 @@ export function matchParams(options: MatchOptions = {}): Record<string, number> 
     minDistinctiveness: MIN_DISTINCTIVENESS,
     minAcceptScore: MIN_ACCEPT_SCORE,
     minOccupiedCells: MIN_OCCUPIED_CELLS,
+    minFieldScore: MIN_FIELD_SCORE,
+    minGlobalPeakRatio: MIN_GLOBAL_PEAK_RATIO,
+    symmetricPeakRatio: SYMMETRIC_PEAK_RATIO,
+    minObservability: MIN_OBSERVABILITY,
+    minQueryInlierShare: MIN_QUERY_INLIER_SHARE,
+    minReferenceCoverage: MIN_REFERENCE_COVERAGE,
+    maxAcceptRmsM: MAX_ACCEPT_RMS_M,
+    fieldSigmaM: FIELD_SIGMA_M,
+    globalProbeWindowM: GLOBAL_PROBE_WINDOW_M,
+    globalProbeWindowYawDeg: GLOBAL_PROBE_WINDOW_YAW_DEG,
+    globalExclusionM: GLOBAL_EXCLUSION_M,
+    globalExclusionYawDeg: GLOBAL_EXCLUSION_YAW_DEG,
+    scaleSearchMin: SCALE_SEARCH_MIN,
+    scaleSearchMax: SCALE_SEARCH_MAX,
+    scaleSearchSteps: SCALE_SEARCH_STEPS,
   }
 }
 
@@ -1045,6 +1154,311 @@ export function invertYawTranslation(m: readonly number[]): number[] {
   return [c, 0, s, 0, 0, 1, 0, 0, -s, 0, c, 0, -(c * tx - s * tz), -ty, -(s * tx + c * tz), 1]
 }
 
+// ─── What the starting values are judged on ──────────────────────────────────
+
+/**
+ * The query's cells carried through a pose: turned by `theta` about `(px, pz)` and then moved by `(tx, tz)`, as the search
+ * scores them and as {@link search} measures the answer.
+ */
+function moveCells(turn: Cells, px: number, pz: number, theta: number, tx: number, tz: number): Cells {
+  const c = Math.cos(theta)
+  const s = Math.sin(theta)
+  const out: Cells = { n: turn.n, x: new Float64Array(turn.n), z: new Float64Array(turn.n) }
+  for (let i = 0; i < turn.n; i++) {
+    const x = turn.x[i]! - px
+    const z = turn.z[i]! - pz
+    out.x[i] = px + tx + c * x + s * z
+    out.z[i] = pz + tz - s * x + c * z
+  }
+  return out
+}
+
+/**
+ * The reference cells inside the query's footprint: its bounding box grown by the match gate. What the query could have
+ * seen of the reference, and so what it can be asked to explain ({@link MIN_REFERENCE_COVERAGE}).
+ */
+function cellsInFootprint(fixed: Cells, moved: Cells): Cells {
+  let x0 = Infinity
+  let x1 = -Infinity
+  let z0 = Infinity
+  let z1 = -Infinity
+  for (let i = 0; i < moved.n; i++) {
+    x0 = Math.min(x0, moved.x[i]!)
+    x1 = Math.max(x1, moved.x[i]!)
+    z0 = Math.min(z0, moved.z[i]!)
+    z1 = Math.max(z1, moved.z[i]!)
+  }
+  const keep: number[] = []
+  for (let i = 0; i < fixed.n; i++) {
+    const x = fixed.x[i]!
+    const z = fixed.z[i]!
+    if (x >= x0 - INLIER_GATE_M && x <= x1 + INLIER_GATE_M && z >= z0 - INLIER_GATE_M && z <= z1 + INLIER_GATE_M) keep.push(i)
+  }
+  const out: Cells = { n: keep.length, x: new Float64Array(keep.length), z: new Float64Array(keep.length) }
+  keep.forEach((at, i) => {
+    out.x[i] = fixed.x[at]!
+    out.z[i] = fixed.z[at]!
+  })
+  return out
+}
+
+/**
+ * A likelihood field of R2's own resolution ({@link FIELD_SIGMA_M} on a {@link FIELD_STEP_M} grid) over the fixed scan, and
+ * the turned scan's cells thinned to the most that are used to score a pose. This is what the starting values' score,
+ * observability and global peak ratio are read from, so that they mean what R2's meant. Null when the field would be too
+ * large to build, which no room is.
+ */
+interface EvidenceField {
+  field: Field
+  set: Cells
+}
+
+function buildEvidenceField(fixed: Cells, turn: Cells): EvidenceField | null {
+  if (fixed.n === 0 || turn.n === 0) return null
+  const margin = 3 * FIELD_SIGMA_M + FIELD_STEP_M
+  let x0 = Infinity
+  let x1 = -Infinity
+  let z0 = Infinity
+  let z1 = -Infinity
+  for (let i = 0; i < fixed.n; i++) {
+    x0 = Math.min(x0, fixed.x[i]!)
+    x1 = Math.max(x1, fixed.x[i]!)
+    z0 = Math.min(z0, fixed.z[i]!)
+    z1 = Math.max(z1, fixed.z[i]!)
+  }
+  const nodes = ((x1 - x0 + 2 * margin) / FIELD_STEP_M + 2) * ((z1 - z0 + 2 * margin) / FIELD_STEP_M + 2)
+  if (nodes > MAX_FIELD_NODES) return null
+  return {
+    field: buildField(fixed, x0 - margin, z0 - margin, x1 + margin, z1 + margin, FIELD_STEP_M, FIELD_SIGMA_M),
+    set: thin(turn, MAX_SCORING_CELLS),
+  }
+}
+
+/** The mean of the evidence field under the turned scan's cells at a pose (turned about `(px, pz)`, moved by `(tx, tz)`), slid by `(dx, dz)`. */
+function evidenceScoreAt(at: EvidenceField, px: number, pz: number, theta: number, tx: number, tz: number, dx = 0, dz = 0): number {
+  const c = Math.cos(theta)
+  const s = Math.sin(theta)
+  const { field, set } = at
+  let sum = 0
+  for (let i = 0; i < set.n; i++) {
+    const u = set.x[i]! - px
+    const v = set.z[i]! - pz
+    sum += sample(field, px + tx + c * u + s * v + dx, pz + tz - s * u + c * v + dz)
+  }
+  return set.n > 0 ? sum / set.n : 0
+}
+
+/**
+ * The measurements the starting values are judged on, at the best position: the likelihood field score and the observability
+ * (read from the evidence field, not the search's), the share of the query that lines up, the share of the reference inside
+ * its footprint that lines up, and the gap. `forward` is the query's cells against the reference's, as the search measured
+ * them. The field score and observability are null without an evidence field.
+ */
+function measureEvidence(
+  fixed: Cells,
+  moved: Cells,
+  forward: Lined,
+  at: EvidenceField | null,
+  px: number,
+  pz: number,
+  fin: Pose,
+): RegistrationEvidence {
+  const queryInlierShare = moved.n > 0 ? forward.matched / moved.n : 0
+  const inlierRmsM = forward.matched > 0 ? Math.sqrt(forward.sumSquares / forward.matched) : null
+  const footprint = cellsInFootprint(fixed, moved)
+  const referenceCoverage = footprint.n > 0
+    ? lineUp(footprint.x, footprint.z, footprint.n, moved.x, moved.z, moved.n, INLIER_GATE_M).matched / footprint.n
+    : 0
+
+  let fieldScore: number | null = null
+  let observability: number | null = null
+  if (at) {
+    fieldScore = evidenceScoreAt(at, px, pz, fin.theta, fin.tx, fin.tz)
+    if (fieldScore > 0) {
+      let smallest = Infinity
+      for (let k = 0; k < OBSERVABILITY_DIRECTIONS; k++) {
+        const angle = (2 * Math.PI * k) / OBSERVABILITY_DIRECTIONS
+        const slid = evidenceScoreAt(
+          at, px, pz, fin.theta, fin.tx, fin.tz,
+          OBSERVABILITY_STEP_M * Math.cos(angle), OBSERVABILITY_STEP_M * Math.sin(angle),
+        )
+        smallest = Math.min(smallest, (fieldScore - slid) / fieldScore)
+      }
+      observability = Math.max(0, smallest)
+    }
+  }
+  return { fieldScore, observability, queryInlierShare, referenceCoverage, inlierRmsM }
+}
+
+/** The translation step of the global probe's coarse pass, metres. Coarser than the search's coarse step: the pass looks for where a second peak might be, and the refinement finds it. */
+const PROBE_STEP_M = 0.3
+/** The widest turn step of the global probe's coarse pass. */
+const PROBE_MAX_YAW_STEP_RAD = (2 * Math.PI) / 180
+/** The most pose-by-cell products the coarse pass may score, so a very large scan coarsens its turn step and does not take minutes. */
+const MAX_PROBE_SAMPLES = 1.5e8
+/** Coarse peaks outside the exclusion zone that are refined and measured. */
+const PROBE_CANDIDATES = 8
+
+/** The angle `a` brought into [-pi, pi). */
+function wrapAngle(a: number): number {
+  const turn = 2 * Math.PI
+  return ((((a + Math.PI) % turn) + turn) % turn) - Math.PI
+}
+
+/**
+ * The global ambiguity probe. Reads the coarse score over the whole window of {@link GLOBAL_PROBE_WINDOW_M} metres and a full
+ * turn, takes the highest local maxima outside the zone round the best position (`fin`), refines each through the finer levels
+ * as the search refines its own candidates, and measures each on the evidence field, as the best position is. The ratio is the
+ * best of those over the best position's score. The bounded window a correction may use cannot show this: a room that is
+ * symmetric under a half turn fits itself at the turn, which lies beyond the bound, and a narrow window never sees it.
+ *
+ * It looks for the peaks on the coarse level and measures them on the finest because the coarse level's blur is wider than a
+ * piece of furniture: read there, a second peak with every piece of furniture 50 cm from where it should be scores as well as
+ * the first, and a room would be called symmetric for being rectangular. Measured on the evidence field, as R2's ratio was, it
+ * is not. Null when the best position scores next to nothing, where there is no peak to compare with.
+ */
+function probeGlobalAmbiguity(
+  levels: readonly Level[],
+  at: EvidenceField | null,
+  px: number,
+  pz: number,
+  turnReach: number,
+  fin: Pose,
+  here: number,
+  bestScore: number | null,
+): GlobalProbe | null {
+  const coarse = levels[0]!
+  if (!at || bestScore === null || !(bestScore > 0.02) || !(here > 0.02) || coarse.n === 0) return null
+  const half = Math.round(GLOBAL_PROBE_WINDOW_M / PROBE_STEP_M)
+  const nT = 2 * half + 1
+  let nA = Math.ceil((2 * Math.PI) / Math.min(PROBE_MAX_YAW_STEP_RAD, PROBE_STEP_M / Math.max(turnReach, 0.5)))
+  const affordable = Math.floor(MAX_PROBE_SAMPLES / (coarse.n * nT * nT))
+  if (nA > affordable) nA = Math.max(8, affordable)
+  const dTheta = (2 * Math.PI) / nA
+
+  const yawLimit = (GLOBAL_EXCLUSION_YAW_DEG * Math.PI) / 180
+  const insideZone = (theta: number, tx: number, tz: number): boolean =>
+    Math.abs(wrapAngle(theta - fin.theta)) <= yawLimit &&
+    Math.abs(tx - fin.tx) <= GLOBAL_EXCLUSION_M &&
+    Math.abs(tz - fin.tz) <= GLOBAL_EXCLUSION_M
+
+  const volume = new Float32Array(nA * nT * nT)
+  for (let a = 0; a < nA; a++) {
+    const theta = -Math.PI + a * dTheta
+    for (let i = 0; i < nT; i++) {
+      const tx = (i - half) * PROBE_STEP_M
+      for (let k = 0; k < nT; k++) volume[(a * nT + i) * nT + k] = scorePose(coarse, px, pz, theta, tx, (k - half) * PROBE_STEP_M)
+    }
+  }
+  const isPeak = (a: number, i: number, k: number): boolean => {
+    const value = volume[(a * nT + i) * nT + k]!
+    for (let da = -1; da <= 1; da++) {
+      const na = (a + da + nA) % nA
+      for (let di = -1; di <= 1; di++) {
+        const ni = i + di
+        if (ni < 0 || ni >= nT) continue
+        for (let dk = -1; dk <= 1; dk++) {
+          const nk = k + dk
+          if (nk < 0 || nk >= nT || (da === 0 && di === 0 && dk === 0)) continue
+          if (volume[(na * nT + ni) * nT + nk]! > value) return false
+        }
+      }
+    }
+    return true
+  }
+  const peaks: Pose[] = []
+  for (let a = 0; a < nA; a++) {
+    const theta = -Math.PI + a * dTheta
+    for (let i = 0; i < nT; i++) {
+      const tx = (i - half) * PROBE_STEP_M
+      for (let k = 0; k < nT; k++) {
+        const tz = (k - half) * PROBE_STEP_M
+        if (insideZone(theta, tx, tz) || !isPeak(a, i, k)) continue
+        peaks.push({ theta, tx, tz, score: volume[(a * nT + i) * nT + k]! })
+      }
+    }
+  }
+  peaks.sort((p, q) => q.score - p.score || p.theta - q.theta || p.tx - q.tx || p.tz - q.tz)
+  const chosen: Pose[] = []
+  for (const peak of peaks) {
+    if (chosen.length >= PROBE_CANDIDATES) break
+    const apart = chosen.every((other) =>
+      Math.hypot(peak.tx - other.tx, peak.tz - other.tz) > 2 * PROBE_STEP_M || Math.abs(wrapAngle(peak.theta - other.theta)) > 2 * dTheta
+    )
+    if (apart) chosen.push(peak)
+  }
+
+  let elsewhere = 0
+  for (const peak of chosen) {
+    let pose = peak
+    for (let l = 1; l < levels.length; l++) pose = refinePose(levels[l]!, px, pz, pose)
+    // A peak the refinement walked back into the zone is the best position's own shoulder, not another place.
+    if (insideZone(pose.theta, pose.tx, pose.tz)) continue
+    elsewhere = Math.max(elsewhere, evidenceScoreAt(at, px, pz, pose.theta, pose.tx, pose.tz))
+  }
+  const secondPeakRatio = Math.min(1, elsewhere / bestScore)
+  return {
+    windowM: GLOBAL_PROBE_WINDOW_M,
+    windowYawDeg: GLOBAL_PROBE_WINDOW_YAW_DEG,
+    exclusionM: GLOBAL_EXCLUSION_M,
+    exclusionYawDeg: GLOBAL_EXCLUSION_YAW_DEG,
+    secondPeakRatio,
+    symmetric: secondPeakRatio >= SYMMETRIC_PEAK_RATIO,
+  }
+}
+
+/**
+ * Judges a pair's numbers against the starting values ({@link MIN_FIELD_SCORE} and the five after it). `failed` lists, in the
+ * order the job reports them, every one not met: ambiguity first (a position that is not settled makes the rest moot), then
+ * how much lines up, then how closely, then the score. A number that could not be measured is not met.
+ */
+export function judgeStartingValues(details: Pick<RegistrationDetails, 'evidence' | 'globalProbe'>): StartingValuesVerdict {
+  const { evidence, globalProbe } = details
+  const failed: StartingValue[] = []
+  if (!globalProbe || globalProbe.symmetric || (globalProbe.secondPeakRatio > 0 && 1 / globalProbe.secondPeakRatio < MIN_GLOBAL_PEAK_RATIO)) {
+    failed.push('global-peak-ratio')
+  }
+  if (!evidence || evidence.observability === null || evidence.observability < MIN_OBSERVABILITY) failed.push('observability')
+  if (!evidence || evidence.queryInlierShare < MIN_QUERY_INLIER_SHARE) failed.push('query-inliers')
+  if (!evidence || evidence.referenceCoverage < MIN_REFERENCE_COVERAGE) failed.push('reference-coverage')
+  if (!evidence || evidence.inlierRmsM === null || evidence.inlierRmsM > MAX_ACCEPT_RMS_M) failed.push('inlier-rms')
+  if (!evidence || evidence.fieldScore === null || evidence.fieldScore < MIN_FIELD_SCORE) failed.push('field-score')
+  return { passed: failed.length === 0, failed }
+}
+
+// ─── The size between two scans ──────────────────────────────────────────────
+
+/** The sizes the new scan is tried at: {@link SCALE_SEARCH_STEPS} of them from {@link SCALE_SEARCH_MIN} to {@link SCALE_SEARCH_MAX}, even on a log scale, so the middle one is exactly 1. */
+export function scaleLadder(): number[] {
+  const ratio = SCALE_SEARCH_MAX / SCALE_SEARCH_MIN
+  const out: number[] = []
+  for (let i = 0; i < SCALE_SEARCH_STEPS; i++) out.push(SCALE_SEARCH_MIN * ratio ** (i / (SCALE_SEARCH_STEPS - 1)))
+  // The middle of an odd ladder is the size the scan already has. Written as 1, not as the product that is 1 to rounding.
+  if (SCALE_SEARCH_STEPS % 2 === 1 && Math.abs(out[(SCALE_SEARCH_STEPS - 1) / 2]! - 1) < 1e-9) out[(SCALE_SEARCH_STEPS - 1) / 2] = 1
+  return out
+}
+
+/** `cells` made `size` times as big about `(px, pz)`. */
+function scaleCells(cells: Cells, size: number, px: number, pz: number): Cells {
+  const out: Cells = { n: cells.n, x: new Float64Array(cells.n), z: new Float64Array(cells.n) }
+  for (let i = 0; i < cells.n; i++) {
+    out.x[i] = px + size * (cells.x[i]! - px)
+    out.z[i] = pz + size * (cells.z[i]! - pz)
+  }
+  return out
+}
+
+/** `spread` for cells made `size` times as big about its own centre. */
+function scaleSpread(spread: Spread, size: number): Spread {
+  return {
+    px: spread.px,
+    pz: spread.pz,
+    radii: spread.radii.map((r) => r * size),
+    reach: spread.reach * size,
+    rms: spread.rms * size,
+  }
+}
+
 // ─── The search ──────────────────────────────────────────────────────────────
 
 /**
@@ -1073,6 +1487,10 @@ interface Found {
   nearBest: number | null
   searchT: number
   searchYaw: number
+  /** What the global probe found, when it was asked to and there was a peak to probe. */
+  probe: GlobalProbe | null
+  /** What the starting values are judged on, when asked for. */
+  evidence: RegistrationEvidence | null
 }
 
 /**
@@ -1083,7 +1501,13 @@ interface Found {
  * are all the turned scan's. `matchScans` therefore always turns the narrower scan, so that a walk through
  * several rooms is judged by the room it shares with the earlier scan and not by the far side of the house.
  */
-function search(fixed: Cells, turn: Cells, spread: Spread, bound: { translationM: number; yawDeg: number }): Found | null {
+function search(
+  fixed: Cells,
+  turn: Cells,
+  spread: Spread,
+  bound: { translationM: number; yawDeg: number },
+  measure = true,
+): Found | null {
   const { px, pz, reach } = spread
   const { lever, searchT, searchYaw } = searchWindow(spread, bound)
 
@@ -1104,8 +1528,9 @@ function search(fixed: Cells, turn: Cells, spread: Spread, bound: { translationM
   for (let l = 0; l < LEVEL_SIGMA_M.length; l++) {
     const step = COARSE_STEP_M / 2 ** l
     const sigma = LEVEL_SIGMA_M[l]!
-    // Every pose the search can reach: the window, plus what refinement may move past its edge, plus the blur.
-    const box = reach + searchT + REFINE_SLACK_M + 3 * sigma
+    // Every pose the search can reach: the window, plus what refinement may move past its edge, plus the blur. The coarsest
+    // field also serves the global probe, which looks farther than a correction may.
+    const box = reach + (l === 0 && measure ? Math.max(searchT, GLOBAL_PROBE_WINDOW_M) : searchT) + REFINE_SLACK_M + 3 * sigma
     const nodes = (2 * box / step + 2) ** 2
     if (nodes > MAX_FIELD_NODES) return null
     const field = buildField(fixed, px - box, pz - box, px + box, pz + box, step, sigma)
@@ -1173,16 +1598,9 @@ function search(fixed: Cells, turn: Cells, spread: Spread, bound: { translationM
   const fin: Pose = polishPose(levels[levels.length - 1]!, px, pz, best)
 
   // ── Measure the answer at the best position ──────────────────────────────
-  const c = Math.cos(fin.theta)
-  const s = Math.sin(fin.theta)
-  const movedX = new Float64Array(turn.n)
-  const movedZ = new Float64Array(turn.n)
-  for (let i = 0; i < turn.n; i++) {
-    const x = turn.x[i]! - px
-    const z = turn.z[i]! - pz
-    movedX[i] = px + fin.tx + c * x + s * z
-    movedZ[i] = pz + fin.tz - s * x + c * z
-  }
+  const moved = moveCells(turn, px, pz, fin.theta, fin.tx, fin.tz)
+  const movedX = moved.x
+  const movedZ = moved.z
   const forward = lineUp(movedX, movedZ, turn.n, fixed.x, fixed.z, fixed.n, INLIER_GATE_M)
   const backward = lineUp(fixed.x, fixed.z, fixed.n, movedX, movedZ, turn.n, INLIER_GATE_M)
 
@@ -1223,7 +1641,13 @@ function search(fixed: Cells, turn: Cells, spread: Spread, bound: { translationM
   // parallel walls fit along their length almost as well as at the best position, so the region runs to the
   // window's edge and the position is not pinned, whatever the second-peak test says.
   const nearBest = nearBestReach(volume, nA, nT, halfA, halfT, coarse, lever, fin, here)
-  return { fin, forward, backward, peakRatio, nearBest, searchT, searchYaw }
+
+  // The starting values' evidence, and the probe for a second place that fits as well: neither moves the answer. The size search
+  // runs this function once per size without them and once more, at the size it chose, with.
+  const evidenceField = measure ? buildEvidenceField(fixed, turn) : null
+  const evidence = measure ? measureEvidence(fixed, moved, forward, evidenceField, px, pz, fin) : null
+  const probe = measure ? probeGlobalAmbiguity(levels, evidenceField, px, pz, turnReach, fin, here, evidence?.fieldScore ?? null) : null
+  return { fin, forward, backward, peakRatio, nearBest, searchT, searchYaw, probe, evidence }
 }
 
 // ─── The matcher ─────────────────────────────────────────────────────────────
@@ -1262,6 +1686,96 @@ function refuse(
   }
 }
 
+/** What `details.scale` says about a size search that ended at `recovered`, the factor the new scan is to be made. */
+function sizeSearchReport(recovered: number): ScaleSearch {
+  return { searched: true, steps: SCALE_SEARCH_STEPS, minRatio: SCALE_SEARCH_MIN, maxRatio: SCALE_SEARCH_MAX, recovered }
+}
+
+/**
+ * Searches the size between the two scans: the turned scan is tried at each size of {@link scaleLadder} (each a search of its
+ * own, without the starting values' evidence), the size is refined between the best rung and its neighbours by the vertex of
+ * the parabola through their scores, and the search is made once more at that size with the evidence. Null when no size
+ * scores anything. `factor` is how many times as big the turned scan was made.
+ *
+ * Why refine: the rungs are about 4.6% apart, and a scan whose size is between two is off by 2% at best, which is 12 cm at the
+ * far wall of a 6 m room and enough to turn a good match into a loose fit.
+ */
+function* searchSizes(
+  fixed: Cells,
+  turn: Cells,
+  spread: Spread,
+  bound: { translationM: number; yawDeg: number },
+): Generator<void, { found: Found; factor: number } | null, undefined> {
+  const ladder = scaleLadder()
+  const scores: number[] = []
+  let best = -1
+  for (const size of ladder) {
+    const found = search(
+      fixed,
+      size === 1 ? turn : scaleCells(turn, size, spread.px, spread.pz),
+      size === 1 ? spread : scaleSpread(spread, size),
+      bound,
+      false,
+    )
+    const score = found ? found.fin.score : -1
+    scores.push(score)
+    if (best < 0 || score > scores[best]!) best = scores.length - 1
+    // Each size is a whole search of its own, and a caller that can give the thread back between them does.
+    yield
+  }
+  if (best < 0 || !(scores[best]! > 0)) return null
+
+  let factor = ladder[best]!
+  if (best > 0 && best < ladder.length - 1) {
+    const lo = scores[best - 1]!
+    const mid = scores[best]!
+    const hi = scores[best + 1]!
+    const curvature = lo - 2 * mid + hi
+    if (curvature < 0 && lo >= 0 && hi >= 0) {
+      const offset = Math.min(0.5, Math.max(-0.5, (0.5 * (lo - hi)) / curvature))
+      factor = ladder[best]! * (ladder[best + 1]! / ladder[best]!) ** offset
+    }
+  }
+  if (Math.abs(factor - 1) < 1e-9) factor = 1
+  const found = search(
+    fixed,
+    factor === 1 ? turn : scaleCells(turn, factor, spread.px, spread.pz),
+    factor === 1 ? spread : scaleSpread(spread, factor),
+    bound,
+    true,
+  )
+  return found ? { found, factor } : null
+}
+
+/**
+ * The correction for the new scan when the search made the turned scan `factor` times as big. The search maps the turned scan
+ * onto the other by a size about its centre, a turn about it and a move of it, which in the floor plane is
+ * `(x, z) -> (a x + b z + ox, -b x + a z + oz)`. When the turned scan is the new one that map is the correction. When it is the
+ * reference, the correction is the inverse of that map, which is `1 / factor` as big. Height: the new scan's floor goes to the
+ * other scan's floor when both were measured from their clouds (`dy` is that move, and 0 when they were not), the size taken
+ * about the new scan's own floor, so a scan made bigger does not also float.
+ */
+function sizedCorrection(spread: Spread, fin: Pose, factor: number, swapped: boolean, movingFloorY: number, dy: number): number[] {
+  const a = Math.cos(fin.theta) * factor
+  const b = Math.sin(fin.theta) * factor
+  const ox = spread.px + fin.tx - (a * spread.px + b * spread.pz)
+  const oz = spread.pz + fin.tz - (-b * spread.px + a * spread.pz)
+  let ka = a
+  let kb = b
+  let kx = ox
+  let kz = oz
+  let size = factor
+  if (swapped) {
+    const det = a * a + b * b
+    ka = a / det
+    kb = -b / det
+    kx = -(ka * ox + kb * oz)
+    kz = -(-kb * ox + ka * oz)
+    size = 1 / factor
+  }
+  return [ka, 0, -kb, 0, 0, size, 0, 0, kb, 0, ka, 0, kx, dy + (1 - size) * movingFloorY, kz, 1]
+}
+
 /**
  * Lines `moving` up against `reference` and says what move, if any, would make
  * them agree better, and how far that answer can be trusted.
@@ -1282,6 +1796,34 @@ function refuse(
  * refusal with its reason.
  */
 export function matchScans(reference: MatchCloud, moving: MatchCloud, options: MatchOptions = {}): RegistrationProposal {
+  const run = matchScansSteps(reference, moving, options)
+  for (;;) {
+    const step = run.next()
+    if (step.done) return step.value
+  }
+}
+
+/**
+ * {@link matchScans} for a caller that shares its thread: the same answer, with `yieldNow` awaited between the searches of the sizes
+ * when the two scans' units were to be searched. One search is some 0.2 to 1.6 s of work on a room of 6 by 4 to 40 by 30 m, and
+ * eleven of them in a row held a server's one thread for 1.7 to 6 s; the sizes are searched one at a time with the thread given back
+ * in between. Without a size search there is nothing to yield between, and this is `matchScans`.
+ */
+export async function matchScansYielding(
+  reference: MatchCloud,
+  moving: MatchCloud,
+  options: MatchOptions,
+  yieldNow: () => Promise<void>,
+): Promise<RegistrationProposal> {
+  const run = matchScansSteps(reference, moving, options)
+  for (;;) {
+    const step = run.next()
+    if (step.done) return step.value
+    await yieldNow()
+  }
+}
+
+function* matchScansSteps(reference: MatchCloud, moving: MatchCloud, options: MatchOptions): Generator<void, RegistrationProposal, undefined> {
   const bound = resolveBounds(options)
 
   // Floors first: the height band is measured from them, so nothing else can start without them.
@@ -1324,7 +1866,19 @@ export function matchScans(reference: MatchCloud, moving: MatchCloud, options: M
   const window = searchWindow(spread, bound)
   if (!footprintsCanTouch(fixed, turn, spread, window.searchT, window.searchYaw * DEG)) return refuse('low-overlap', { details: base })
 
-  const found = search(fixed, turn, spread, bound)
+  // When the two scans' sessions ran in different units the size between them is searched too, and the turned scan is then
+  // the one that was made `factor` times as big. Otherwise `factor` is 1 and nothing below differs from a search of one size.
+  let found: Found | null
+  let factor = 1
+  let sized = false
+  if (options.scaleSearch) {
+    const chosen = yield* searchSizes(fixed, turn, spread, bound)
+    found = chosen?.found ?? null
+    factor = chosen?.factor ?? 1
+    sized = true
+  } else {
+    found = search(fixed, turn, spread, bound)
+  }
   if (!found) return refuse('too-large', { details: base })
   const { fin } = found
 
@@ -1351,16 +1905,21 @@ export function matchScans(reference: MatchCloud, moving: MatchCloud, options: M
   // The search turned about the pivot and then moved the pivot, as a matrix about the origin. When it turned the
   // reference, the move that lays the new scan on the reference is the inverse of that one. Height comes from
   // the floors and is a move of the new scan either way.
-  const c = Math.cos(fin.theta)
-  const s = Math.sin(fin.theta)
-  const searched = yawTranslationMatrix(
-    fin.theta,
-    spread.px + fin.tx - c * spread.px - s * spread.pz,
-    0,
-    spread.pz + fin.tz + s * spread.px - c * spread.pz,
-  )
-  const correction = swapped ? invertYawTranslation(searched) : searched
-  correction[13] = dy
+  let correction: number[]
+  if (factor === 1) {
+    const c = Math.cos(fin.theta)
+    const s = Math.sin(fin.theta)
+    const searched = yawTranslationMatrix(
+      fin.theta,
+      spread.px + fin.tx - c * spread.px - s * spread.pz,
+      0,
+      spread.pz + fin.tz + s * spread.px - c * spread.pz,
+    )
+    correction = swapped ? invertYawTranslation(searched) : searched
+    correction[13] = dy
+  } else {
+    correction = sizedCorrection(spread, fin, factor, swapped, movFloor.y, dy)
+  }
 
   // The farthest a cell of the new scan moves, over the cells inside its 99th percentile so a stray does not set it.
   let maxShift = 0
@@ -1396,7 +1955,11 @@ export function matchScans(reference: MatchCloud, moving: MatchCloud, options: M
     floors,
     searchedTranslationM: found.searchT,
     searchedYawDeg: found.searchYaw,
+    ...(found.probe ? { globalProbe: found.probe } : {}),
+    ...(found.evidence ? { evidence: found.evidence } : {}),
+    ...(sized ? { scale: sizeSearchReport(swapped ? 1 / factor : factor) } : {}),
   })
+  if (found.evidence) details.startingValues = judgeStartingValues(details)
   const measured = { overlapFraction, inlierResidualM: residual, score, boundedCorrection, details }
 
   // The gates, in the order a person would want the first failure named. Size comes before ambiguity: a best

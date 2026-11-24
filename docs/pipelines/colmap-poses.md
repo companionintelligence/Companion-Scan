@@ -120,7 +120,7 @@ scans needs frames from several sessions in one model, with a camera for each
 phone: that is `runColmapJointPoses` in
 [`server/colmap/colmap_joint.ts`](../../server/colmap/colmap_joint.ts), which writes to a
 work directory of its own and never into a session. It is described in
-[`place-register.md`](place-register.md#slice-2-building-blocks-no-job-yet).
+[`place-register.md`](place-register.md#slice-2-building-blocks).
 
 ## When it legitimately cannot solve
 

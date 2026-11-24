@@ -816,8 +816,13 @@
       .register-card { display: grid; gap: 3px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
       .register-card:last-child { border-bottom: none; }
       .register-headline { font-size: 12px; font-weight: 700; color: #72ddd4; }
-      .register-actions { display: flex; gap: 6px; margin-top: 4px; }
+      .register-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
       .register-actions .job-btn { min-height: 34px; padding: 0 12px; }
+      /* With the photo method on, a card has a block per method, the way the two differ, and what neither checked. */
+      .register-method { display: grid; gap: 3px; padding: 4px 0; }
+      .register-method-title { font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+      .register-disagree { color: #ffb86b; }
+      .register-caveat { opacity: 0.8; }
 
       .copy-link-btn,
       .job-btn,

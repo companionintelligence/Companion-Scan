@@ -24,9 +24,11 @@ import { fromFileUrl } from 'jsr:@std/path@^1.0.0'
 import { REPO_ROOT } from '../../../server/repo-root.ts'
 import { scanIdFor } from '../../../server/scan_id.ts'
 import type { EditPatch, ScanManifest, WorldJob, WorldProject } from '../../../src/world/types.ts'
-import { buildRegisterPatch, multiplyMat4, readPlaceRegisterResult } from '../../../src/world/register-proposal.ts'
+import { buildRegisterPatch, describeSfmResult, multiplyMat4, readPlaceRegisterResult } from '../../../src/world/register-proposal.ts'
+import { REFERENCE_CACHE_DIR, WORK_ROOT_DIR } from '../../../server/register/sfm_workspace.ts'
 import { pointCloudGlb } from '../../fixtures/place-register/point-cloud-glb.ts'
 import { corners, makeRoom, misplacementMatrix, type Misplacement } from '../../fixtures/place-register/synthetic-room.ts'
+import { ringSpec, ringViews, MIDDLE, storedMatrix, worldOf, writeFakeSession, type ToySessionSpec } from './sfm_fixtures.ts'
 
 const SERVER_ENTRY = fromFileUrl(new URL('server/main.ts', REPO_ROOT))
 const BOOT_TIMEOUT_MS = 60_000
@@ -34,8 +36,15 @@ const REQUEST_TIMEOUT_MS = 20_000
 const JOB_TIMEOUT_MS = 45_000
 
 const ROOM = { width: 6, depth: 4, centre: { x: 3, z: 2 } } as const
+/**
+ * Three pieces of furniture that no half turn maps onto each other. The two this file used to have, at (1.2, 1.0) and (4.5, 3.0) in a
+ * 6 x 4 m room centred at (3, 2), swap places under a half turn about the room's middle to within 30 cm, so the room looked the same
+ * turned round, and the global ambiguity probe (scan_match.ts, WP-15a amendment) rightly refuses such a pair as ambiguous. A scan
+ * pair these tests expect to be proposed is of a room that is not symmetric.
+ */
+const FURNITURE = [{ x: 1.9, z: 2.2, w: 0.8, d: 0.6, h: 0.9 }, { x: 4.5, z: 3.0, w: 1.2, d: 0.5, h: 0.5 }, { x: 5.0, z: 1.0, w: 0.7, d: 0.4, h: 1.2 }]
 const room = (seed: number, extra: object = {}) =>
-  makeRoom({ ...ROOM, noiseM: 0.02, seed, boxes: [{ x: 1.2, z: 1, w: 0.8, d: 0.6, h: 0.9 }, { x: 4.5, z: 3, w: 1.2, d: 0.5, h: 0.5 }], ...extra })
+  makeRoom({ ...ROOM, noiseM: 0.02, seed, boxes: FURNITURE, ...extra })
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 const ERROR: Misplacement = { yawDeg: 3, dx: 0.3, dz: -0.2 }
 
@@ -49,8 +58,11 @@ interface Reply {
 }
 
 interface RunningServer {
+  /** The server's `SCANS_DIR`, for a test that looks at what the server wrote there. */
+  scansDir: string
   get(path: string): Promise<Reply>
   post(path: string, body: unknown): Promise<Reply>
+  delete(path: string): Promise<Reply>
   upload(name: string, glb: Uint8Array, metadata: Record<string, unknown>): Promise<string>
   log(): string
   stop(): Promise<void>
@@ -80,7 +92,14 @@ interface ServerDirs {
   projects: string
 }
 
-async function startServer(seed?: (dirs: ServerDirs) => Promise<void>): Promise<RunningServer> {
+/**
+ * Boots the real server. `seed` runs before it does, and may return environment the server needs that only exists once the temp folder does
+ * (the path of a stand-in COLMAP), added to `extraEnv`.
+ */
+async function startServer(
+  seed?: (dirs: ServerDirs) => Promise<Record<string, string> | void>,
+  extraEnv: Record<string, string> = {},
+): Promise<RunningServer> {
   const root = await Deno.makeTempDir({ prefix: 'place-register-' })
   const inherited: Record<string, string> = {}
   for (const [name, value] of Object.entries(Deno.env.toObject())) {
@@ -100,10 +119,11 @@ async function startServer(seed?: (dirs: ServerDirs) => Promise<void>): Promise<
     await Deno.remove(root, { recursive: true }).catch(() => undefined)
   }
   try {
+    let seeded: Record<string, string> | void = undefined
     if (seed) {
       await Deno.mkdir(`${root}/scans`, { recursive: true })
       await Deno.mkdir(`${root}/worlds`, { recursive: true })
-      await seed({ scans: `${root}/scans`, worlds: `${root}/worlds`, projects: `${root}/projects.json` })
+      seeded = await seed({ scans: `${root}/scans`, worlds: `${root}/worlds`, projects: `${root}/projects.json` })
     }
     child = new Deno.Command(Deno.execPath(), {
       args: [
@@ -122,6 +142,8 @@ async function startServer(seed?: (dirs: ServerDirs) => Promise<void>): Promise<
         STATIC_DIR: `${root}/no-static-bundle`,
         INFERENCE_MODE: 'mock',
         TAILSCALE_HOSTNAME: 'scan.test',
+        ...extraEnv,
+        ...(seeded ?? {}),
       },
       stdin: 'null',
       stdout: 'piped',
@@ -155,9 +177,11 @@ async function startServer(seed?: (dirs: ServerDirs) => Promise<void>): Promise<
 
     const base = `http://127.0.0.1:${outcome.port}`
     return {
+      scansDir: `${root}/scans`,
       get: (path) => send(base, path, {}),
       post: (path, body) =>
         send(base, path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+      delete: (path) => send(base, path, { method: 'DELETE' }),
       upload: async (name, glb, metadata) => {
         const form = new FormData()
         form.append('file', new Blob([new Uint8Array(glb)], { type: 'model/gltf-binary' }), `${name}.glb`)
@@ -290,11 +314,13 @@ Deno.test('place-register on the real server: a second scan queues a proposal, n
     const applied = await server.post(`/worlds/${slug}/patches`, body)
     assertEquals(applied.status, 200, applied.text)
     const { patch, world: afterApply } = applied.json<{ patch: EditPatch; world: WorldProject; duplicate?: boolean }>()
+    // `residualM` is cast: `EditPatchProvenance` gained an optional `method` for the photo method, which changes what TypeScript infers
+    // `assertEquals`'s type from, and the nullable residual of a proposal no longer compiles against it. The value is unchanged.
     assertEquals(patch.provenance, {
       source: 'place-register',
       jobId: finished.jobId,
       score: result.proposal.score,
-      residualM: result.proposal.inlierResidualM,
+      residualM: result.proposal.inlierResidualM as number,
     })
     const nowPlaced = afterApply.scans.find((scan) => scan.scanId === moving.scanId)!
     assertEquals(nowPlaced.localToWorld, multiplyMat4(result.proposal.transform!, wrong))
@@ -557,3 +583,157 @@ Deno.test('place-register on the real server: a job a killed server left process
     await server.stop()
   }
 })
+
+// ─── The photo method on the real server ─────────────────────────────────────
+
+const REF_SESSION = 'sess-srv-ref'
+const NEW_SESSION = 'sess-srv-new'
+const PHOTO_ERROR = { yawDeg: 4, shift: [0.35, 0, -0.25] as [number, number, number] }
+
+function photoSpecs(): { reference: ToySessionSpec; moving: ToySessionSpec } {
+  return {
+    reference: ringSpec(REF_SESSION),
+    moving: ringSpec(NEW_SESSION, { yawDeg: 25, origin: [1.2, 0, -0.7], views: ringViews(MIDDLE, [1.0, 1.2], 14, 10, 1.35, 12), seed: 102 }),
+  }
+}
+
+/**
+ * Two scans of one Place whose camera photographs are on the server (two keyframe sessions, written without rendering a picture), and
+ * what the server needs to run the photo method: a stand-in for COLMAP as an executable that answers every command from the truth, or a
+ * path where there is none.
+ */
+async function seedPhotoScans(dirs: ServerDirs, colmap: 'stand-in' | 'missing' | 'none'): Promise<Record<string, string>> {
+  const { reference, moving } = photoSpecs()
+  const sessions = `${dirs.scans}/sessions`
+  await writeFakeSession(sessions, reference, {})
+  await writeFakeSession(sessions, moving, {})
+  if (colmap === 'none') return {}
+  const root = dirs.scans.slice(0, dirs.scans.lastIndexOf('/'))
+  if (colmap === 'missing') return { PLACE_REGISTER_SFM: '1', COLMAP_BIN: `${root}/no-such-colmap` }
+  const dir = `${root}/stand-in-colmap`
+  await Deno.mkdir(dir, { recursive: true })
+  const world = worldOf([reference, moving])
+  await Deno.writeTextFile(`${dir}/world.json`, JSON.stringify({ places: [...world.places], solver: world.solver }))
+  const cli = fromFileUrl(new URL('tests/unit/deno/fake_colmap_cli.ts', REPO_ROOT))
+  const config = fromFileUrl(new URL('deno.json', REPO_ROOT))
+  await Deno.writeTextFile(
+    `${dir}/colmap`,
+    `#!/bin/sh\nexec "${Deno.execPath()}" run --quiet --no-prompt --config "${config}" --allow-read --allow-write --allow-env "${cli}" "$@"\n`,
+  )
+  await Deno.chmod(`${dir}/colmap`, 0o755)
+  return { PLACE_REGISTER_SFM: '1', COLMAP_BIN: `${dir}/colmap`, FAKE_COLMAP_WORLD: `${dir}/world.json` }
+}
+
+/** The two scans, uploaded as the scanner does, each naming the keyframe session it was made from. The second one's calibration is wrong. */
+async function uploadPhotoScans(server: RunningServer, projectId: string): Promise<{ refName: string; movedName: string }> {
+  const { reference, moving } = photoSpecs()
+  const meta = (matrix: number[], at: string, name: string, sessionId: string) => ({ ...calibratedMetadata(projectId, matrix, at, name), sessionId })
+  const refName = await server.upload('photo-reference', await pointCloudGlb(room(1)), meta(storedMatrix(reference, { yawDeg: 0, shift: [0, 0, 0] }), '2026-11-10T09:00:00.000Z', 'Reference', REF_SESSION))
+  const movedName = await server.upload('photo-second', await pointCloudGlb(room(2)), meta(storedMatrix(moving, PHOTO_ERROR), '2026-11-12T09:00:00.000Z', 'Second visit', NEW_SESSION))
+  return { refName, movedName }
+}
+
+Deno.test('place-register on the real server: the photo method is off unless PLACE_REGISTER_SFM=1, and the result says so', async () => {
+  const server = await startServer((dirs) => seedPhotoScans(dirs, 'none'))
+  try {
+    const projectId = (await server.post('/projects', { name: 'Photo flat' })).json<{ projectId: string }>().projectId
+    const slug = (await server.get(`/projects/${projectId}/world`)).json<WorldProject>().shareSlug
+    const { movedName } = await uploadPhotoScans(server, projectId)
+    const moving = (await readWorld(server, slug)).scans.find((scan) => scan.filename === movedName)!
+    const finished = await settled(server, slug, moving.scanId)
+    assertEquals(finished.status, 'completed', `${finished.error}\n${server.log()}`)
+    const result = readPlaceRegisterResult(finished)
+    assert(result, 'a result that reads back')
+    assertEquals([result.sfm?.status, result.sfm?.reason], ['skipped', 'off'])
+    assertEquals(describeSfmResult(result)?.lines, ['Photo matching is turned off on this server.'])
+    assertEquals(result.sfm?.sessions, [], 'nothing was read')
+  } finally {
+    await server.stop()
+  }
+})
+
+Deno.test('place-register on the real server: with the switch on and no COLMAP, the photo method is skipped with the install hint and the wall match answers as before', async () => {
+  const server = await startServer((dirs) => seedPhotoScans(dirs, 'missing'))
+  try {
+    const projectId = (await server.post('/projects', { name: 'Photo flat' })).json<{ projectId: string }>().projectId
+    const slug = (await server.get(`/projects/${projectId}/world`)).json<WorldProject>().shareSlug
+    const { movedName } = await uploadPhotoScans(server, projectId)
+    const moving = (await readWorld(server, slug)).scans.find((scan) => scan.filename === movedName)!
+    const finished = await settled(server, slug, moving.scanId)
+    assertEquals(finished.status, 'completed', `${finished.error}\n${server.log()}`)
+    const result = readPlaceRegisterResult(finished)
+    assert(result, 'the wall match still answers')
+    assertEquals([result.sfm?.status, result.sfm?.reason], ['skipped', 'colmap-missing'])
+    assert(/COLMAP/.test(result.sfm?.detail ?? ''), `an install hint: ${result.sfm?.detail}`)
+    assertEquals(result.proposal.status, 'refused', 'the two scans\' walls are a metre and a half turn apart: the wall match is inconclusive')
+    assertEquals((await readWorld(server, slug)).editPatches, [])
+  } finally {
+    await server.stop()
+  }
+})
+
+Deno.test('place-register on the real server: when the wall match is inconclusive the photo method runs, proposes, applies once with its own provenance, and what it made goes with the frames', async () => {
+  const server = await startServer((dirs) => seedPhotoScans(dirs, 'stand-in'))
+  try {
+    const projectId = (await server.post('/projects', { name: 'Photo flat' })).json<{ projectId: string }>().projectId
+    const slug = (await server.get(`/projects/${projectId}/world`)).json<WorldProject>().shareSlug
+    const { refName, movedName } = await uploadPhotoScans(server, projectId)
+    const joined = await readWorld(server, slug)
+    const reference = joined.scans.find((scan) => scan.filename === refName)!
+    const moving = joined.scans.find((scan) => scan.filename === movedName)!
+    const finished = await settled(server, slug, moving.scanId)
+    assertEquals(finished.status, 'completed', `${finished.error}\n${server.log()}`)
+    const result = readPlaceRegisterResult(finished)
+    assert(result, `an artifact that reads back: ${JSON.stringify(finished.artifacts)}`)
+    assertEquals(result.proposal.status, 'refused', 'the wall match could not place it')
+    const sfm = result.sfm
+    assert(sfm, 'the photo method answered')
+    assertEquals(sfm.status, 'proposed', `${sfm.reason}: ${sfm.detail}`)
+    assertEquals([sfm.referenceModel, sfm.registeredImages, sfm.offeredImages, sfm.reference?.scanId], ['built', 14, 14, reference.scanId])
+    assert(sfm.residualM! < 0.05, `rms ${sfm.residualM}`)
+    assertEquals(sfm.frameId, null, 'this Place records no frame generation')
+    assert(Math.abs(Math.abs(sfm.boundedCorrection!.yawDeg) - PHOTO_ERROR.yawDeg) < 1.5, `the turn that undoes a 4 degree error: ${sfm.boundedCorrection!.yawDeg}`)
+
+    // Nothing moved by itself.
+    assertEquals((await readWorld(server, slug)).editPatches, [])
+
+    // Apply the photo method's proposal: an ordinary patch whose provenance names the method.
+    const body = buildRegisterPatch(result, finished.jobId, 'sfm')!
+    assertEquals(body.provenance, { source: 'place-register', jobId: finished.jobId, score: sfm.registeredFraction!, residualM: sfm.residualM!, method: 'sfm' })
+    // The same numbers claimed for the wall match, which proposed nothing, are refused: provenance is held to the method it names.
+    const asWallMatch = await server.post(`/worlds/${slug}/patches`, { ...body, provenance: { ...body.provenance, method: undefined } })
+    assertEquals(asWallMatch.status, 400, asWallMatch.text)
+    assertEquals((await readWorld(server, slug)).editPatches, [])
+    const applied = await server.post(`/worlds/${slug}/patches`, body)
+    assertEquals(applied.status, 200, applied.text)
+    const { patch, world: afterApply } = applied.json<{ patch: EditPatch; world: WorldProject; duplicate?: boolean }>()
+    assertEquals(patch.provenance, body.provenance)
+    assertEquals(afterApply.scans.find((scan) => scan.scanId === moving.scanId)!.localToWorld, multiplyMat4(sfm.transform!, moving.localToWorld))
+    // Once: a second apply gets the first patch back, and a patch that names the other method for the same job is refused.
+    const again = await server.post(`/worlds/${slug}/patches`, body)
+    assertEquals(again.json<{ duplicate?: boolean }>().duplicate, true)
+    assertEquals((await readWorld(server, slug)).editPatches.length, 1)
+
+    // What the run made: the reference model is in the earlier scan's session, and nothing is left of the run.
+    const scans = server.scansDir
+    const sessions = `${scans}/sessions`
+    assert((await Deno.stat(`${sessions}/${REF_SESSION}/${REFERENCE_CACHE_DIR}`)).isDirectory, 'the reference model is kept with the earlier scan\'s frames')
+    assertEquals(await names(`${sessions}/${NEW_SESSION}`).then((list) => list.includes(REFERENCE_CACHE_DIR)), false, 'and not with the new scan\'s')
+    assertEquals(await names(`${scans}/projects/${projectId}/${WORK_ROOT_DIR}`), [], 'no run is left in the Place\'s folder')
+
+    // Deleting the earlier scan takes its frames, and the model made from them, with it.
+    const deleted = await server.delete(`/scans/${encodeURIComponent(refName)}`)
+    assertEquals(deleted.status, 200, deleted.text)
+    assertEquals(await names(`${sessions}/${REF_SESSION}`), [], 'the session folder and the model in it are gone')
+  } finally {
+    await server.stop()
+  }
+})
+
+async function names(path: string): Promise<string[]> {
+  const found: string[] = []
+  try {
+    for await (const entry of Deno.readDir(path)) found.push(entry.name)
+  } catch { /* not there */ }
+  return found.sort()
+}

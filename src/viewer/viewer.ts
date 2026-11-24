@@ -4058,6 +4058,21 @@ const registerProposalHost = {
     if (loaded) applyMatrix(loaded.root, matrix)
     updateTransformReadout()
   },
+  // "Check with photos": the same alignment check, asked to use the scan's camera photos as well (server/register/place_register_sfm.ts).
+  queuePhotoCheck: async (scanId: string) => {
+    if (!world) return
+    const response = await fetch(withAccessToken(`/worlds/${encodeURIComponent(world.shareSlug)}/jobs`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'place-register', scanId, payload: { method: 'sfm', source: 'viewer', requestedAt: new Date().toISOString() } }),
+    })
+    if (!response.ok) throw new Error(await response.text())
+    const job = await response.json() as WorldJob
+    if (!world.jobs.some((existing) => existing.jobId === job.jobId)) world.jobs.unshift(job)
+    renderWorldPanel()
+    setTimeout(() => { void refreshJobs() }, 1000)
+    return job
+  },
 }
 
 function renderLayerPanel(): void {
