@@ -36,14 +36,14 @@ Brush-trained room splats. Do this once you have a real trained room splat (from
 house test — `<base>.splat.ply` in `scans/`, ≥100k gaussians):
 
 ```bash
-# On beta-1, against a real trained room splat:
+# On the GPU host, against a real trained room splat:
 node scripts/tune-splat-detect.mjs scans/<your-room>.splat.ply \
   --prompt "sofa, bed, tv, table, chair, lamp, desk, dresser, refrigerator, toilet, sink" \
-  --quality medium --out /home/ci/.local/state/detect-tune
+  --quality medium --out ~/.local/state/detect-tune
 
 # Review the sweep, then load the best result in the editor to eyeball the boxes:
-cat /home/ci/.local/state/detect-tune/REPORT.md
-cp /home/ci/.local/state/detect-tune/<best-tag>.interactions.json scans/<your-room>.interactions.json
+cat ~/.local/state/detect-tune/REPORT.md
+cp ~/.local/state/detect-tune/<best-tag>.interactions.json scans/<your-room>.interactions.json
 # open the editor → select the scan → Splat Toolbox → "Show detected object boxes"
 ```
 

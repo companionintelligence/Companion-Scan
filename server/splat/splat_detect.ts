@@ -12,12 +12,25 @@
  *     remediation hint (exactly like splat_train handles a missing Brush binary),
  *   - a crash or a run that produced no interactions.json yields an `error`.
  *
- * splat_analyzer facts baked in (confirmed via run_local.py --help on this box):
- *   run_local.py --ply <x> --prompt <p> --quality low --renderer point
- *     --job_dir <tmp>
+ * splat_analyzer facts baked in (from run_local.py --help on the host this was
+ * written on):
+ *   run_local.py --ply <x> --prompt <p> --quality <low|medium|high>
+ *     --renderer point --job_dir <tmp>
+ *   An upstream checkout measured since (wave 14, 2026-11-23) lists no
+ *   `--renderer` option and has no pointcloud_to_gs.py, so against it this
+ *   driver's run exits 2 on the unknown flag and the point-cloud fallback
+ *   cannot start (docs/splat-detect.md). The flag is still passed: dropping it
+ *   would hand a ROCm host the gsplat rasterizer it has no build of. Which
+ *   analyzer is the supported one is an owner decision (wave 14 report).
+ *   The quality preset is the camera coverage: low renders 24 views, medium 90,
+ *   high 192. This driver passes SPLAT_DETECT_QUALITY, default `medium`.
  *   Writes <job_dir>/interactions.json (+ frames/ transforms.json we discard).
- *   GPU is pinned via env HIP_VISIBLE_DEVICES=1 (ROCm torch) — WMD_DEVICE=cuda
- *   selects the torch cuda/HIP path; POINT_SPLAT_SIZE=6 sizes the point renderer.
+ *   WMD_DEVICE=cuda selects the torch cuda/HIP path; POINT_SPLAT_SIZE=6 sizes
+ *   the point renderer. A GPU pin is passed only when HIP_VISIBLE_DEVICES is
+ *   set: unset means no pin, so torch takes its first device, the way
+ *   BRUSH_DEVICE works for Brush. (It used to default to "1", the second GPU of
+ *   the one multi-GPU host this was written on, which names a device that does
+ *   not exist on a single-GPU box.)
  *   run_local.py does not emit a manifest — this driver writes it.
  *
  * Input selection:
@@ -34,14 +47,21 @@
 // its DOM-lib type-check program). Re-exported below so
 // `import type { SplatDetectManifest } from './splat_detect.ts'` still works.
 import type { SplatDetectManifest } from '../../src/world/types.ts'
-import { isRunnable } from '../exec_probe.ts'
-import { budgetFromEnv, runWithDeadline } from '../run_with_deadline.ts'
-import { isServerSessionId } from '../../src/shared/session-id.ts'
+import { locateTool, runnerToolLookup } from '../exec_probe.ts'
+import {
+  budgetFromEnv,
+  finishRun,
+  isValidSessionDir,
+  KILL_GRACE_MS,
+  runWithDeadline,
+  writeRunnerManifest,
+} from '../run_with_deadline.ts'
 import { lingBotCloudCollapsed } from './splat_train_dataset.ts'
 export type { SplatDetectManifest }
 
-const DEFAULT_DETECT_PYTHON = `${Deno.env.get('HOME') ?? '~'}/.venvs/splat-analyzer/bin/python`
-const DEFAULT_DETECT_DIR = `${Deno.env.get('HOME') ?? '~'}/splat_analyzer`
+/** The documented venv and checkout: the shared table's fallbacks (runnerToolLookups, server/exec_probe.ts). */
+const DEFAULT_DETECT_PYTHON = runnerToolLookup('splat-detect-python').fallbacks[0]
+const DEFAULT_DETECT_DIR = runnerToolLookup('splat-detect-dir').fallbacks[0]
 const DEFAULT_DETECT_PROMPT = 'sofa, chair, table, tv, lamp, plant, bed, desk, shelf, door, window'
 
 export interface SplatDetectRunOptions {
@@ -59,7 +79,7 @@ export interface SplatDetectRunOptions {
   python?: string
   /** splat_analyzer checkout dir. Falls back to env SPLAT_DETECT_DIR, then ~/splat_analyzer. */
   detectDir?: string
-  /** GPU pin for torch/HIP. Falls back to env HIP_VISIBLE_DEVICES, then "1". */
+  /** GPU pin for torch/HIP. Falls back to env HIP_VISIBLE_DEVICES, then '' — no pin. */
   hipVisibleDevices?: string
   /** Point-renderer splat size. Falls back to env POINT_SPLAT_SIZE, then "6". */
   pointSplatSize?: string
@@ -79,6 +99,11 @@ export interface SplatDetectRunOptions {
   ) => Promise<{ code: number; stderr: string; timeoutReason?: string | null }>
   /** Provenance forwarded into the manifest. */
   provenance?: { sessionId?: string; scanId?: string }
+  /**
+   * Stops the run when it fires: the job pump passes its job's signal, so a job
+   * it has given up on does not leave its child running (F-27).
+   */
+  signal?: AbortSignal
 }
 
 export type SplatDetectStatus = 'ok' | 'skipped' | 'error'
@@ -99,7 +124,8 @@ export function resolveParams(opts: SplatDetectRunOptions) {
   const python = opts.python ?? Deno.env.get('SPLAT_DETECT_PYTHON') ?? DEFAULT_DETECT_PYTHON
   const detectDir = opts.detectDir ?? Deno.env.get('SPLAT_DETECT_DIR') ?? DEFAULT_DETECT_DIR
   const prompt = opts.prompt ?? Deno.env.get('SPLAT_DETECT_PROMPT') ?? DEFAULT_DETECT_PROMPT
-  const hipVisibleDevices = opts.hipVisibleDevices ?? Deno.env.get('HIP_VISIBLE_DEVICES') ?? '1'
+  // '' is "no pin": the child is then not given HIP_VISIBLE_DEVICES at all.
+  const hipVisibleDevices = opts.hipVisibleDevices ?? Deno.env.get('HIP_VISIBLE_DEVICES') ?? ''
   const pointSplatSize = opts.pointSplatSize ?? Deno.env.get('POINT_SPLAT_SIZE') ?? '6'
   const quality = opts.quality ?? Deno.env.get('SPLAT_DETECT_QUALITY') ?? 'medium'
   // Clustering knobs: undefined means "let run_local.py use its own default"
@@ -123,9 +149,10 @@ export function resolveParams(opts: SplatDetectRunOptions) {
 }
 
 /**
- * Assemble the run_local.py CLI arguments. `--renderer point` + `--quality low`
- * keep the render cheap (24 preview views) and avoid the gsplat rasterizer that
- * has no ROCm build on this box.
+ * Assemble the run_local.py CLI arguments. `--renderer point` avoids the gsplat
+ * rasterizer that has no ROCm build on this box. `--quality` is the coverage
+ * preset from SPLAT_DETECT_QUALITY (default medium, 90 views; low is 24, the
+ * cheap one).
  */
 export function buildDetectArgs(
   runLocalPath: string,
@@ -171,21 +198,24 @@ export async function runSplatDetect(opts: SplatDetectRunOptions): Promise<Splat
 
   // 1. Guard: python + the analyzer checkout must exist before we do any work.
   //    A missing venv/dir is a *skip*, not an error — the server keeps running
-  //    and the UI shows a remediation.
-  if (!(await isRunnable(params.python))) {
+  //    and the UI shows a remediation, the same one GET /capabilities prints.
+  const pythonLookup = runnerToolLookup('splat-detect-python')
+  const pythonLocation = await locateTool(pythonLookup, { explicit: params.python })
+  if (!pythonLocation.found) {
     return _finish(manifestPath, {
       ...baseManifest,
       status: 'skipped',
       skippedReason: `splat-analyzer python not found or not executable: ${params.python}`,
-      remediation: 'Create the venv and set SPLAT_DETECT_PYTHON (see docs/splat-detect.md — Setup).',
+      remediation: pythonLookup.remediation,
     }, 0, `splat-detect python missing: ${params.python}`)
   }
+  const python = pythonLocation.path ?? params.python
   if (!(await exists(runLocalPath))) {
     return _finish(manifestPath, {
       ...baseManifest,
       status: 'skipped',
       skippedReason: `splat-analyzer run_local.py not found: ${runLocalPath}`,
-      remediation: 'Clone splat_analyzer and set SPLAT_DETECT_DIR (see docs/splat-detect.md — Setup).',
+      remediation: runnerToolLookup('splat-detect-dir').remediation,
     }, 0, `splat-detect dir missing: ${params.detectDir}`)
   }
 
@@ -222,14 +252,12 @@ export async function runSplatDetect(opts: SplatDetectRunOptions): Promise<Splat
       }
       // Convert the plain xyz+rgb cloud into a 3DGS-attribute PLY.
       convertedPly = `${jobDir}/from-pointcloud.gs.ply`
-      const convEnv: Record<string, string> = {
-        HIP_VISIBLE_DEVICES: params.hipVisibleDevices,
-      }
+      const convEnv: Record<string, string> = gpuPinEnv(params.hipVisibleDevices)
       let convResult: { code: number; stderr: string; timeoutReason?: string | null }
       try {
         convResult = opts._spawn
-          ? await opts._spawn(params.python, [converterPath, srcCloud, convertedPly], convEnv)
-          : await defaultSpawn(params.python, [converterPath, srcCloud, convertedPly], convEnv)
+          ? await opts._spawn(python, [converterPath, srcCloud, convertedPly], convEnv)
+          : await defaultSpawn(python, [converterPath, srcCloud, convertedPly], convEnv, opts.signal)
       } catch (e) {
         await removeQuietly(jobDir)
         const msg = e instanceof Error ? e.message : String(e)
@@ -256,7 +284,7 @@ export async function runSplatDetect(opts: SplatDetectRunOptions): Promise<Splat
     // 3. Spawn the analyzer headless with the GPU pin + point renderer.
     const args = buildDetectArgs(runLocalPath, detectPly, jobDir, params)
     const env: Record<string, string> = {
-      HIP_VISIBLE_DEVICES: params.hipVisibleDevices,
+      ...gpuPinEnv(params.hipVisibleDevices),
       WMD_DEVICE: 'cuda',
       POINT_SPLAT_SIZE: params.pointSplatSize,
     }
@@ -264,8 +292,8 @@ export async function runSplatDetect(opts: SplatDetectRunOptions): Promise<Splat
     let spawnResult: { code: number; stderr: string; timeoutReason?: string | null }
     try {
       spawnResult = opts._spawn
-        ? await opts._spawn(params.python, args, env)
-        : await defaultSpawn(params.python, args, env)
+        ? await opts._spawn(python, args, env)
+        : await defaultSpawn(python, args, env, opts.signal)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       return _finish(manifestPath, {
@@ -345,16 +373,18 @@ export function countInteractions(text: string): number | null {
 }
 
 /**
- * Delegates to the shared `SESSION_ID_RE` (`src/shared/session-id.ts`) rather
- * than a local copy — see lingbot_map.ts's `isValidSessionDir` doc comment
- * for why this file used to carry its own, stale one. Unlike that file's,
- * this one has no caller within `runSplatDetect()` today — kept exported and
- * correct rather than deleted, since removing it would be an unrelated
- * behavior change beyond this fix's scope.
+ * The shared session-dir check (server/run_with_deadline.ts), re-exported under
+ * the name this module always exported. `runSplatDetect` itself has no caller
+ * of it: its input is a splat path, not a session dir.
  */
-export function isValidSessionDir(sessionDir: string): boolean {
-  const base = sessionDir.split('/').filter(Boolean).pop() ?? ''
-  return isServerSessionId(base)
+export { isValidSessionDir }
+
+/**
+ * The child's GPU pin. An empty pin is no pin: the variable is left out, so the
+ * child sees every device (or whatever the server's own environment says).
+ */
+export function gpuPinEnv(hipVisibleDevices: string): Record<string, string> {
+  return hipVisibleDevices ? { HIP_VISIBLE_DEVICES: hipVisibleDevices } : {}
 }
 
 // isRunnable now lives in ./exec_probe.ts — it was duplicated here and in
@@ -385,30 +415,28 @@ async function defaultSpawn(
   bin: string,
   args: string[],
   extraEnv: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<{ code: number; stderr: string; timeoutReason: string | null }> {
   const output = await runWithDeadline(
     bin,
     { args, env: extraEnv, stdout: 'piped', stderr: 'piped' },
     budgetFromEnv('SPLAT_DETECT_TIMEOUT_MS', DEFAULT_DETECT_TIMEOUT_MS),
+    KILL_GRACE_MS,
+    signal,
   )
   const stderr = new TextDecoder().decode(output.stderr).trim()
   return { code: output.code, stderr, timeoutReason: output.timeoutReason }
 }
 
 async function writeManifest(path: string, manifest: SplatDetectManifest): Promise<void> {
-  try {
-    await Deno.writeTextFile(path, JSON.stringify(manifest, null, 2))
-  } catch (e) {
-    console.warn('[splat-detect] failed to write manifest:', e)
-  }
+  await writeRunnerManifest(path, manifest, 'splat-detect')
 }
 
-async function _finish(
+function _finish(
   manifestPath: string,
   manifest: SplatDetectManifest,
   exitCode: number,
   log: string,
 ): Promise<SplatDetectResult> {
-  await writeManifest(manifestPath, manifest)
-  return { status: manifest.status, manifest, log, exitCode }
+  return finishRun(manifestPath, manifest, exitCode, log, 'splat-detect')
 }

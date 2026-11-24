@@ -25,11 +25,15 @@
  *
  * ── Why a sidecar and not the scan's meta JSON ───────────────────────────────
  *
- * server/main.ts:1930 rewrites the whole `<base>.json` meta sidecar with
- * `void Deno.writeTextFile(...)` — unawaited, and outside the per-slug world
- * lock ADR 0004 establishes. A stage that merged into that same file would be
- * last-write-wins against an ingest that is still in flight. A separate file
- * per producer is the precedent `splat_detect.ts` already set with
+ * The `<base>.json` meta sidecar belongs to the upload that wrote it:
+ * `storeUploadedScan` (server/world/scan_store.ts) writes it once, to a temporary
+ * name renamed into place beside the GLB. Nothing else holds a lock on it (the
+ * per-slug world lock of ADR 0004 covers the world file, not this one), so a
+ * stage that merged its detections into it would be one more writer of a file
+ * with no lock, racing a re-upload of the same scan. (An earlier version of this
+ * comment named an unawaited rewrite in the upload route; that write is atomic
+ * now, and the reason above is the one that still holds.) A separate file per
+ * producer is the precedent `splat_detect.ts` set with
  * `<base>.interactions.json`, and it makes a re-lift an idempotent whole-file
  * overwrite instead of a merge. The shape is `StoredDetectionMeta` plus
  * provenance, and it converges at `detectionLikesForWorld` — one aggregation
@@ -147,11 +151,9 @@
  * about an arbitrary origin would draw markers in a perfectly self-consistent
  * place that is not where the objects are.
  */
-import { Document, NodeIO, Primitive } from '@gltf-transform/core'
+import { Document, type NodeIO, Primitive } from '@gltf-transform/core'
 import { resolve } from '@std/path'
-import { ALL_EXTENSIONS } from '@gltf-transform/extensions'
-// @ts-ignore — draco3dgltf ships no type declarations
-import draco3d from 'draco3dgltf'
+import { getGltfReadIO } from '../pipeline.ts'
 
 import type { PanopticLiftManifest, SplatAlignManifest } from '../../src/world/types.ts'
 import { THING_MATCH_RADIUS_M } from '../thing_match.ts'
@@ -611,24 +613,11 @@ export interface PanopticLiftRunOptions {
   _readCloud?: (path: string) => Promise<{ positions: Float32Array; count: number } | null>
 }
 
-// IO is expensive to initialise, so once per process — the same per-module
-// singleton `server/lingbot-map/lingbot_map_glb.ts:37` uses. `pipeline.ts`'s
-// equivalent is not exported, and this stage only ever READS, so it registers
-// the decoder half and nothing else.
-let ioPromise: Promise<NodeIO> | null = null
-
+// This stage only ever READS a scan GLB, so it uses the shared read-only IO
+// (`getGltfReadIO` in server/pipeline.ts): the Draco decoder and every
+// extension, set up once per process.
 function getIO(): Promise<NodeIO> {
-  ioPromise ??= (async () => {
-    const decoder = await draco3d.createDecoderModule({})
-    // ALL_EXTENSIONS, not a hand-picked subset: glTF-Transform silently drops
-    // any extension the IO has not registered at read time, and a scan that
-    // went through `optimizeScan` carries KHR_mesh_quantization on the very
-    // accessor this stage reads.
-    return new NodeIO()
-      .registerExtensions(ALL_EXTENSIONS)
-      .registerDependencies({ 'draco3d.decoder': decoder })
-  })()
-  return ioPromise
+  return getGltfReadIO()
 }
 
 /** Multiply a row-major 4x4 by another. */
@@ -737,14 +726,15 @@ function median(values: number[]): number | undefined {
  * Lift every thing segment in a session against a scan's point cloud.
  *
  * Never throws. Every unmet precondition is a `skipped` with a remediation,
- * matching the contract `server/colmap/colmap_poses.ts:132` and
- * `server/splat/splat_train.ts:168` set for optional tooling — a lift with no
- * segments file is exactly as "not configured" as a missing Brush binary.
+ * matching the contract `runColmapPoses` and `runSplatTrain` keep for optional
+ * tooling (a missing tool is a skip with a remediation, server/exec_probe.ts's
+ * `toolSkip`) — a lift with no segments file is exactly as "not configured" as
+ * a missing Brush binary.
  */
 export async function runPanopticLift(opts: PanopticLiftRunOptions): Promise<PanopticLiftManifest> {
   const started = Date.now()
   // Resolved here rather than trusted from the caller, for the reason
-  // splat_train_dataset.ts:158 now does the same: SCANS_DIR defaults to
+  // splat_train_dataset.ts's `buildBrushDataset` now does the same: SCANS_DIR defaults to
   // './scans', so every path the WorldJob runner hands a stage is relative.
   // That cost the splat pipeline every run it ever attempted — a relative
   // symlink target resolved against the link's own directory, and Brush saw an
@@ -880,7 +870,7 @@ export async function runPanopticLift(opts: PanopticLiftRunOptions): Promise<Pan
   //    splitPanopticSegments preserves the worker's order, and the worker walks
   //    `segments_info` in a fixed order for a given segments file. That makes
   //    `<scanId>:panoptic:<file>:<index>` a natural key thing_match can update
-  //    rather than duplicate (server/thing_match.ts:52-54).
+  //    rather than duplicate (`runThingCorrespondence`'s natural key, server/thing_match.ts).
   const perFrame = new Map<string, number>()
   const out: PanopticDetectionRecord[] = []
   const reasons: Record<string, number> = {}

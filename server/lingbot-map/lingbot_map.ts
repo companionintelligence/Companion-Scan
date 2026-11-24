@@ -13,11 +13,18 @@
  */
 import { COMPUTE_DEVICES, type ComputeDevice, isComputeDevice } from '../../src/world/manifests.ts'
 import type { ScanReviewStatus } from '../../src/world/types.ts'
-import { isServerSessionId } from '../../src/shared/session-id.ts'
+import { isNotFoundSpawnError, locateTool, runnerToolLookup, toolSkip } from '../exec_probe.ts'
 import { parseLingBotMapPLY } from '../../src/shared/lingbot_map_ply.ts'
 import { openCvW2cToC2w } from '../splat/splat_train_dataset.ts'
 import { sfmCentresFromPoses } from '../splat/splat_align.ts'
-import { budgetFromEnv, type DeadlineOutput, runWithDeadline } from '../run_with_deadline.ts'
+import {
+  budgetFromEnv,
+  type DeadlineOutput,
+  isValidSessionDir,
+  KILL_GRACE_MS,
+  runWithDeadline,
+  writeRunnerManifest,
+} from '../run_with_deadline.ts'
 
 // Lazy-imported inside runLingBotMapReconstruction so the Deno-only unit
 // test (lingbot_map.test.ts) doesn't pull in @gltf-transform/functions,
@@ -62,6 +69,11 @@ export interface LingBotMapRunOptions {
   glbSidecarPath?: string
   /** Forwarded into the GLB's asset.extras so the viewer can show provenance. */
   glbExtras?: { sessionId: string; scanId?: string }
+  /**
+   * Stops the run when it fires: the job pump passes its job's signal, so a job
+   * it has given up on does not leave its child running (F-27).
+   */
+  signal?: AbortSignal
 }
 
 export type LingBotMapStatus = 'ok' | 'skipped' | 'error'
@@ -404,22 +416,15 @@ async function recordLingBotTimeout(manifestFile: string, error: string): Promis
 const DEFAULT_LINGBOT_TIMEOUT_MS = 2 * 60 * 60 * 1000
 
 /**
- * Validate that a path looks like a Companion-Scan session directory.
- * Pulled out so the unit test can hit it without spawning anything.
+ * Validate that a path looks like a Companion-Scan session directory: the shared
+ * check (server/run_with_deadline.ts), re-exported under the name this module
+ * always had so the unit test can hit it without spawning anything.
  *
- * Delegates to the shared `SESSION_ID_RE` (`src/shared/session-id.ts`) rather
- * than a local copy — this file used to carry its own, wider
- * `/^(sess|session)-[a-z0-9-]+$/`, which kept accepting the retired
- * client-minted `session-*` shape after 07-scan-identity/0002 cut over to
- * `sess-*` only everywhere else. It was never reachable in practice (every
- * caller resolves `sessionDir` through main.ts's tightened gate first), but a
- * second copy of a validator this repo already retired one rival of is
- * exactly what ADR 0001 exists to prevent.
+ * This file once carried its own, wider `/^(sess|session)-[a-z0-9-]+$/`, which
+ * kept accepting the retired client-minted `session-*` shape after
+ * 07-scan-identity/0002 cut over to `sess-*` only everywhere else.
  */
-export function isValidSessionDir(sessionDir: string): boolean {
-  const base = sessionDir.split('/').filter(Boolean).pop() ?? ''
-  return isServerSessionId(base)
-}
+export { isValidSessionDir }
 
 export function buildWorkerArgs(opts: LingBotMapRunOptions): string[] {
   const args = [opts.scriptPath, '--session-dir', opts.sessionDir]
@@ -443,7 +448,7 @@ export async function runLingBotMapReconstruction(
     return _failure(opts.sessionDir, 'invalid session directory', 2)
   }
 
-  const python = opts.python ?? Deno.env.get('LINGBOT_MAP_PYTHON') ?? 'python3'
+  const pythonName = opts.python ?? Deno.env.get('LINGBOT_MAP_PYTHON') ?? 'python3'
   const modelPath = opts.modelPath ?? Deno.env.get('LINGBOT_MAP_MODEL_PATH') ?? ''
   // Named for the LINGBOT_MAP_* family it joins, and matching BRUSH_DEVICE's
   // <tool>_DEVICE shape rather than inventing a new one (ADR 0001).
@@ -470,6 +475,17 @@ export async function runLingBotMapReconstruction(
     ? opts.maxFrames
     : Number(Deno.env.get('LINGBOT_MAP_MAX_FRAMES') ?? '16')
 
+  // The interpreter resolves through the table GET /capabilities reports
+  // (option or LINGBOT_MAP_PYTHON, else python3 on PATH). A missing one is a
+  // missing tool, the same skip a missing torch or checkpoint already is, not
+  // a failed job.
+  const pythonLookup = runnerToolLookup('lingbot-map-python')
+  const pythonLocation = await locateTool(pythonLookup, { explicit: pythonName })
+  if (!pythonLocation.found) {
+    return await _skip(opts.sessionDir, toolSkip(pythonLookup, pythonLocation, 'LingBot-Map interpreter'))
+  }
+  const python = pythonLocation.path ?? pythonName
+
   let output: DeadlineOutput
   try {
     output = await runWithDeadline(python, {
@@ -487,8 +503,15 @@ export async function runLingBotMapReconstruction(
       },
       stdout: 'piped',
       stderr: 'piped',
-    }, budgetFromEnv('LINGBOT_MAP_TIMEOUT_MS', DEFAULT_LINGBOT_TIMEOUT_MS))
+    }, budgetFromEnv('LINGBOT_MAP_TIMEOUT_MS', DEFAULT_LINGBOT_TIMEOUT_MS), KILL_GRACE_MS, opts.signal)
   } catch (e) {
+    // Gone between the probe and the spawn: still a missing tool.
+    if (isNotFoundSpawnError(e)) {
+      return await _skip(
+        opts.sessionDir,
+        toolSkip(pythonLookup, { found: false, path: python, searched: [python] }, 'LingBot-Map interpreter'),
+      )
+    }
     return _failure(opts.sessionDir, `failed to run ${python}: ${e instanceof Error ? e.message : e}`, 3)
   }
   const manifestFile = `${opts.sessionDir}/lingbot-map.manifest.json`
@@ -589,6 +612,36 @@ export async function runLingBotMapReconstruction(
     remediation,
     log,
     exitCode: output.code,
+  }
+}
+
+/**
+ * A skip decided before the worker ran, so the worker wrote no manifest. One is
+ * written here, over any earlier run's, because the job's skip artifact links to
+ * `lingbot-map.manifest.json` and it must say this run's reason. The job's result
+ * prints only `skippedReason`, so the fix is carried in it as well as in
+ * `remediation`.
+ */
+async function _skip(
+  sessionDir: string,
+  skip: { skippedReason: string; remediation: string },
+): Promise<LingBotMapResult> {
+  await writeRunnerManifest(`${sessionDir}/lingbot-map.manifest.json`, {
+    schemaVersion: 1,
+    tool: 'lingbot-map',
+    sessionDir,
+    createdAt: new Date().toISOString(),
+    status: 'skipped',
+    skippedReason: skip.skippedReason,
+    remediation: skip.remediation,
+  }, 'lingbot-map')
+  return {
+    status: 'skipped',
+    skippedReason: `${skip.skippedReason}. ${skip.remediation}`,
+    remediation: skip.remediation,
+    manifestFile: 'lingbot-map.manifest.json',
+    log: skip.skippedReason,
+    exitCode: 0,
   }
 }
 

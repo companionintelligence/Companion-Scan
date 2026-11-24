@@ -61,6 +61,7 @@
 // twice. `colmap_poses.ts` imports nothing from this module or `station_dome`,
 // so there is no cycle.
 import { frameFingerprint, type StationBaseline } from '../colmap/colmap_poses.ts'
+import { sampleEvenly } from '../sample_even.ts'
 
 /** Edge of the square greyscale thumbnail every frame is reduced to. */
 export const SIGNATURE_EDGE = 32
@@ -337,16 +338,14 @@ async function loadJimp(): Promise<JimpModule | null> {
   return jimpCache
 }
 
-/** Evenly spaced picks, keeping the first and last so the sweep's extremes are represented. */
-export function sampleEvenly<T>(items: T[], limit: number): T[] {
-  if (limit <= 0) return []
-  if (items.length <= limit) return [...items]
-  const out: T[] = []
-  for (let i = 0; i < limit; i += 1) {
-    out.push(items[Math.round((i * (items.length - 1)) / (limit - 1))])
-  }
-  return out
-}
+/**
+ * Evenly spaced picks, keeping the first and last so the sweep's extremes are
+ * represented: the one copy in server/sample_even.ts, re-exported under the name
+ * this module always exported. For the whole-number limits of two or more this
+ * module passes it, the two copies picked the same items; the shared one also
+ * handles a limit of one (the middle item) where this one indexed NaN.
+ */
+export { sampleEvenly }
 
 interface CacheEntry {
   /** Content hash of the photographs the finding was measured from. See {@link measureSweepSeparation}. */

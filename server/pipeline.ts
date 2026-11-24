@@ -48,7 +48,11 @@
  */
 import { Document, NodeIO, Primitive, type Accessor } from '@gltf-transform/core'
 import { ALL_EXTENSIONS, KHRDracoMeshCompression, KHRMeshQuantization } from '@gltf-transform/extensions'
-import { cloneDocument, dedup, prune, quantize, draco } from '@gltf-transform/functions'
+// @gltf-transform/functions is loaded inside optimizeScan, not here: it eagerly
+// loads sharp, and the read-only stages that import this module for
+// getGltfReadIO (panoptic_lift.ts) should not pay for, or need the permissions
+// of, an image library they never call. lingbot_map.ts lazy-loads its GLB
+// builder for the same reason.
 // @ts-ignore — draco3dgltf ships no type declarations
 import draco3d from 'draco3dgltf'
 
@@ -108,6 +112,28 @@ const DEFAULT_LOD_MIN_POINTS = 5000
 
 // IO + Draco WASM modules are expensive to initialise — do it once per process.
 let ioPromise: Promise<NodeIO> | null = null
+let readIoPromise: Promise<NodeIO> | null = null
+
+/**
+ * A read-only glTF IO for a scan as it is stored on disk: the Draco decoder and
+ * every extension registered, nothing else. The optimizer's output is quantized
+ * and Draco-compressed, and glTF-Transform silently drops any extension the IO
+ * has not registered at read time, so a reader that registered less would lose
+ * KHR_mesh_quantization on the very accessor it reads.
+ *
+ * One per process, shared by the stages that only read a scan GLB
+ * (panoptic_lift.ts; world_export.ts holds the last copy of this setup). The
+ * optimizer itself uses the encoder-and-decoder IO below.
+ */
+export function getGltfReadIO(): Promise<NodeIO> {
+  readIoPromise ??= (async () => {
+    const decoder = await draco3d.createDecoderModule({})
+    return new NodeIO()
+      .registerExtensions(ALL_EXTENSIONS)
+      .registerDependencies({ 'draco3d.decoder': decoder })
+  })()
+  return readIoPromise
+}
 
 function getIO(): Promise<NodeIO> {
   ioPromise ??= (async () => {
@@ -134,6 +160,7 @@ export async function optimizeScan(
   glb: Uint8Array,
   opts: PipelineOptions = {},
 ): Promise<PipelineResult> {
+  const { cloneDocument, dedup, prune, quantize, draco } = await import('@gltf-transform/functions')
   const lodVoxelsM = opts.lodVoxelsM ?? DEFAULT_LOD_VOXELS_M
   const lodMinPoints = opts.lodMinPoints ?? DEFAULT_LOD_MIN_POINTS
   const stages: PipelineStageLog[] = []

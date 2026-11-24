@@ -55,7 +55,7 @@ Mobile app   ──upload .glb──►  Deno server  ──fork──►  brush
 
 | Var | Default | Used by |
 |-----|---------|---------|
-| `BRUSH_BIN` | `~/brush/target/release/brush-cli` | Server — the Brush CLI binary. If missing/unrunnable the job records a `skipped` manifest with a remediation hint. |
+| `BRUSH_BIN` | `brush-cli` on PATH, then `~/brush/target/release/brush-cli` | Server — the Brush CLI binary. Set, it is taken at its word; unset, PATH is tried before the documented path, the same order `GET /capabilities` reports (one resolver, `locateTool` in `server/exec_probe.ts`). If missing/unrunnable the job records a `skipped` manifest with a remediation hint. |
 | `BRUSH_DEVICE` | *(unset)* | Server — forwarded as `CUBECL_WGPU_DEFAULT_DEVICE` only when set. Selects the wgpu adapter (**not** HIP). Leave unset on a single-GPU host and on Apple Silicon, where there is no `DiscreteGpu` and a stale pin selects nothing. Set `DiscreteGpu(1)` only on the multi-GPU AMD box, to reach the non-Ollama 7900 XTX and avoid the `llvmpipe` software adapter. |
 | `BRUSH_TRAIN_ITERS` | `15000` | Total training iterations. |
 | `BRUSH_SH_DEGREE` | `2` | Spherical-harmonic degree of the splats. |
@@ -374,7 +374,7 @@ It needs a Vulkan loader and an ICD (`libvulkan.so.1` plus e.g.
 | Var | Default | Used by |
 |-----|---------|---------|
 | `SPLAT_BACKEND` | `brush` | Server — which trainer a `splat-train` job spawns. |
-| `SPIRULA_BIN` | *(unset → first runnable of `~/opt/spirula/spirula`, `~/.local/bin/spirula`, `/usr/local/bin/spirula`)* | Server — the Spirula binary. Missing/unrunnable ⇒ `skipped` + remediation. |
+| `SPIRULA_BIN` | *(unset → `spirula` on PATH, then the first runnable of `~/opt/spirula/spirula`, `~/.local/bin/spirula`, `/usr/local/bin/spirula`)* | Server — the Spirula binary. Missing/unrunnable ⇒ `skipped` + remediation. |
 | `SPIRULA_DEVICE` | *(unset)* | Forwarded as `--device` only when set (an index or a name substring). Leave unset on a single-GPU host; Spirula picks the discrete adapter over integrated and `llvmpipe` on its own. |
 | `SPIRULA_TRAIN_ITERS` | `15000` | `--num-iterations`. Mirrors `BRUSH_TRAIN_ITERS`, not Spirula's own `30000`. |
 | `SPIRULA_SH_DEGREE` | `2` | `--sh-degree`. Mirrors `BRUSH_SH_DEGREE`, not Spirula's own `3`. |
@@ -458,7 +458,7 @@ right one for a room scan.
 
 | Symptom (in the manifest) | Cause | Fix |
 |---|---|---|
-| `skipped`: `Brush binary not found or not executable: …` | No Brush build at `BRUSH_BIN`/the default path | Build it — see Setup. This is the only prerequisite for a session captured with SLAM poses. |
+| `skipped`: `Brush binary not found or not executable: …` (`BRUSH_BIN` set) or `Brush binary not found (looked in: …)` | No Brush at `BRUSH_BIN`, on PATH or at the default path | Build it — see Setup. This is the only prerequisite for a session captured with SLAM poses. |
 | `skipped`: `COLMAP binary not found: colmap` | A pose-less session (photo/video ingest) auto-chained `colmap-poses` | Install COLMAP or set `COLMAP_BIN` (see [`colmap-poses.md`](colmap-poses.md)). Sessions streamed from the scanner already carry poses and never reach this. |
 | `skipped`: `only N keyframe(s) in session` | Fewer than 3 frames | Capture more, walking between viewpoints. |
 | `error`: `brush exited 1: … no usable training views …` | The dataset's `images/` entries do not resolve | Should be impossible now (see the absolute-paths section). Check `ls -lL <session>/brush-dataset/images/` for dangling links. |
@@ -531,8 +531,8 @@ in CI, but the served-`.ply` → `SplatMesh` data path is identical to a real ru
 
 ## Screenshots
 
-Real Brush output (334,681 gaussians, 15k iterations, trained on beta-1's second
-RX 7900 XTX in ~6 minutes) loaded in the Spatial Editor:
+Real Brush output (334,681 gaussians, 15k iterations, trained on the multi-GPU AMD host's
+second RX 7900 XTX in ~6 minutes) loaded in the Spatial Editor:
 
 ![Real trained splat rendering in the viewer](splat-train/screenshots/viewer-real-splat-loaded.png)
 

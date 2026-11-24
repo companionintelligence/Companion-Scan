@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { bestClip, choosePath, planFrameSets, planTimesteps } from '../stages/frameset.mjs'
+import { bestClip, choosePath, commonWindow, planFrameSets, planTimesteps } from '../stages/frameset.mjs'
 
 const measured = (residualMs = 10, toleranceMs = 50) => ({
   method: 'measured', offsetMs: 0, residualMs, toleranceMs, sampleCount: 11,
@@ -53,10 +53,38 @@ test('a single clip densifies', () => {
   assert.equal(d.viewSource, 'densified')
 })
 
-test('several synchronised clips skip 4DAnyone entirely', () => {
-  const d = choosePath([{ sync: measured() }, { sync: measured() }, { sync: measured() }])
+const L2W = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+const placed = () => ({ sync: measured(), poseTrackUrl: '/p.json', localToWorld: L2W })
+
+test('several synchronised, placed clips skip 4DAnyone entirely', () => {
+  const d = choosePath([placed(), placed(), placed()])
   assert.equal(d.viewSource, 'multi-camera')
   assert.match(d.reason, /3 synchronised/)
+  assert.equal(d.members.length, 3)
+})
+
+test('synchronised clips that cannot be placed densify, and say what was missing', () => {
+  // Pose-track poses are in each phone's own session frame: without a session-to-Place transform, N tracks are N frames.
+  const d = choosePath([{ sync: measured(), poseTrackUrl: '/p.json' }, { sync: measured(), poseTrackUrl: '/p.json' }])
+  assert.equal(d.viewSource, 'densified')
+  assert.equal(d.degraded, true)
+  assert.match(d.reason, /2 without a session-to-Place transform/)
+  const unposed = choosePath([{ sync: measured(), localToWorld: L2W }, { sync: measured(), localToWorld: L2W }])
+  assert.match(unposed.reason, /2 without a pose track/)
+})
+
+test('an unsynced clip in a multi-camera take is left out, never mixed in at offset 0', () => {
+  const d = choosePath([placed(), placed(), { sync: unsynced, poseTrackUrl: '/p.json', localToWorld: L2W }])
+  assert.equal(d.viewSource, 'multi-camera')
+  assert.equal(d.members.length, 2)
+  assert.match(d.reason, /1 clip\(s\) left out/)
+})
+
+test('the common window is what every view covers once its offset is applied', () => {
+  assert.deepEqual(commonWindow([{ durationMs: 5000, offsetMs: 0 }, { durationMs: 5000, offsetMs: -200 }]), { startMs: 200, durationMs: 4800 })
+  assert.deepEqual(commonWindow([{ durationMs: 1000, offsetMs: 0 }, { durationMs: 1000, offsetMs: -1500 }]).durationMs, 0)
+  const sets = planFrameSets({ views: [{ source: 'a' }], durationMs: 1000, timestepFps: 2, startMs: 200 })
+  assert.deepEqual(sets.map(s => s.timeMs), [450, 950])
 })
 
 test('multi-clip WITHOUT a measured sync falls back to densify rather than mixing instants', () => {

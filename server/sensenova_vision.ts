@@ -5,9 +5,9 @@
  * worker follows the upstream public entrypoint and produces a structured
  * result even when the optional checkout/model are not installed yet.
  */
-import { whichPath } from './exec_probe.ts'
+import { locateTool, runnerToolLookup } from './exec_probe.ts'
 import { sampleEvenly } from './sample_even.ts'
-import { budgetFromEnv, runWithDeadline } from './run_with_deadline.ts'
+import { budgetFromEnv, KILL_GRACE_MS, runWithDeadline } from './run_with_deadline.ts'
 
 /** One hour: a recon3d pass over eight keyframes is minutes on a GPU. Untuned. */
 const DEFAULT_SENSENOVA_TIMEOUT_MS = 60 * 60 * 1000
@@ -23,6 +23,11 @@ export interface SenseNovaVisionRunOptions {
   modelPath?: string
   bashBin?: string
   maxImages?: number
+  /**
+   * Stops the run when it fires: the job pump passes its job's signal, so a job
+   * it has given up on does not leave its child running (F-27).
+   */
+  signal?: AbortSignal
 }
 
 export interface SenseNovaVisionResult {
@@ -49,8 +54,10 @@ export async function runSenseNovaVision(opts: SenseNovaVisionRunOptions): Promi
   const useWsl = /(?:^|[\\/])wsl(?:\.exe)?$/i.test(bashName)
   const base = { task: opts.task, outputDir: opts.outputDir, files: [] as string[] }
 
+  // Every tool resolves through the table GET /capabilities reports
+  // (runnerToolLookups, server/exec_probe.ts), so the report and the job agree.
   if (!repoDir || !modelPath) {
-    return { ...base, status: 'skipped', log: '', remediation: 'Set SENSENOVA_DIR and SENSENOVA_MODEL_PATH, then install the SenseNova-Vision runtime.' }
+    return { ...base, status: 'skipped', log: '', remediation: runnerToolLookup('sensenova-dir').remediation }
   }
   if (!(await exists(launcher))) {
     return { ...base, status: 'skipped', log: '', remediation: `SenseNova launcher not found at ${launcher}.` }
@@ -58,7 +65,8 @@ export async function runSenseNovaVision(opts: SenseNovaVisionRunOptions): Promi
   // A bare name is looked up on PATH, as a shell would. Deno.stat on the bare
   // name checks the server's working directory instead, which is why this
   // driver used to skip on every Linux default (see exec_probe.ts).
-  const bashBin = await whichPath(bashName)
+  const bashLocation = await locateTool(runnerToolLookup('sensenova-bash'), { explicit: bashName })
+  const bashBin = bashLocation.found ? bashLocation.path ?? null : null
   if (!bashBin) {
     // A value with a separator is a path, and PATH was never consulted for it.
     // Naming PATH there would send the operator to a fix they already applied.
@@ -72,6 +80,15 @@ export async function runSenseNovaVision(opts: SenseNovaVisionRunOptions): Promi
           'Install it, or correct SENSENOVA_BASH.'
         : `SenseNova needs "${bashName}" to run its launcher, but it was not found on PATH. ` +
           'Install it, or set SENSENOVA_BASH to its full path.',
+    }
+  }
+  // A model path that names nothing is a missing tool, not a launcher failure.
+  // Not checked through WSL: there the path may be one only WSL can see.
+  if (!useWsl) {
+    const modelLookup = runnerToolLookup('sensenova-model')
+    const model = await locateTool(modelLookup, { explicit: modelPath })
+    if (!model.found) {
+      return { ...base, status: 'skipped', log: '', remediation: `SenseNova model not found at ${modelPath}. ${modelLookup.remediation}` }
     }
   }
   const images = await sessionImages(opts.sessionDir, opts.maxImages ?? (opts.task === 'recon3d' || opts.task === 'camera_pose' ? 8 : 1))
@@ -92,7 +109,7 @@ export async function runSenseNovaVision(opts: SenseNovaVisionRunOptions): Promi
       env: { MODEL_PATH: runtimePath(modelPath) },
       stdout: 'piped',
       stderr: 'piped',
-    }, budgetFromEnv('SENSENOVA_TIMEOUT_MS', DEFAULT_SENSENOVA_TIMEOUT_MS))
+    }, budgetFromEnv('SENSENOVA_TIMEOUT_MS', DEFAULT_SENSENOVA_TIMEOUT_MS), KILL_GRACE_MS, opts.signal)
     const log = [new TextDecoder().decode(output.stdout), new TextDecoder().decode(output.stderr)].filter(Boolean).join('\n').trim()
     const files = await listFiles(opts.outputDir)
     if (!output.success) {

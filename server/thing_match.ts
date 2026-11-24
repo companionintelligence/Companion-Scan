@@ -1,13 +1,40 @@
 import { identityMatrix, transformPoint } from '../src/world/geo.ts'
 import { isInPlaceFrame, type PlaceFrameFacts } from '../src/world/frame-generations.ts'
 import type { ScanManifest, Thing, ThingObservation, Vec3, WorldProject } from '../src/world/types.ts'
+import { CORE_LABELS, normalizeDetections } from './prompt.ts'
 
 export const THING_MATCH_RADIUS_M = 0.75
 export const THING_MOVED_MIN_M = 0.15
 export const THING_COVERAGE_RADIUS_M = 3.0
 export const MAX_THINGS_PER_WORLD = 5000
 
-const SYNONYMS = new Map<string, string>([
+/**
+ * Folds the capture canon in server/prompt.ts does not make, applied only to a
+ * label that canon left alone. Never a key the canon already maps, and always
+ * onto one of its CORE_LABELS, so the two can never disagree again: they did,
+ * when this file folded tv and television onto monitor while the canon folds
+ * television onto tv and keeps tv and monitor apart (FN-139). These belong in
+ * prompt.ts's LABEL_SYNONYMS (and its twin in src/inference/prompt.ts); this
+ * list goes when they move there.
+ */
+export const THING_ONLY_FOLDS: ReadonlyMap<string, string> = new Map([
+  ['seat', 'chair'],
+  ['stool', 'chair'],
+  ['settee', 'sofa'],
+  ['screen', 'monitor'],
+  ['bookcase', 'shelf'],
+])
+
+/**
+ * This file's normaliser before wave 14: the first word, through its own map.
+ * Kept only to recognise a Thing stored under it (a tv stored as `monitor`, an
+ * office chair stored as `office`), so a new sighting still matches it. It
+ * never names a new Thing. One cost, the old behaviour kept for compatibility:
+ * a Thing filed as `monitor` still takes a `tv` sighting inside the match
+ * radius, however new the Thing is, since a label cannot say when it was
+ * stored. Relabelling stored Things once would let this map go.
+ */
+const LEGACY_SYNONYMS = new Map<string, string>([
   ['armchair', 'chair'],
   ['seat', 'chair'],
   ['stool', 'chair'],
@@ -62,9 +89,79 @@ export function scansLeftOutNote(count: number): string {
     : ` ${count} scans were left out: they are not in the Place frame.`
 }
 
+/**
+ * The capture canon: `canonicalizeLabel` in server/prompt.ts (its synonyms, then
+ * a last word that is a CORE_LABEL), lowercased and trimmed the way it is there.
+ * It is private to that module, so it is reached through `normalizeDetections`,
+ * which applies it to every label it keeps. Empty when the label is.
+ */
+export function captureCanon(label: string): string {
+  const [det] = normalizeDetections([{ label, bbox: [0, 0, 1, 1], confidence: 1, description: '' }])
+  return det?.label ?? ''
+}
+
+/**
+ * The label a Thing is filed under. One canon for capture and for Things:
+ *
+ *  1. the leading name of a comma list (ADE20K's convention: `painting, picture`
+ *     is a painting), lowercased;
+ *  2. the capture canon, so `office chair`, `coffee table` and `couch` land
+ *     where the VLM's own detections do;
+ *  3. a fold the canon does not make (THING_ONLY_FOLDS);
+ *  4. for a label still not a CORE_LABEL, its first word when that word is one
+ *     through 2 or 3, so another producer's `television receiver` meets the
+ *     VLM's `tv`, as it did when this took the first word;
+ *  5. else the label as the canon left it.
+ */
 export function normalizeThingLabel(label: string): string {
+  const lead = (label.split(',')[0] ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+  if (!lead) return 'object'
+  const canon = captureCanon(lead) || lead
+  if (CORE_LABELS.includes(canon)) return canon
+  const folded = THING_ONLY_FOLDS.get(canon)
+  if (folded) return folded
+  const first = canon.split(' ')[0] ?? ''
+  if (first && first !== canon) {
+    const viaFirst = THING_ONLY_FOLDS.get(first) ?? captureCanon(first)
+    if (CORE_LABELS.includes(viaFirst)) return viaFirst
+  }
+  return canon
+}
+
+/** What this file named a label before wave 14. Only for matching Things stored then; see LEGACY_SYNONYMS. */
+export function legacyThingLabel(label: string): string {
   const token = label.toLowerCase().trim().replace(/[^a-z0-9]+/g, ' ').split(/\s+/).filter(Boolean)[0] ?? 'object'
-  return SYNONYMS.get(token) ?? token
+  return LEGACY_SYNONYMS.get(token) ?? token
+}
+
+/**
+ * Whether a Thing filed under `thingLabel` is the same kind of thing as a
+ * sighting of `label`: the same canon, or the name the old normaliser gave that
+ * sighting, which is what a Thing stored before wave 14 carries.
+ */
+export function sameThingKind(thingLabel: string, label: string): boolean {
+  return thingLabel === normalizeThingLabel(label) || thingLabel === legacyThingLabel(label)
+}
+
+/**
+ * The Things near `pos` that a sighting of `label` could be. Those filed under
+ * its canon, when there are any; only when there are none, those filed under
+ * the old normaliser's name. The legacy name is a fallback, never a peer: a
+ * stored `swivel` (the old first word) beside a `chair` would otherwise be two
+ * candidates for every `swivel chair` sighting, and each rescan would mint
+ * another Thing.
+ */
+export function thingCandidates<T extends Pick<Thing, 'canonicalLabel' | 'position'>>(
+  things: readonly T[],
+  label: string,
+  pos: Vec3,
+): T[] {
+  const near = things.filter(thing => distance(thing.position, pos) <= THING_MATCH_RADIUS_M)
+  const canonical = normalizeThingLabel(label)
+  const byCanon = near.filter(thing => thing.canonicalLabel === canonical)
+  if (byCanon.length > 0) return byCanon
+  const legacy = legacyThingLabel(label)
+  return legacy === canonical ? [] : near.filter(thing => thing.canonicalLabel === legacy)
 }
 
 /**
@@ -108,7 +205,7 @@ export function runThingCorrespondence(
     const naturalKey = `${detection.scanId}:${detection.targetId}`
     const existingObservation = observations.get(naturalKey)
     const existingThing = existingObservation ? things.get(existingObservation.thingId) : null
-    let thing = existingThing ?? uniqueCandidate([...things.values()], canonical, detection.worldPos)
+    let thing = existingThing ?? uniqueCandidate([...things.values()], detection.label, detection.worldPos)
 
     if (!thing) {
       if (things.size >= MAX_THINGS_PER_WORLD) throw new Error(`World has more than ${MAX_THINGS_PER_WORLD} things`)
@@ -154,9 +251,7 @@ export function runThingCorrespondence(
 
   for (const detection of detections) {
     const canonical = normalizeThingLabel(detection.label)
-    const matches = [...things.values()].filter(thing =>
-      thing.canonicalLabel === canonical && distance(thing.position, detection.worldPos) <= THING_MATCH_RADIUS_M
-    )
+    const matches = thingCandidates([...things.values()], detection.label, detection.worldPos)
     if (matches.length > 1) {
       artifacts.push({
         type: 'thing-ambiguity',
@@ -169,10 +264,9 @@ export function runThingCorrespondence(
   return { things: [...things.values()], observations: [...observations.values()], artifacts }
 }
 
+/** The one Thing near `pos` of the same kind as a sighting labelled `label`, or null when there is none or several. */
 function uniqueCandidate(things: Thing[], label: string, pos: Vec3): Thing | null {
-  const candidates = things.filter(thing =>
-    thing.canonicalLabel === label && distance(thing.position, pos) <= THING_MATCH_RADIUS_M
-  )
+  const candidates = thingCandidates(things, label, pos)
   return candidates.length === 1 ? candidates[0] : null
 }
 
