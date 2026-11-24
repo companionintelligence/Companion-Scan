@@ -31,8 +31,7 @@
 import { Document, type mat4, type Node as GltfNode, NodeIO, type Scene } from '@gltf-transform/core'
 import { ALL_EXTENSIONS, KHRDracoMeshCompression } from '@gltf-transform/extensions'
 import { mergeDocuments, prune, unpartition } from '@gltf-transform/functions'
-// @ts-ignore — draco3dgltf ships no type declarations (pipeline.ts does the same)
-import draco3d from 'draco3dgltf'
+import { getGltfReadIO } from './pipeline.ts'
 import type { ScanManifest, Thing, ThingObservation, Vec3, WorldProject } from '../src/world/types.ts'
 
 export interface WorldExportResult {
@@ -55,24 +54,17 @@ export interface ComposeWorldExportOptions {
 
 const IDENTITY_MATRIX: mat4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 
-let readIoPromise: Promise<NodeIO> | null = null
-
 /**
  * Reads one scan GLB as it is stored on disk.
  *
  * The optimizer's output is quantized and Draco-compressed (pipeline.ts), so
  * the decoder must be registered, and so must every extension: glTF-Transform
- * silently drops an extension the IO has not registered, at read time. This
- * is the same setup panoptic_lift.ts uses for its read-only GLB access.
+ * silently drops an extension the IO has not registered, at read time. The
+ * IO is the one read-only setup every stage shares (getGltfReadIO,
+ * server/pipeline.ts), as panoptic_lift.ts uses it.
  */
 export function readScanGlb(bytes: Uint8Array): Promise<Document> {
-  readIoPromise ??= (async () => {
-    const decoder = await draco3d.createDecoderModule({})
-    return new NodeIO()
-      .registerExtensions(ALL_EXTENSIONS)
-      .registerDependencies({ 'draco3d.decoder': decoder })
-  })()
-  return readIoPromise.then((io) => io.readBinary(bytes))
+  return getGltfReadIO().then((io) => io.readBinary(bytes))
 }
 
 /**
