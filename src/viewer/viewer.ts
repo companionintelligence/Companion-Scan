@@ -2655,6 +2655,11 @@ function setLingBotPathVisible(visible: boolean): void {
 
 /** The scan the Floor plan section describes, so a switch to another scan clears it before that scan's read. */
 let floorPlanPanelScanId: string | null = null
+/**
+ * Counts the section's reads, so only the latest one is shown. A finished job's refresh can start after a selection's
+ * and land before it, and a pick in the scene changes the selected scan without starting a read at all.
+ */
+let floorPlanReads = 0
 
 /**
  * The Floor plan section for the selected scan: the manifest's numbers, the drawing as a preview, and the two
@@ -2667,6 +2672,7 @@ async function refreshFloorPlanPanel(scanId: string): Promise<void> {
   const scan = world?.scans.find(s => s.scanId === scanId)
   if (!scan) {
     floorPlanPanelScanId = null
+    floorPlanReads++
     status.textContent = scanPanelIdleText.get('floor-plan-status') ?? ''
     setText('floor-plan-stats', '')
     showFloorPlanFiles(null)
@@ -2680,11 +2686,12 @@ async function refreshFloorPlanPanel(scanId: string): Promise<void> {
     showFloorPlanFiles(null)
   }
   const gen = worldGen
+  const readNumber = ++floorPlanReads
   // Revalidated rather than taken from the copy the route lets a browser keep for five minutes: this runs again when a
   // floor-plan job finishes, and must show that run.
   const read = await readFloorPlanManifest(scan, (url) => fetch(withAccessToken(url), { cache: 'no-cache' }))
-  // A later selection, or a Place switch, may have superseded this read.
-  if (gen !== worldGen || selectedScanId !== scanId) return
+  // A later read, or a Place switch, has superseded this one.
+  if (gen !== worldGen || readNumber !== floorPlanReads) return
   const view = floorPlanPanelView(read)
   status.textContent = view.status
   setText('floor-plan-stats', view.stats)

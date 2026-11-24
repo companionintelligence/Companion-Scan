@@ -52,7 +52,7 @@ async function queue(server: RunningServer, body: Record<string, unknown>): Prom
   const reply = await server.post('/worlds/default/jobs', body)
   assertEquals(reply.status, 202, `POST /worlds/default/jobs ${JSON.stringify(body)}\n${server.log()}`)
   const job = reply.json<WorldJob>()
-  assertEquals(job.type, 'floor-plan')
+  assertEquals(job.type, body.type)
   return job
 }
 
@@ -160,4 +160,93 @@ Deno.test('the floor-plan job on the server: queued, run, skipped or drawn, serv
   } finally {
     await server.stop()
   }
+})
+
+/**
+ * Stands in for LINGBOT_MAP_PYTHON, as the stand-in in wp-runners-signal-pump.test.ts does. Run as LingBot-Map's worker
+ * it leaves a prepared reconstruction in the session (a box room and two cameras a unit apart, so the run's quality
+ * verdict passes); run as the floor-plan worker it writes a small plan where it is told to. Anything else is refused.
+ */
+function interpreterStub(fixtureDir: string): string {
+  return `#!/bin/sh
+case "$1" in
+  *lingbot_map_worker.py)
+    while [ $# -gt 0 ]; do
+      if [ "$1" = "--session-dir" ]; then dir="$2"; fi
+      shift
+    done
+    cp "${fixtureDir}/lingbot-map.point-cloud.ply" "${fixtureDir}/lingbot-map.poses.json" "$dir/"
+    printf '{"schemaVersion":1,"tool":"lingbot-map","status":"ok","frameCount":2}' > "$dir/lingbot-map.manifest.json"
+    ;;
+  *floor_plan_worker.py)
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --out-json) json="$2" ;;
+        --out-svg) svg="$2" ;;
+      esac
+      shift
+    done
+    printf '{"areaM2":12,"ceilingHeightM":2.5,"walls":[{},{},{},{}],"rooms":[{}],"disclaimer":"stand-in"}' > "$json"
+    printf '<svg xmlns="http://www.w3.org/2000/svg"></svg>' > "$svg"
+    ;;
+  *) exit 64 ;;
+esac
+`
+}
+
+const IDENTITY_4 = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+/** World-to-camera (OpenCV), as LingBot-Map writes it: this camera's centre is one unit along x. */
+const MOVED_4 = [[1, 0, 0, -1], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+
+Deno.test({
+  name: 'a LingBot-Map run that succeeds queues a floor plan on the same interpreter, and FLOORPLAN_AUTO=0 stops that',
+  ignore: Deno.build.os === 'windows',
+  fn: async (t) => {
+    const tools = await Deno.makeTempDir({ prefix: 'floor-plan-chain-' })
+    try {
+      await writeBoxRoomPly(`${tools}/lingbot-map.point-cloud.ply`)
+      await Deno.writeTextFile(`${tools}/lingbot-map.poses.json`, JSON.stringify({
+        frames: [{ file: 'kf-00000.jpg', cameraToWorld: IDENTITY_4 }, { file: 'kf-00001.jpg', cameraToWorld: MOVED_4 }],
+      }))
+      const stub = `${tools}/python`
+      await Deno.writeTextFile(stub, interpreterStub(tools))
+      await Deno.chmod(stub, 0o755)
+
+      for (const auto of ['1', '0']) {
+        await t.step(`FLOORPLAN_AUTO=${auto}`, async () => {
+          const server = await startServer({ LINGBOT_MAP_PYTHON: stub, FLOORPLAN_AUTO: auto }, async ({ scansDir, sessionsDir }) => {
+            const session = await storeScan(scansDir, sessionsDir, ROOM_BASE, ROOM_SESSION)
+            await Deno.writeTextFile(`${session}/keyframes.jsonl`, `${JSON.stringify({ index: 0, file: 'kf-00000.jpg' })}\n`)
+          })
+          const why = (what: string) => `${what}\n${server.log()}`
+          try {
+            const reconstruct = await queue(server, { type: 'lingbot-map-reconstruct', scanId: scanIdFor(`${ROOM_BASE}.glb`) })
+            const done = await settled(server, reconstruct.jobId)
+            assertEquals(done.status, 'completed', why(`reconstruct: ${done.error ?? done.result}`))
+            // The chain is written in the same commit as that completion, so it is in the list now or never.
+            const chained = (await server.get('/worlds/default/jobs')).json<WorldJob[]>().filter((job) => job.type === 'floor-plan')
+            if (auto === '0') {
+              assertEquals(chained.length, 0, 'FLOORPLAN_AUTO=0 queues no floor plan')
+              return
+            }
+            assertEquals(chained.length, 1, why('one floor plan follows the reconstruction'))
+            const job = chained[0]!
+            assertEquals(job.scanId, scanIdFor(`${ROOM_BASE}.glb`))
+            assertEquals(job.payload?.['source'], 'auto-chain')
+            assertEquals(job.payload?.['reconstructJobId'], reconstruct.jobId)
+            const plan = await settled(server, job.jobId)
+            assertEquals(plan.status, 'completed', why(`floor plan: ${plan.error ?? plan.result}`))
+            assert(plan.artifacts?.some((a) => a.type === 'floor-plan'), 'it ran on the same interpreter and drew a plan')
+            const manifest = (await server.get(`/scans/${ROOM_BASE}.floor-plan.manifest.json`)).json<{ status: string; disclaimer?: string }>()
+            assertEquals(manifest.status, 'ok')
+            assertEquals(manifest.disclaimer, 'stand-in', 'the plan is the one the stand-in wrote')
+          } finally {
+            await server.stop()
+          }
+        })
+      }
+    } finally {
+      await Deno.remove(tools, { recursive: true })
+    }
+  },
 })
