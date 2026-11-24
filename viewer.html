@@ -615,6 +615,19 @@
       .layer-tool-name { display:block; color:var(--ci-paper); font-size:12px; font-weight:800; }
       .layer-tool-hint { display:block; margin-top:2px; color:var(--ci-muted); font-size:10px; line-height:1.35; }
       .layer-tool-body { padding:0 12px 12px; border-top:1px solid rgba(255,255,255,.07); }
+      /* Place location and heading (src/viewer/georeference-panel.ts) */
+      .georef-body { display:grid; gap:8px; padding-top:10px; }
+      .georef-body .catalogue-field .ci-input { min-height:34px; }
+      .georef-body [hidden] { display:none; }
+      #georef-claim { color:var(--ci-paper); }
+      #georef-earlier-frame, #georef-replaces-confirmed, #georef-old-scans { color:#ffb74d; }
+      #georef-message[data-tone="error"] { color:#ff8a80; }
+      .georef-actions { display:grid; gap:6px; }
+      /* The mirrored-placement flag of an older world, beside the location readout */
+      /* The HUD lets clicks through to the canvas, so the flag takes its own, or its button is out of reach. */
+      #placement-flag { pointer-events:auto; display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px; padding:6px 8px; font-size:10px; color:#ffb74d; background:rgba(0,0,0,0.55); border:1px solid rgba(255,183,77,0.35); border-radius:8px; }
+      #placement-flag[hidden] { display:none; }
+      #placement-flag .hud-btn { min-height:28px; font-size:10px; }
       #sensenova-section .job-btn { min-height:40px; font-size:11px; }
 
       /* Map-quality headline: tier stepper + processing line */
@@ -2591,6 +2604,30 @@
                 <div id="register-proposals"></div>
               </div>
 
+              <details class="layer-tool" id="georeference-section">
+                <summary><span><span class="layer-tool-name">Place location and heading</span><span class="layer-tool-hint">Where this Place is on the map, and which way it faces.</span></span></summary>
+                <div class="layer-tool-body georef-body">
+                  <div id="georef-status" class="layer-meta" aria-live="polite"></div>
+                  <div id="georef-earlier-frame" class="layer-meta" hidden></div>
+                  <label class="catalogue-field"><span>Latitude</span><input class="ci-input" id="georef-lat" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" /></label>
+                  <label class="catalogue-field"><span>Longitude</span><input class="ci-input" id="georef-lng" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" /></label>
+                  <label class="catalogue-field"><span>Heading, degrees from true north</span><input class="ci-input" id="georef-heading" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-describedby="georef-heading-help" /></label>
+                  <div id="georef-heading-help" class="layer-meta">Which way the Place's forward axis points: from its first marker toward its second.</div>
+                  <label class="catalogue-field"><span>Location accuracy, metres</span><input class="ci-input" id="georef-origin-accuracy" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" /></label>
+                  <label class="catalogue-field"><span>Heading accuracy, degrees</span><input class="ci-input" id="georef-heading-accuracy" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" /></label>
+                  <div id="georef-claim" class="layer-meta" aria-live="polite"></div>
+                  <button id="georef-estimate" class="job-btn" type="button" disabled>No scans have a compass estimate yet</button>
+                  <div id="georef-estimate-note" class="layer-meta" hidden></div>
+                  <div id="georef-replaces-confirmed" class="layer-meta" hidden></div>
+                  <div id="georef-old-scans" class="layer-meta" hidden></div>
+                  <div class="georef-actions">
+                    <button id="georef-save" class="job-btn" type="button">Save as approximate</button>
+                    <button id="georef-confirm" class="job-btn" type="button">Confirm location and heading</button>
+                  </div>
+                  <div id="georef-message" class="layer-meta" aria-live="polite"></div>
+                </div>
+              </details>
+
               <details class="layer-tool">
                 <summary><span><span class="layer-tool-name">Advanced queue</span><span class="layer-tool-hint">Run an individual job when you need a specific artifact.</span></span></summary>
                 <div class="layer-tool-body">
@@ -2984,6 +3021,7 @@
               <button id="btn-measure" class="hud-icon-btn" type="button" title="Measure distance in the scene" aria-label="Measure distance in the scene"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="1.8" y="8.4" width="20.4" height="7.2" rx="1.2" transform="rotate(-45 12 12)"/><path d="m9.2 7.8 1.6 1.6M12 5l1.6 1.6M14.8 2.2l1.6 1.6M6.4 10.6 8 12.2"/></svg></button>
             </div>
             <div id="coord-readout">World: --</div>
+            <div id="placement-flag" hidden></div>
           </div>
 
           <!-- Floating object inspector -->

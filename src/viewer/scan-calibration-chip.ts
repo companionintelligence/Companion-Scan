@@ -87,6 +87,7 @@ import { isIsoDateTime } from '../shared/iso-time.ts'
 import { NOT_CHECKED_SPOTS, formatCm, keptUnfittedPoints, residualsPastGates, unitsLimit, wholeCentimetres } from '../world/frame-fit.ts'
 import { isInPlaceFrame } from '../world/frame-generations.ts'
 import type { ProjectSpatialFrame, ScanManifest } from '../world/types.ts'
+import { placementNote } from './placement-note.ts'
 
 /** The calibration fields of a `ScanManifest` the chip reads. */
 export type ChipScan = Pick<
@@ -97,6 +98,10 @@ export type ChipScan = Pick<
   | 'calibrationToleranceM'
   | 'calibratedAt'
   | 'qualitySummary'
+  // How the scan was placed (src/viewer/placement-note.ts).
+  | 'placementSource'
+  | 'placementUncertaintyM'
+  | 'placementStale'
 > & Partial<Pick<ScanManifest, 'calibrationCheckedBy' | 'calibrationFitPointsUsed' | 'calibrationFitRmsM' | 'calibrationFitMaxM' | 'scaleKind' | 'calibrationOutsidePlaceFrame'>>
 
 export interface ScanCalibrationChip {
@@ -370,6 +375,7 @@ export function scanMetaMarkup(
   capturedLabel: string,
   placeMethod: ProjectSpatialFrame['method'] | null | undefined,
   escape: (text: string) => string,
+  placedByHand = false,
 ): string {
   const chip = scanCalibrationChip(scan, placeMethod)
   const line = (text: string, tone: ScanCalibrationChip['tone'], title?: string): string =>
@@ -379,14 +385,21 @@ export function scanMetaMarkup(
   const trackingLines = tracking
     ? [tracking.line ? line(tracking.line, 'warn', tracking.title) : '', tracking.note ? line(tracking.note, 'warn', tracking.title) : '']
     : []
+  // How the scan was placed: it takes the GPS accuracy's place on a scan with no calibration, and goes beside a calibrated scan's chip.
+  const placement = placementNote(scan, { placedByHand })
+  const placementLines = placement
+    ? [placement.note ? line(placement.note, 'plain', placement.title) : '', placement.staleLine ? line(placement.staleLine, 'warn', placement.title) : '']
+    : []
   if (!chip) {
-    const accuracy = scan.accuracyM != null ? `accuracy ${scan.accuracyM.toFixed(1)}m` : 'manual align'
-    return [`<div class="scan-meta">${escape(capturedLabel)} · ${escape(accuracy)}</div>`, ...trackingLines].join('')
+    const accuracy = placement?.text ?? (scan.accuracyM != null ? `accuracy ${scan.accuracyM.toFixed(1)}m` : 'manual align')
+    return [`<div class="scan-meta"${placement?.text ? ` title="${escape(placement.title)}"` : ''}>${escape(capturedLabel)} · ${escape(accuracy)}</div>`, ...placementLines, ...trackingLines].join('')
   }
   return [
     `<div class="scan-meta" title="${escape(chip.title)}">${escape(capturedLabel)} · ${escape(chip.text)}</div>`,
     chip.note ? line(chip.note, chip.tone) : '',
     chip.frameWarning ? line(chip.frameWarning, 'warn') : '',
+    placement?.text ? line(placement.text, 'plain', placement.title) : '',
+    ...placementLines,
     ...trackingLines,
   ].join('')
 }
@@ -400,12 +413,13 @@ export function scanMetaHtmlFor(
   scan: ChipScan & Pick<ScanManifest, 'accuracyM' | 'capturedAt'>,
   placeMethod: ProjectSpatialFrame['method'] | null | undefined,
   escape: (text: string) => string,
+  placedByHand = false,
 ): string {
   const captured = scan.capturedAt ? new Date(scan.capturedAt) : null
   const capturedLabel = captured && !Number.isNaN(captured.getTime())
     ? captured.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     : 'Unknown date'
-  return scanMetaMarkup(scan, capturedLabel, placeMethod, escape)
+  return scanMetaMarkup(scan, capturedLabel, placeMethod, escape, placedByHand)
 }
 
 /**
@@ -419,9 +433,10 @@ export function redrawScanMeta(
   blockFor: (scanId: string) => { innerHTML: string } | null | undefined,
   placeMethod: ProjectSpatialFrame['method'] | null | undefined,
   escape: (text: string) => string,
+  placedByHand: (scan: ChipScan & Pick<ScanManifest, 'scanId' | 'accuracyM' | 'capturedAt'>) => boolean = () => false,
 ): void {
   for (const scan of scans) {
     const block = blockFor(scan.scanId)
-    if (block) block.innerHTML = scanMetaHtmlFor(scan, placeMethod, escape)
+    if (block) block.innerHTML = scanMetaHtmlFor(scan, placeMethod, escape, placedByHand(scan))
   }
 }

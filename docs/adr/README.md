@@ -27,3 +27,4 @@ shape future work, promote it to an ADR and link back to the issue.
 - [0011. A Place's frame is replaced by a new generation, never edited](0011-frame-generations.md) — Proposed
 - [0012. The iOS shell draws its native AR view with RealityKit](0012-the-ios-shell-draws-its-native-ar-view-with-realitykit.md) — Accepted
 - [0013. The Quest app is a native Spatial SDK app that feeds the same server](0013-the-quest-app-is-a-native-spatial-sdk-app-that-feeds-the-same-server.md) — Accepted
+- [0015. The scene is right-handed (x east, y up, z south), and a Place has one georeference](0015-scene-convention-and-georeference.md) — Proposed

@@ -10,7 +10,29 @@
  *     thing-correspondence job), with extras
  *     `{ tagId, thingId, label, observationCount, scanIds }`.
  *   - scene extras `{ worldId, frame: 'place', exportedAt, scanCount,
- *     thingCount, missingScans }`.
+ *     thingCount, missingScans, axes, georeference }`. `georeference` is where
+ *     the Place is on Earth (src/world/georef.ts `georeferenceBlock`: the origin,
+ *     the TRUE bearing of the Place frame's +Z, how sure each is, who set it and
+ *     whether a person confirmed it, and the convention in words) or an explicit
+ *     `null`: a Place with no georeference says so, and a consumer must not read
+ *     its coordinates as geographic. `axes` is what the world declares its scene
+ *     axes to be: `z: 'south'` is the right-handed scene of ADR 0015 (scene =
+ *     east, up, -north), and `z: 'north'` is an older world whose GPS-placed scans
+ *     are mirrored. The matrices above are in these axes, in metres from the
+ *     origin, never in latitude and longitude (a glTF position is a float32).
+ *   - each scan node's extras say how the scan was placed, when the world does
+ *     (`placementSource`: `'georeference'` is carried by the Place's georeference and
+ *     is as sure as its `placementUncertaintyM`; `'place-frame'` has a place in the
+ *     Place and none on Earth; `'gps-compass'` and `'grid'` are not in the Place frame,
+ *     and a grid slot is not a position at all), `placementStale` when the Place's
+ *     location changed after a person moved the scan, and `placedByHand` when a
+ *     person placed it, whatever put it there before. The scene's `georeference`
+ *     describes the Place frame: without these a reader cannot tell a scan it carries
+ *     from one that stands beside it.
+ *   - with `includeGeoPose` (off by default, an export asks for it) the scene
+ *     extras also carry `geopose`: the Place's origin and heading as an OGC
+ *     GeoPose Basic-Quaternion, with its accuracy and provenance beside it
+ *     (`toGeoPoseBasicQuaternion`).
  *
  * A scan whose GLB is not supplied is never dropped silently: its scanId is
  * listed in `missingScans`, written to the scene extras, and warned about.
@@ -32,7 +54,9 @@ import { Document, type mat4, type Node as GltfNode, NodeIO, type Scene } from '
 import { ALL_EXTENSIONS, KHRDracoMeshCompression } from '@gltf-transform/extensions'
 import { mergeDocuments, prune, unpartition } from '@gltf-transform/functions'
 import { getGltfReadIO } from './pipeline.ts'
-import type { ScanManifest, Thing, ThingObservation, Vec3, WorldProject } from '../src/world/types.ts'
+import { georeferenceBlock, placeGeorefVersion, toGeoPoseBasicQuaternion } from '../src/world/georef.ts'
+import { isHandPlaced } from '../src/world/scan-hand-placement.ts'
+import type { EditPatch, ScanManifest, Thing, ThingObservation, Vec3, WorldProject } from '../src/world/types.ts'
 
 export interface WorldExportResult {
   /** The `.world.glb` file contents. */
@@ -50,9 +74,26 @@ export interface WorldExportResult {
 export interface ComposeWorldExportOptions {
   /** The one timestamp shared by the whole export. Defaults to now. */
   exportedAt?: string
+  /**
+   * Also write the Place's georeference as an OGC GeoPose (Basic-Quaternion) in the scene extras. Off unless asked: an export job
+   * asks with `payload.includeGeoPose`. Ignored for a Place with no georeference, which has no pose to give.
+   */
+  includeGeoPose?: boolean
 }
 
 const IDENTITY_MATRIX: mat4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+
+/** What a scan node says of how it was placed: only what the world knows, so a world from before placements were recorded writes none of it. */
+function placementExtras(scan: ScanManifest, patches: readonly EditPatch[]): Record<string, unknown> {
+  const extras: Record<string, unknown> = {}
+  if (scan.placementSource !== undefined) {
+    extras['placementSource'] = scan.placementSource
+    extras['placementUncertaintyM'] = scan.placementUncertaintyM ?? null
+  }
+  if (scan.placementStale === true) extras['placementStale'] = true
+  if (isHandPlaced(patches, scan)) extras['placedByHand'] = true
+  return extras
+}
 
 /**
  * Reads one scan GLB as it is stored on disk.
@@ -102,6 +143,7 @@ export async function composeWorldExport(
         sessionId: scan.sessionId,
         filename: scan.filename,
         capturedAt: scan.capturedAt,
+        ...placementExtras(scan, world.editPatches ?? []),
       })
     scene.addChild(root)
     attachScanGeometry(doc, root, source, label, warnings)
@@ -148,6 +190,9 @@ export async function composeWorldExport(
     scanCount,
     thingCount,
     missingScans,
+    axes: world.localFrame?.axes ?? null,
+    georeference: georeferenceBlock(world.georeference, placeGeorefVersion(world)),
+    ...(options.includeGeoPose && world.georeference ? { geopose: toGeoPoseBasicQuaternion(world.georeference) } : {}),
   })
 
   // mergeDocuments copies every node of a source, including any that no scene

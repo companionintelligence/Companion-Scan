@@ -260,7 +260,10 @@ import {
   placeScanTransform,
   scanProjectId,
   shouldIncludeStoredScanInWorld,
+  WORLD_SCAN_MAX_RADIUS_M,
 } from './world/world_membership.ts'
+import * as worldOrigin from './world/world_origin.ts'
+import { registerGeoreferenceRoutes } from './world/georef_routes.ts'
 import { runThingCorrespondence, scanTakesPartInThingMatching, scansLeftOutNote, thingLikesForScan, type DetectionLike } from './thing_match.ts'
 import { tallyScansByFrame } from './place_frames.ts'
 import { createPlaceMoves } from './place_moves.ts'
@@ -2772,14 +2775,6 @@ function shouldIncludeInWorld(scan: StoredScanInfo): boolean {
     || asNumber(scan.meta['detectionCount']) !== null
 }
 
-function inferWorldOrigin(scans: StoredScanInfo[]): GeoPose {
-  for (const scan of scans) {
-    const geo = geoPoseFromMeta(scan.meta)
-    if (hasGeoPose(geo)) return geo
-  }
-  return { lat: null, lng: null, altitudeM: null, bearing: null, accuracyM: null }
-}
-
 function scanNameFor(filename: string, meta: Record<string, unknown>): string {
   return asString(meta['scanName']) ?? filename.replace(/^\d+_/, '').replace(/\.glb$/, '')
 }
@@ -2789,15 +2784,20 @@ function scanManifestFromStored(
   origin: GeoPose,
   index: number,
   slug: string,
+  // How the world places a scan (server/world/world_origin.ts). Absent, the scan is placed as it always was.
+  worldPlacement?: worldOrigin.WorldPlacementContext,
 ): ScanManifest {
   const geoPose = geoPoseFromMeta(scan.meta)
   const scanId = scanIdFor(scan.filename)
   const qualitySummary = qualitySummaryFromMeta(scan.meta)
   const placement = placeScanTransform(origin, geoPose, index)
   const translation = placement.translation
+  const projectTransform = matrixFromMeta(scan.meta['projectTransform'])
+  // A world that declares the right-handed scene places by ADR 0015; a world that declares z north is placed as it always was.
+  const put = worldOrigin.placeStoredScan(worldPlacement, scan.meta, geoPose, projectTransform, placement, index)
   // Project calibration is an indoor transform derived from persistent AR
   // references. It takes precedence over metre-scale-inaccurate GPS/compass.
-  const localToWorld = matrixFromMeta(scan.meta['projectTransform'])
+  const localToWorld = put.matrix ?? projectTransform
     ?? composeYUpTransform(translation, geoPose.bearing, 1)
 
   return {
@@ -2812,8 +2812,9 @@ function scanManifestFromStored(
     geoPose,
     localToWorld,
     accuracyM: geoPose.accuracyM,
-    geoDistanceM: placement.geoDistanceM,
-    ...(placement.geoOutlier ? { geoOutlier: true } : {}),
+    geoDistanceM: put.geoDistanceM,
+    ...(put.geoOutlier ? { geoOutlier: true } : {}),
+    ...put.stamps,
     // Already written into the upload sidecar (src/export/gltf.ts); surfaced here so
     // the editor can tell whether this scan's local origin is a real marked physical
     // point worth rendering an anchor for, vs. just wherever AR tracking booted, and
@@ -2896,7 +2897,7 @@ function registerSessionScan(
   void writeJsonAtomic(scanMetaPath(filename), meta).catch((err) => {
     console.error(`[worlds] failed to persist ingest metadata for ${filename}:`, err)
   })
-  const manifest = scanManifestFromStored(stored, world.originGeoPose, world.scans.length, world.shareSlug)
+  const manifest = scanManifestFromStored(stored, world.originGeoPose, world.scans.length, world.shareSlug, worldPlacing.context(world, worldOrigin.placeFactsFromWorld(world)))
   // A session-backed scan has no geometry yet: `<sessionId>.glb` is synthetic and only
   // becomes a real file if a reconstruction job later writes one. Saying `ready` here
   // claims something that has not happened — and when reconstruction is skipped (no
@@ -2959,6 +2960,15 @@ async function writeWorldUnlocked(world: WorldProject): Promise<void> {
   }
 }
 
+/** Placement in a Place's world (server/world/world_origin.ts), closed over what this file owns. */
+const worldPlacing = worldOrigin.createWorldPlacing({
+  loadProjects,
+  warn: (message) => console.warn(message),
+  maxRadiusM: WORLD_SCAN_MAX_RADIUS_M,
+  geoPoseFor: geoPoseFromMeta,
+  matrixFor: matrixFromMeta,
+})
+
 async function synthesizeWorld(slug: string, projectId: string | null = null): Promise<WorldProject> {
   const stored = await listStoredScans()
   const included = stored
@@ -2967,11 +2977,12 @@ async function synthesizeWorld(slug: string, projectId: string | null = null): P
   // The legacy default world can offer a few stored scans before any project
   // exists. A named project must never borrow scans from another project.
   const source = included.length > 0 || projectId !== null ? included : stored.slice(0, 8)
-  const originGeoPose = inferWorldOrigin(source)
   const now = new Date().toISOString()
-  const projectName = projectId === null
-    ? null
-    : (await loadProjects()).find(project => project.projectId === projectId)?.name ?? null
+  const project = projectId === null ? null : (await loadProjects()).find(item => item.projectId === projectId) ?? null
+  const projectName = project?.name ?? null
+  const place = worldPlacing.factsOfProject(project)
+  // A new world is the right-handed scene (ADR 0015): its origin is the Place's georeference, else its best located scan.
+  const originGeoPose = worldOrigin.worldOriginOrNone(worldOrigin.resolveWorldOrigin(place.georeference, source.map(scan => ({ geoPose: geoPoseFromMeta(scan.meta) }))))
   const world: WorldProject = {
     worldId: `world-${safeSlug(slug)}`,
     name: projectName ?? (slug === 'default' ? 'Default World Scan' : slug.replace(/-/g, ' ')),
@@ -2982,9 +2993,10 @@ async function synthesizeWorld(slug: string, projectId: string | null = null): P
       type: 'ENU_Y_UP',
       origin: originGeoPose,
       units: 'meters',
-      axes: { x: 'east', y: 'up', z: 'north' },
+      axes: { x: 'east', y: 'up', z: 'south' },
     },
-    scans: source.map((scan, i) => scanManifestFromStored(scan, originGeoPose, i, slug)),
+    ...(place.georeference ? { georeference: place.georeference, georefVersion: place.georefVersion } : {}),
+    scans: [],
     things: [],
     thingObservations: [],
     members: createWorldMembers(),
@@ -2994,6 +3006,8 @@ async function synthesizeWorld(slug: string, projectId: string | null = null): P
     createdAt: now,
     updatedAt: now,
   }
+  const placing = worldPlacing.context(world, place)
+  world.scans = source.map((scan, i) => scanManifestFromStored(scan, originGeoPose, i, slug, placing))
   // Every row here was just built from its sidecar, so it is at the placement the sidecar gives: stamp it, so the first read of a new world can already reset.
   stampFirstSightPlacements(world, () => undefined)
   await writeWorldUnlocked(world)
@@ -3107,8 +3121,11 @@ async function removeAllScansFromWorlds(): Promise<number> {
     if (hadScans) {
       world.editPatches = world.editPatches.filter(patch => patch.scope === 'world')
       world.comments = []
-      world.originGeoPose = { lat: null, lng: null, altitudeM: null, bearing: null, accuracyM: null }
-      world.localFrame.origin = world.originGeoPose
+      // A georeferenced world's origin is the Place's georeference, which deleting scans does not touch: it stays.
+      if (!world.georeference) {
+        world.originGeoPose = { lat: null, lng: null, altitudeM: null, bearing: null, accuracyM: null }
+        world.localFrame.origin = world.originGeoPose
+      }
     } else {
       // A world with no row left (one every scan was moved out of, or one they were moved into before their rows were built) is
       // not a world that held scans, and what it keeps of its own (a note on the whole Place, a Thing's relabel) stays. What it
@@ -3255,6 +3272,11 @@ async function refreshWorldScans(world: WorldProject): Promise<void> {
   const stored = await listStoredScans()
   const storedByFilename = new Map(stored.map(scan => [scan.filename, scan]))
   const existingScanFilenames = new Set(world.scans.map(scan => scan.filename))
+  // The Place's georeference and what a world does with it (server/world/world_origin.ts). When the registry cannot be read this
+  // moment the world's own copy stands and nothing is placed again.
+  const loadedPlace = await worldPlacing.factsOfWorld(world)
+  const place = loadedPlace ?? worldOrigin.placeFactsFromWorld(world)
+  const placement = worldPlacing.host((filename) => storedByFilename.get(filename)?.meta)
 
   // Reconcile against disk: a scan whose .glb has gone (deleted out of band, or a
   // storage reset that never reached this manifest) must not survive here — the
@@ -3308,6 +3330,10 @@ async function refreshWorldScans(world: WorldProject): Promise<void> {
   // none to hand it to, dropped, so those references do not outlive the scan row they describe.
   const evicted: EvictedScan[] = []
 
+  // A new georeference version places the scans no live move holds again, and flags those a person moved (it never moves them).
+  if (loadedPlace && worldOrigin.applyPlaceGeoreference(world, place, placement)) changed = true
+  const placing = worldPlacing.context(world, place)
+
   world.scans = world.scans.map((scan, index) => {
     const storedScan = storedByFilename.get(scan.filename)
     if (!storedScan) {
@@ -3335,7 +3361,7 @@ async function refreshWorldScans(world: WorldProject): Promise<void> {
       evicted.push({ scan, toProjectId: scanProjectId(storedScan.meta), placedByRecord: matrixFromMeta(storedScan.meta['projectTransform']) !== null })
       return null
     }
-    const next = scanManifestFromStored(storedScan, world.originGeoPose, index, world.shareSlug)
+    const next = scanManifestFromStored(storedScan, world.originGeoPose, index, world.shareSlug, placing)
     if (next.scanId !== scan.scanId && scansByCurrentId.get(scan.scanId) === 1) {
       // Repoint references live, the same self-heal this function already
       // does for the scan row itself (below) — otherwise the id moves out
@@ -3374,7 +3400,7 @@ async function refreshWorldScans(world: WorldProject): Promise<void> {
       || scan.frameSetUrl !== next.frameSetUrl
       || JSON.stringify(scan.qualitySummary ?? null) !== JSON.stringify(next.qualitySummary ?? null)
       || JSON.stringify(scan.layerIndex) !== JSON.stringify(next.layerIndex)
-    return { ...scan, ...next, status: nextStatus, localToWorld: scan.localToWorld, name: scan.name || next.name }
+    return worldOrigin.withStoredPlacementStamps({ ...scan, ...next, status: nextStatus, localToWorld: scan.localToWorld, name: scan.name || next.name }, scan)
   }).filter((scan): scan is ScanManifest => scan !== null)
 
   // A scan whose hand-over could not be done now stays in this world, and is handed over later (server/world/world_hand_over.ts).
@@ -3390,15 +3416,22 @@ async function refreshWorldScans(world: WorldProject): Promise<void> {
     .filter(scan => !existing.has(scan.filename))
     .slice(0, 12)
 
-  if (additions.length > 0) {
+  // With the Place unread, a scan is not added: placing a calibrated one needs the frame's method, and it is added on the next read.
+  if (additions.length > 0 && loadedPlace) {
+    // A world of the scene that never had an origin takes the one its scans give; nothing it holds has a fix to move by.
+    if (worldOrigin.originIfMissing(world, place, [...world.scans, ...additions.map(scan => ({ geoPose: geoPoseFromMeta(scan.meta) }))])) changed = true
     const origin = world.originGeoPose
     const nextIndex = world.scans.length
-    world.scans.push(...additions.map((scan, i) => scanManifestFromStored(scan, origin, nextIndex + i, world.shareSlug)))
+    const adding = worldPlacing.context(world, place)
+    world.scans.push(...additions.map((scan, i) => scanManifestFromStored(scan, origin, nextIndex + i, world.shareSlug, adding)))
   }
+  if (loadedPlace && worldOrigin.settleWorldPlacementStamps(world, place, placement)) changed = true
 
   // First placement of every scan, stored once and never overwritten (calibratedLocalToWorld). Runs on every read
   // and ahead of any patch, because updateWorld reads before it mutates, so a scan is stamped before its first move.
-  if (stampFirstSightPlacements(world, (filename) => storedByFilename.get(filename)?.meta['projectTransform'])) changed = true
+  // What a calibration puts a scan at is where the Place's georeference carries it, so that is what a reset returns to.
+  const calibrating = worldPlacing.context(world, place)
+  if (stampFirstSightPlacements(world, (filename) => worldOrigin.calibratedPlacement(worldOrigin.placementFactsFor(placement, filename), calibrating))) changed = true
 
   warnOnScanIdCollision(world)
 
@@ -4187,7 +4220,9 @@ async function _runExportWorldJob(slug: string, jobId: string, signal?: AbortSig
       }
     }
 
-    const exported = await composeWorldExport(world, scanGlbs)
+    // A GeoPose in the export is off unless the job asks for it (payload.includeGeoPose).
+    const includeGeoPose = world.jobs.find(candidate => candidate.jobId === jobId)?.payload?.['includeGeoPose'] === true
+    const exported = await composeWorldExport(world, scanGlbs, { includeGeoPose })
     stopIfOverdue(signal)
     const path = worldExportPath(slug)
     const tmp = `${path}.${crypto.randomUUID()}.tmp`
@@ -5381,7 +5416,13 @@ async function _runMemoryPushJob(slug: string, jobId: string, signal?: AbortSign
       return
     }
 
-    const pushed = await pushScanToMemory(memoryPushCfg, scan, { scansDir: SCANS_DIR, signal })
+    // Where the Place is on Earth, as the world holds it: it goes into the event's spatial_frame (null when the Place has no georeference).
+    const placed = await loadWorld(slug)
+    const pushed = await pushScanToMemory(memoryPushCfg, scan, {
+      scansDir: SCANS_DIR,
+      signal,
+      place: { georeference: placed.georeference ?? null, georefVersion: placed.georefVersion ?? 0 },
+    })
 
     await commitWorldJob(slug, jobId, (currentJob) => {
       currentJob.progress = 1
@@ -6932,6 +6973,16 @@ app.put('/projects/:id/spatial-frame', async (c) => {
   if (!parsed) return c.json({ error: 'Invalid JSON' }, 400)
   const reply = await mutateProjects((projects) => applySpatialFrameWrite(projects, c.req.param('id'), parsed, Date.now()))
   return c.json(reply.body, reply.status)
+})
+
+// The Place georeference routes (ADR 0015): behind the `/projects` guard above, like the frame route.
+registerGeoreferenceRoutes(app, {
+  readTextCapped,
+  maxBodyBytes: PLACE_JSON_MAX_BYTES,
+  mutateProjects,
+  loadProjects,
+  scansOfPlace: async (projectId) => (await listStoredScans()).filter(scan => scanProjectId(scan.meta) === projectId),
+  seedHost: { geoPoseFor: geoPoseFromMeta, matrixFor: matrixFromMeta },
 })
 
 /**

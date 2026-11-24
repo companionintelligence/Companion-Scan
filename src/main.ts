@@ -102,6 +102,7 @@ import { acquireScannerRole } from './shared/scanner-lock.ts'
 import { captureCountFor, highestCaptureIndex, isSameCapture, isSameRecord } from './shared/capture-index.ts'
 import { exportSessionSummary } from './export/summary'
 import { GeoTracker, type GeoFix } from './geo/geo-tracker'
+import { GeoSessionSampler } from './geo/session-seed.ts'
 import { compassRuleFromSearch } from './geo/compass-heading'
 import { bearingConventionFromSearch, compassSpinTerms, distanceM, formatCompassSpin } from './world/geo'
 import type { RtcBroadcaster } from './rtc/broadcaster'
@@ -631,6 +632,9 @@ async function main() {
    */
   let lightSampleTick = 0
   const geoTracker = new GeoTracker({ compassRule: compassRuleFromSearch(location.search) })
+  // What this walk records of where it is and which way it faces (src/geo/session-seed.ts): the best fix of its first minute and the
+  // session's true bearing from steady compass samples, written beside the scan in place of the one snapshot an export took.
+  const geoSession = new GeoSessionSampler({ pairedCompass: (rotation) => geoTracker.pairedCompass(rotation), compassReading: () => geoTracker.compassReading })
   const placePicker = mountPlacePicker(projectStore, geoTracker, selectedProject, (project, areaId) => {
     selectedProject = project
     selectedAreaId = areaId
@@ -695,6 +699,7 @@ async function main() {
   // Start geo tracker early (GPS needs time to acquire a fix)
   // Wire geo indicator chip immediately when first fix arrives
   geoTracker.onUpdate = (fix) => updateGeoIndicator(fix)
+  geoTracker.onPosition = (fix, takenAtMs) => geoSession.noteFix(fix, takenAtMs)
   void geoTracker.start().then((fix) => {
     if (fix) updateGeoIndicator(fix)
     if (fix?.address) overlay.setStatus(fix.address)
@@ -741,7 +746,7 @@ async function main() {
     exclusive: withoutAutosave,
     hasContent: () => pointCloud.count > 0 || store.currentRunDetections().size > 0 || poseHistory.length > 0,
     exportScan: async () => exportToGLB(
-      { store, pointCloud, poseHistory, scanEntry: await ensureSessionScanEntry(), geoFix: geoTracker.snapshot() ?? undefined, qualitySummary: currentQualitySummary(), frameEpochs: scanFrameEpochs.snapshot(pointCloud) },
+      { store, pointCloud, poseHistory, scanEntry: await ensureSessionScanEntry(), ...geoSession.exportFields(geoTracker.snapshot()), qualitySummary: currentQualitySummary(), frameEpochs: scanFrameEpochs.snapshot(pointCloud) },
       { download: false, upload: true, filenamePrefix: 'room-scan', autoSaved: false },
     ),
     recordUploaded: async (filename) => {
@@ -831,6 +836,7 @@ async function main() {
     qualityMonitor.reset()
     scanFrameEpochs.reset()
     reanchor.noteScanReset()
+    geoSession.reset()
     // A Clear keeps the live session, so the count only rises. A load or a delete may have
     // moved the store to another session, or to none, and that one counts from its own history.
     followCaptureSession()
@@ -1404,7 +1410,7 @@ async function main() {
     try {
       const scanEntry = await ensureSessionScanEntry()
       const result = await exportToGLB(
-        { store, pointCloud, poseHistory, scanEntry, geoFix: geoTracker.snapshot() ?? undefined, qualitySummary: currentQualitySummary(), frameEpochs: scanFrameEpochs.snapshot(pointCloud) },
+        { store, pointCloud, poseHistory, scanEntry, ...geoSession.exportFields(geoTracker.snapshot()), qualitySummary: currentQualitySummary(), frameEpochs: scanFrameEpochs.snapshot(pointCloud) },
         { download: true, upload: true, filenamePrefix: 'room-scan', autoSaved: false },
       )
       if (result.upload === 'uploaded' && result.uploadedFilename) {
@@ -1508,7 +1514,7 @@ async function main() {
         return
       }
       const result = await exportToGLB(
-        { store, pointCloud, poseHistory, scanEntry: await ensureSessionScanEntry(), geoFix: geoTracker.snapshot() ?? undefined, qualitySummary: currentQualitySummary(), frameEpochs: scanFrameEpochs.snapshot(pointCloud) },
+        { store, pointCloud, poseHistory, scanEntry: await ensureSessionScanEntry(), ...geoSession.exportFields(geoTracker.snapshot()), qualitySummary: currentQualitySummary(), frameEpochs: scanFrameEpochs.snapshot(pointCloud) },
         { download: false, upload: true, filenamePrefix: 'autosave-room-scan', autoSaved: true },
       )
       const time = new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
@@ -2030,6 +2036,7 @@ async function main() {
         : '[scan] tracking recovered — recording points again')
     }
     if (provider.isTracking() && poseIsFinite(frame.pose) && !held) poseHistory.push(frame.pose)
+    geoSession.onFrame(frame.pose, trackingUsable && !held)
 
     // Live geometry is available only when the experimental flag is enabled.
     rtc?.sendPoints(inserted)

@@ -433,9 +433,10 @@ test('source shape: the scan list draws its meta lines with the chip module and 
   const viewer = read('src/viewer/viewer.ts')
   assert.match(viewer, /import \{ redrawScanMeta, scanMetaHtmlFor \} from '\.\/scan-calibration-chip'/)
   const build = viewer.slice(viewer.indexOf('function buildScanItem('), viewer.indexOf('\n}\n', viewer.indexOf('function buildScanItem(')))
-  assert.match(build, /<div class="scan-meta-block">\$\{scanMetaHtmlFor\(scan, currentProject\?\.spatialFrame\?\.method, escHtml\)\}<\/div>/, "compared with the Place's stored frame, escaped with the viewer's own escape")
+  // The fourth argument says whether a person placed the scan (isHandPlaced): the line then reads "Placed by hand".
+  assert.match(build, /<div class="scan-meta-block">\$\{scanMetaHtmlFor\(scan, currentProject\?\.spatialFrame\?\.method, escHtml(?:, [^)]*\)?)?\)\}<\/div>/, "compared with the Place's stored frame, escaped with the viewer's own escape")
   const refresh = viewer.slice(viewer.indexOf('function refreshScanMeta('), viewer.indexOf('\n}\n', viewer.indexOf('function refreshScanMeta(')))
-  assert.match(refresh, /redrawScanMeta\(\s*world\?\.scans \?\? \[\],\s*scanId => scanItems\.get\(scanId\)\?\.querySelector\('\.scan-meta-block'\),\s*currentProject\?\.spatialFrame\?\.method,\s*escHtml,\s*\)/)
+  assert.match(refresh, /redrawScanMeta\(\s*world\?\.scans \?\? \[\],\s*scanId => scanItems\.get\(scanId\)\?\.querySelector\('\.scan-meta-block'\),\s*currentProject\?\.spatialFrame\?\.method,\s*escHtml,(?:\s*\(scan\) => isHandPlaced\([^\n]*\),)?\s*\)/)
   // The element it looks for is the one the row builds: a redraw that looks for another finds nothing and changes nothing.
   assert.equal(/querySelector\('\.([a-z-]+)'\)/.exec(refresh)?.[1], /<div class="([a-z-]+)">\$\{scanMetaHtmlFor/.exec(build)?.[1])
   const afterRefresh = viewer.slice(viewer.indexOf('async function refreshWorldScans'))
