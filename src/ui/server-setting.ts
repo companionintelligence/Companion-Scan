@@ -1,7 +1,8 @@
 /**
  * The Scan server address in a native shell: the form that sets it, tests it and
  * changes it. The first-run Server row (src/ui/ftue-status.ts) opens the form in
- * place, and the editor opens it in a dialog (src/viewer/shell-menu.ts).
+ * place. The editor and the locar viewer open it in a dialog (changeServer in
+ * src/viewer/shell-menu.ts).
  *
  * The address is kept on the device by src/shared/api-base.ts, which every server
  * request already goes through. A test asks the server's /health, the one route a

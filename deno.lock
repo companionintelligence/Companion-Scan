@@ -24,6 +24,7 @@
     "npm:jimp@^1.6.1": "1.6.1",
     "npm:jose@^5.9.6": "5.10.0",
     "npm:leaflet@1.9.4": "1.9.4",
+    "npm:locar@~0.2.12": "0.2.12",
     "npm:onnxruntime-node@^1.21.0": "1.21.0",
     "npm:onnxruntime-web@1.21": "1.21.1",
     "npm:qrcode-terminal@0.12": "0.12.0",
@@ -1116,6 +1117,12 @@
         "lightningcss-win32-x64-msvc"
       ]
     },
+    "locar@0.2.12": {
+      "integrity": "sha512-ouHln3qGJXj+My/tJTLMBpLzYTAVJYjphgidOfn+IiAeH0+6XGDYllFK5yoOnzut2IdO18hPVPbd7YkU8PPe9A==",
+      "dependencies": [
+        "three"
+      ]
+    },
     "long@5.3.2": {
       "integrity": "sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA=="
     },
@@ -1735,6 +1742,7 @@
         "npm:iwer@^2.2.1",
         "npm:jimp@^1.6.1",
         "npm:leaflet@1.9.4",
+        "npm:locar@~0.2.12",
         "npm:onnxruntime-web@1.21",
         "npm:qrcode-terminal@0.12",
         "npm:three@0.184",
@@ -1744,6 +1752,9 @@
       ],
       "overrides": {
         "sharp": "^0.35.5",
+        "locar": {
+          "three": "$three"
+        },
         "jimp": {
           "zod": "^4.6.6"
         }

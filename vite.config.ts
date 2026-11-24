@@ -242,6 +242,8 @@ export default defineConfig({
         scanner: path.resolve(process.cwd(), 'scanner.html'),
         viewer: path.resolve(process.cwd(), 'viewer.html'),
         webxr: path.resolve(process.cwd(), 'webxr.html'),
+        locar: path.resolve(process.cwd(), 'locar.html'),
+        locarViewer: path.resolve(process.cwd(), 'locar-viewer.html'),
         xrWorld: path.resolve(process.cwd(), 'xr-world.html'),
         // The two 8th Wall diagnostics are device-test pages that no page links to. A native build
         // (VITE_DISABLE_PWA, set only by scripts/native/build-web.mjs) leaves them out, so their script
