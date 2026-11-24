@@ -15,8 +15,9 @@ Each session writes its own ticket in this folder, `000N-<slug>.md`, from
 [TICKET_TEMPLATE.md](../TICKET_TEMPLATE.md), before it changes code. This table is the plan as
 each session was briefed on 2026-11-23; each ticket file records what was actually done, and
 which findings it fixed, left partly fixed, deferred or left to the owner. All eight merged on
-2026-11-23, in the order 0001, 0002, 0004, 0003, 0005, 0006, 0007, 0008. An integration
-ticket, 0009, follows with the work that needed more than one session's files.
+2026-11-23, in the order 0001, 0002, 0004, 0003, 0005, 0006, 0007, 0008. Two tickets with no
+ticket file of their own followed the same day: 0009, the integration work that needed more than
+one session's files (#292), and 0010, QA fixes from the browser suite (#293).
 
 | # | Merged | Session | Owns | Findings | What it changes |
 |---|---|---|---|---|---|
@@ -28,7 +29,8 @@ ticket, 0009, follows with the work that needed more than one session's files.
 | [0006](0006-native-apps.md) | [#289](https://github.com/companionintelligence/Companion-Scan/pull/289) | native-apps | `mobile/`, `meta/`, `desktop/`, the native AR files in `src/ar/`, `src/shared/shell-sign-in.ts`, `scripts/native/`, `.github/workflows/` | F-31 to F-36 | The apps. ScanAR parity between iOS and Android, where it can be checked without a device. The 90-degree pose question settled from the SDK docs, with decode-side tests. The Quest app signs in, asks only for splat files the server serves, runs its vision hook only while capturing, and uploads through a bounded executor. The iOS plist, real Android tests, and CI jobs for `meta/`, the Gradle and Rust tests, and the subsystem tests. A build entry for the Android 8th Wall variant. |
 | [0007](0007-gimbal.md) | [#290](https://github.com/companionintelligence/Companion-Scan/pull/290) | gimbal | `subsystems/osmo-ble/`, `docs/operations/GIMBAL_INTEGRATION.md`, the gimbal unit tests | F-50, and the gimbal half of F-12 | The gimbal rig. The page sends its Capture choice. A Stop control on the page, the CLI and MCP. Manual controls while a run is parked. One arc guard for move-to, sweep and recenter. The page's state bugs, and the CLI's defaults and help. Docs that match the code. An optional token, an origin allowlist and a bind setting, with today's defaults kept. |
 | [0008](0008-docs-drift.md) | [#291](https://github.com/companionintelligence/Companion-Scan/pull/291) | docs-drift | `docs/` (but not `docs/pipelines/`, `UX_FLOW.md` or `GIMBAL_INTEGRATION.md`), `CLAUDE.md`, `README.md`, the atlas, this README | F-45 to F-47, F-49 (`CLAUDE.md`), the device-support docs | The docs, corrected to the code at `e897380`. Wave 13's card and badges say what #282 merged. The atlas's CORS, OIDC, RTC and photo-ingest entries, and entries for seven features it did not describe. The job counts in `architecture.md` and `targets/server.md`. The target pages record the builds at `81e437c`. `CLAUDE.md` protects `'ci-xr-projects'` and names both delegating job types. This README and the wave's atlas pass. |
-| 0009 | to follow | integration | the integration branch, after the eight merges | the cross-session leftovers of F-07, F-27 and F-44, and three more items | Work that needed more than one session's files. The runner call sites get the abort signal, so `RUNNERS_WITHOUT_SIGNAL` keeps only `splat-align`, `panoptic-lift` and `place-register`. The scanner's colour lookup uses `labelDisplayCss`. The ONNX driver logs counts only. The three more: the `.env.example` corrections, the AR dev pages left out of the native builds, and the gimbal page's tests added to `npm run verify`. |
+| 0009 | [#292](https://github.com/companionintelligence/Companion-Scan/pull/292) | integration | the integration branch, after the eight merges | the cross-session leftovers of F-07, F-27, F-44 and F-01, and more | Work that needed more than one session's files. The abort signal at nine runner call sites, so `RUNNERS_WITHOUT_SIGNAL` keeps only `splat-align`, `panoptic-lift` and `place-register`. The scanner's colour lookup uses `labelDisplayCss`. The ONNX driver logs counts only. `playwright.config.ts`, the e2e suite and the tablet suite fall back to `localhost`. The shell storage keys are declared once. `world_export` reads GLBs through `getGltfReadIO`. The native builds leave out the AR dev pages. `test:gimbal:page` runs in `npm run verify`. The quarantine test skips `cap sync`'s copies. A queued summary is logged as queued. Keyframe uploads retry 408 and 429. `.env.example` is corrected. Deno CI installs with `ONNXRUNTIME_NODE_INSTALL_CUDA=skip`, and passes again. |
+| 0010 | [#293](https://github.com/companionintelligence/Companion-Scan/pull/293) | QA | after 0009 | the browser suite's failures | `#start-screen` gets `data-probe="settled"` once the AR probe has answered, and the startup word-budget spec waits for it. "07 render modes" is off `tests/known-failures.json`. |
 
 Four findings span sessions. F-06's three hooks are split between 0003 and 0005. F-10's missing
 tokens are the editor's (0005), the clip routes' admission is the server's (0001), and the
@@ -119,15 +121,18 @@ The same pass corrected the atlas to the code at `e897380`, as ticket 0008 asks.
 
 ## Landed
 
-All eight tickets merged on 2026-11-23. Read from the code at `8deb264`, each did what the table
-says, with these parts left over; the atlas states each beside its diff:
+All ten tickets merged on 2026-11-23. Read from the code (`8deb264` for the eight, `fe03cbf` for
+0009 and 0010), each did what the table says, with these parts left over; the atlas states each
+beside its diff:
 
-- **0001 (#284).** The abort signal stops the placeholder and in-process jobs, and twelve runner
-  types still run on past their deadline with a warning (0009 passes the signal to them).
-  `/events` scoping is opt-in with `?world=`, and the editor does not ask for its world yet.
+- **0001 (#284).** `/events` scoping is opt-in with `?world=`, and the editor does not ask for
+  its world yet. The abort signal reached the placeholder and in-process jobs only; 0009 passed it
+  to nine runner call sites, and `splat-align`, `panoptic-lift` and `place-register` still run on
+  past their deadline with a warning.
 - **0002 (#285).** The 4D path has run only in stub mode: no 4DAnyone host exists.
-- **0003 (#287).** The scanner's colour lookup still matches labels on its own (0009), and the
-  scanner page still loads the WebXR emulator for `?mock=webxr`.
+- **0003 (#287).** The scanner page still loads the WebXR emulator for `?mock=webxr`. Its colour
+  lookup moved onto `labelDisplayCss` in 0009; the editor keeps a table of its own
+  (`src/viewer/editor.ts`).
 - **0004 (#286).** The native codec keeps its own quaternion and field-of-view code; it is
   0006's file, and was not moved.
 - **0005 (#288).** The note about the ENU frame is corrected; the frame itself is unchanged.
@@ -135,6 +140,7 @@ says, with these parts left over; the atlas states each beside its diff:
   and the vision gate need a device or headset run.
 - **0007 (#290).** Unset, the backend now admits only the control page's own origin, not `*`.
 - **0008 (#291).** The planning pass; a follow-up corrected the docs to the merged code.
+- **0009 (#292) and 0010 (#293).** Nothing left over that the atlas records.
 
 ## Decisions for the owner
 

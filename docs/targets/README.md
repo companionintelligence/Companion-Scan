@@ -20,7 +20,7 @@ and [PLATFORM_SUPPORT.md](../operations/PLATFORM_SUPPORT.md).
 | Android app, 8th Wall | Android phones and tablets | 8th Wall only | the app, built with `VITE_AR_RUNTIME=8thwall` | Built locally at `81e437c`, and on `main` after wave 14 by Mobile Build's 8th Wall job (run 45327838056); `npm run build:8thwall` in `mobile/` makes it. Not run on a device. | [android-8thwall.md](android-8thwall.md) |
 | Meta Quest app | Meta Quest 3 and 3S | native: Meta Spatial SDK, Camera2 passthrough | the app (`meta/`) | Built locally at `81e437c`, and on `main` after wave 14 by the Quest Build workflow (run 45327834865), whose 108 JVM unit tests pass. Not run on a headset. | [meta-quest.md](meta-quest.md) |
 | iOS app | iPhone | ARKit through `ScanAR`, drawn in RealityKit's `ARView`, then 8th Wall | the app (`mobile/`) | Compiled for the iOS Simulator at `81e437c` (Mobile Build run 45260987425), and on `main` after wave 14 (run 45327838056). Not run on a device. | [ios.md](ios.md) |
-| Desktop app | Windows, macOS, Linux | none: no capture | the app (`desktop/`) | In code. Built by workflows run by hand. Sign-in has not run against a real Portal. | [desktop/README.md](../../desktop/README.md) |
+| Desktop app | Windows, macOS, Linux | none: no capture | the app (`desktop/`) | In code. Built by workflows run by hand: Desktop Build passed on `main` after wave 14 for Linux, Windows and macOS (runs 45327841063 and 45330563893). Sign-in has not run against a real Portal. | [desktop/README.md](../../desktop/README.md) |
 | Scan server | Linux; macOS and Windows unverified | none | `server/main.ts` | Runs on Linux: verified on one host. | [server.md](server.md) |
 
 Every capture target uses one contract, `ARProvider` (`src/ar/provider.ts`), so the scanner above
@@ -58,8 +58,11 @@ After wave 14 merged (`main` at `8deb264`), the workflows, started by hand, buil
 | Mobile Build | 45327838056 | Android (debug APK, with `testDebugUnitTest` and the instrumented tests compiled), Android 8th Wall (debug APK), iOS (Simulator app): all succeeded |
 | Quest Build | 45327834865 | Quest app (108 JVM unit tests and the debug APK): succeeded |
 | Subsystem Tests | 45327830988 | 4D capture service and gimbal: succeeded |
+| Desktop Build | 45327841063 | Linux, Windows and macOS (universal): succeeded |
 
-Nothing built from it has run on a device.
+Nothing built from it has run on a device. After the integration ticket (#292, `bd80f58`), Mobile Build
+(45330560945), Desktop Build (45330563893) and Deno CI (45330557474) passed again; Deno CI had
+failed at `8deb264` on `onnxruntime-node`'s install, which #292 fixed.
 
 ## Where the checklists are
 
@@ -93,7 +96,8 @@ npm ci --prefix mobile && npm run build:web --prefix mobile   # then:
 
 Both web builds go through [`scripts/native/build-web.mjs`](../../scripts/native/build-web.mjs),
 which builds without the service worker, leaves the engine out of the desktop app, leaves model
-weights and test files out of both, refuses a `.env` file that sets a `VITE_` variable, and writes
+weights, test files and the dev pages (`DEV_PAGES`: the two 8th Wall AR diagnostics, the camera
+check, the compass bench, the smoke page and the static 404 page) out of both, refuses a `.env` file that sets a `VITE_` variable, and writes
 the notices. The Android release build signs from four environment variables or the git-ignored
 `mobile/android/keystore.properties` ([mobile/README.md](../../mobile/README.md#publishing)).
 
