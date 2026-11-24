@@ -148,8 +148,9 @@ export interface PushDeps {
   signal?: AbortSignal
   /**
    * The Place the scan belongs to, as far as where it is on Earth: its georeference (null when it has none) and the version it was
-   * stored at. When given, the event's `spatial_frame` carries a `georeference` block, or an explicit null. Absent, `spatial_frame`
-   * is exactly what it was before a Place could be georeferenced.
+   * stored at. When given, an event that has a `spatial_frame` carries a `georeference` block in it, or an explicit null; a
+   * georeference gives every scan one. An uncalibrated scan with no fit in a Place with none ships no `spatial_frame` at all, as
+   * before. Absent, `spatial_frame` is exactly what it was before a Place could be georeferenced.
    */
   place?: { georeference: ProjectGeoreference | null; georefVersion: number }
 }
