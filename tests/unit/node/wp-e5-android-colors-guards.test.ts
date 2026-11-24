@@ -61,7 +61,8 @@ function runCopy(testPath: string, replaced: Record<string, string>): { status: 
     const env = { ...process.env }
     // The test runner sets this for the tests it starts. A nested `node --test` that sees it exits without running anything.
     delete env.NODE_TEST_CONTEXT
-    const run = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', '--test', join(root, testPath)], { encoding: 'utf8', env })
+    // TAP, named: Node 26's default reporter is spec even when the output is not a terminal, and these tests read TAP's `# pass`.
+    const run = spawnSync(process.execPath, ['--no-warnings', '--test', '--test-reporter=tap', join(root, testPath)], { encoding: 'utf8', env })
     return { status: run.status, output: run.stdout + run.stderr }
   } finally {
     rmSync(root, { recursive: true, force: true })
