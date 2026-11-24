@@ -267,6 +267,18 @@ export class SceneEditor {
     this._clearSelection()
   }
 
+  /**
+   * Rename an object for the Spatial Editor's object editor. Updates the tag record (which
+   * getInspectorData prefers) and node.userData.label (which flushTags persists), so the new
+   * name reads back the same way a rename loaded from a saved patch does.
+   */
+  renameObject(obj: THREE.Object3D, name: string): void {
+    const existing = this._tags.get(obj.uuid)
+    if (existing) this._tags.set(obj.uuid, { ...existing, name })
+    const ud = obj.userData as Record<string, unknown>
+    ud['label'] = name
+  }
+
   /** Assign a semantic tag to an object */
   tagObject(obj: THREE.Object3D, tag: SemanticTag, opts: Partial<Omit<TagInfo, 'tag'>> = {}): void {
     const existing = this._tags.get(obj.uuid)
