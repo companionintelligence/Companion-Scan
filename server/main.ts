@@ -215,7 +215,7 @@ import { runSplatFinish } from './splat/splat_finish.ts'
 import { runSenseNovaVision, senseNovaTask } from './sensenova_vision.ts'
 import { runPanopticScan } from './panoptic/panoptic_scan.ts'
 import { runPanopticLift } from './panoptic/panoptic_lift.ts'
-import { runFloorPlan } from './floor_plan.ts'
+import { runFloorPlan, scaleKindOfScan } from './floor_plan.ts'
 import {
   configFromEnv as portalAuthConfig,
   isPersonClipFetch,
@@ -4774,6 +4774,7 @@ async function _runFloorPlanJob(slug: string, jobId: string, signal?: AbortSigna
       manifestPath: `${SCANS_DIR}/${manifestName}`,
       minWallM: typeof minWall === 'number' && Number.isFinite(minWall) && minWall >= 0 ? minWall : undefined,
       provenance: { sessionId, scanId: scan.scanId },
+      scaleKind: scaleKindOfScan(scan),
       signal,
     })
 
@@ -4793,6 +4794,7 @@ async function _runFloorPlanJob(slug: string, jobId: string, signal?: AbortSigna
             wallCount: result.wallCount ?? null,
             roomCount: result.manifest.roomCount ?? null,
             disclaimer: result.manifest.disclaimer ?? null,
+            units: result.manifest.units ?? null,
             svgUrl: `/scans/${encodeURIComponent(`${base}.floor-plan.svg`)}`,
             manifestUrl: `/scans/${encodeURIComponent(manifestName)}`,
           },
@@ -6145,7 +6147,7 @@ function jobResultFor(job: WorldJob): string {
     case 'panoptic-lift':
       return 'Panoptic object segments were placed in the room by casting each one against the scan point cloud. A segment whose depth could not be recovered is recorded as unplaced rather than guessed.'
     case 'floor-plan':
-      return 'Floor plan drawn from the LingBot-Map point cloud. The .floor-plan.json and .svg sidecars carry the walls, the room outline and its area: derived, not survey-grade, and in the point cloud\'s own units, which are metres only if that reconstruction was metric.'
+      return 'Floor plan drawn from the LingBot-Map point cloud, fitted to the capture\'s AR poses for its scale and which way is up. The .floor-plan.json and .svg sidecars carry the walls, the room outline and its area: derived, not survey-grade, and in metres only when the capture\'s AR runtime measured in metres (the manifest\'s units say which).'
     case 'person-4d-reconstruct':
       return 'Person reconstructed in 4D. The .4d/ sequence is available as a splat4d layer on the scan.'
     case 'thing-interactive-asset':

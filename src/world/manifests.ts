@@ -220,10 +220,11 @@ export interface PanopticLiftManifest extends PipelineManifestBase {
  * scripts/floor_plan_worker.py. `<base>.floor-plan.manifest.json`, beside `<base>.floor-plan.json` (the plan) and
  * `<base>.floor-plan.svg` (the plan drawn).
  *
- * The numbers are in the point cloud's own units. A LingBot-Map cloud is not known to be metric, so `areaM2`,
- * `ceilingHeightM` and the plan's `lengthM` are metres only when that cloud was, which nothing here checks. The
- * names are the worker's. `disclaimer` is the plan file's own qualification, carried here so a reader of the
- * manifest alone has it.
+ * The plan is drawn in the capture's AR session frame: the driver fits the LingBot-Map cloud to the keyframes' AR
+ * poses first, which sets its scale and which way is up (`fitCloudToSession` in server/floor_plan.ts). `units` says
+ * what the numbers are in. `areaM2`, `ceilingHeightM` and the plan's `lengthM` keep their names for every unit:
+ * they are metres only when `units` is `'m'` or `'m-estimated'`. `disclaimer` is the plan file's own qualification,
+ * carried here so a reader of the manifest alone has it.
  */
 export interface FloorPlanManifest extends PipelineManifestBase {
   tool: 'floor-plan-worker'
@@ -231,22 +232,51 @@ export interface FloorPlanManifest extends PipelineManifestBase {
   planPath?: string
   /** Basename of the landed plan SVG (relative to SCANS_DIR), when 'ok'. */
   svgPath?: string
-  /** Total area of the closed room outlines, in the cloud's units squared. */
+  /** Total area of the closed room outlines, in `units` squared. */
   areaM2?: number
   /** Wall segments the worker kept. */
   wallCount?: number
   /** Closed room outlines: one at most today (a rectangle, or the convex hull of the wall cells). */
   roomCount?: number
-  /** Floor to ceiling, from the cloud's height histogram, in the cloud's units. */
+  /** Floor to ceiling, from the height histogram, in `units`. */
   ceilingHeightM?: number
   /** "derived, not survey-grade", and the units. Present when 'ok'. */
   disclaimer?: string
+  /**
+   * What the numbers are in, when 'ok'. Absent from a plan drawn before the fit existed, whose numbers are in the
+   * point cloud's own units.
+   */
+  units?: FloorPlanUnits
+  /** The frame the plan is drawn in, when 'ok': `'scan'` is the capture's AR session frame, Y up. */
+  frame?: 'scan' | 'cloud'
+  /** How the cloud was fitted to the capture, when 'ok'. */
+  alignment?: FloorPlanAlignment
   params: {
     python: string
     workerPath: string
-    /** Shortest wall segment kept, in the cloud's units. */
+    /** Shortest wall segment kept, in `units`. */
     minWallM: number
   }
+}
+
+/**
+ * What a floor plan's numbers are in. `'m'`: metres, the AR runtime's contract (ScaleKind `'metric'`).
+ * `'m-estimated'`: approximate metres, the runtime's own estimate (`'estimated-metric'`). `'session'`: the AR
+ * session's units, not known to be metres (`'arbitrary'`, or a scan that recorded no kind). `'cloud'`: the point
+ * cloud's own units, for a plan drawn without the fit.
+ */
+export type FloorPlanUnits = 'm' | 'm-estimated' | 'session' | 'cloud'
+
+/** The similarity fit that put a LingBot-Map cloud into its capture's AR session frame (server/floor_plan.ts). */
+export interface FloorPlanAlignment {
+  /** Keyframes posed by both LingBot-Map and the AR runtime, paired by file name. */
+  pairedFrames: number
+  /** AR session units per LingBot-Map unit. */
+  scale: number
+  /** RMS camera-centre miss after the fit, in the AR session's units. */
+  residual: number
+  /** RMS angle between each fitted LingBot-Map camera and its AR camera, in degrees. */
+  orientationResidualDeg: number
 }
 
 /** splat_train.ts's manifest — the Brush CLI driver. */

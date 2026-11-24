@@ -3,9 +3,10 @@
  *
  *   - POST /worlds/:slug/jobs takes the type, the pump dispatches it, and a job queued with no scan fails by name.
  *   - A scan whose session has no LingBot-Map cloud completes as skipped, with the fix in the job's own words.
- *   - With an interpreter that has numpy (the one the job would use here), a session holding a synthetic box room gets
- *     its plan: the job's artifact, the three files served with their types, the drawing under a policy that runs
- *     nothing, the manifest with no server path in it, and all three taken when the scan is deleted.
+ *   - With an interpreter that has numpy (the one the job would use here), a session holding a synthetic captured room
+ *     (its cloud in a tilted LingBot frame, its keyframes' AR poses) gets its plan: the job's artifact, the three files
+ *     served with their types, the drawing under a policy that runs nothing, the manifest with no server path in it,
+ *     and all three taken when the scan is deleted. The scan records no scale kind, so the plan is in session units.
  *
  * Needs `deno task test`'s permissions (run, net, read, write, env).
  */
@@ -13,7 +14,7 @@ import { assert, assertEquals, assertFalse, assertStringIncludes } from 'jsr:@st
 
 import { scanIdFor } from '../../../server/scan_id.ts'
 import type { WorldJob } from '../../../src/world/types.ts'
-import { floorPlanPython, ROOM, writeBoxRoomPly } from './floor_plan_fixtures.ts'
+import { floorPlanPython, ROOM, writeCapturedRoom } from './floor_plan_fixtures.ts'
 import { filesUnder, type RunningServer, startServer } from './server_core_harness.ts'
 
 const PYTHON = await floorPlanPython()
@@ -74,7 +75,7 @@ Deno.test('the floor-plan job on the server: queued, run, skipped or drawn, serv
     async ({ root: r, scansDir, sessionsDir }) => {
       root = r
       const roomSession = await storeScan(scansDir, sessionsDir, ROOM_BASE, ROOM_SESSION)
-      await writeBoxRoomPly(`${roomSession}/lingbot-map.point-cloud.ply`)
+      await writeCapturedRoom(roomSession)
       await storeScan(scansDir, sessionsDir, BARE_BASE, BARE_SESSION)
     },
   )
@@ -107,12 +108,13 @@ Deno.test('the floor-plan job on the server: queued, run, skipped or drawn, serv
         const job = await queue(server, { type: 'floor-plan', scanId: scanIdFor(`${ROOM_BASE}.glb`), payload: { minWallM: 0.5 } })
         const done = await settled(server, job.jobId)
         assertEquals(done.status, 'completed', why(`room: ${done.error ?? done.result}`))
-        assertStringIncludes(done.result ?? '', 'in the point cloud\'s own units')
+        assertStringIncludes(done.result ?? '', 'fitted to the capture\'s AR poses')
         const artifact = done.artifacts?.find((a) => a.type === 'floor-plan')
         assert(artifact, `no floor-plan artifact: ${JSON.stringify(done.artifacts)}`)
         assertEquals(artifact.url, `/scans/${ROOM_BASE}.floor-plan.json`)
-        const area = (artifact.metadata as { areaM2: number }).areaM2
-        assert(Math.abs(area - ROOM.width * ROOM.depth) <= 1.2, `area ${area}`)
+        const metadata = artifact.metadata as { areaM2: number; units: string }
+        assert(Math.abs(metadata.areaM2 - ROOM.width * ROOM.depth) <= 1.2, `area ${metadata.areaM2}`)
+        assertEquals(metadata.units, 'session', 'a scan that recorded no scale kind is not taken to be in metres')
 
         const manifest = await server.get(`/scans/${ROOM_BASE}.floor-plan.manifest.json`)
         assertEquals(manifest.status, 200, why('manifest'))
@@ -164,8 +166,9 @@ Deno.test('the floor-plan job on the server: queued, run, skipped or drawn, serv
 
 /**
  * Stands in for LINGBOT_MAP_PYTHON, as the stand-in in wp-runners-signal-pump.test.ts does. Run as LingBot-Map's worker
- * it leaves a prepared reconstruction in the session (a box room and two cameras a unit apart, so the run's quality
- * verdict passes); run as the floor-plan worker it writes a small plan where it is told to. Anything else is refused.
+ * it leaves a prepared reconstruction in the session (a captured room: its cloud and its cameras, which match the
+ * session's AR keyframes, so the run's quality verdict and the floor plan's fit both pass); run as the floor-plan worker
+ * it writes a small plan where it is told to. Anything else is refused.
  */
 function interpreterStub(fixtureDir: string): string {
   return `#!/bin/sh
@@ -194,20 +197,15 @@ esac
 `
 }
 
-const IDENTITY_4 = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
-/** World-to-camera (OpenCV), as LingBot-Map writes it: this camera's centre is one unit along x. */
-const MOVED_4 = [[1, 0, 0, -1], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
-
 Deno.test({
   name: 'a LingBot-Map run that succeeds queues a floor plan on the same interpreter, and FLOORPLAN_AUTO=0 stops that',
   ignore: Deno.build.os === 'windows',
   fn: async (t) => {
     const tools = await Deno.makeTempDir({ prefix: 'floor-plan-chain-' })
     try {
-      await writeBoxRoomPly(`${tools}/lingbot-map.point-cloud.ply`)
-      await Deno.writeTextFile(`${tools}/lingbot-map.poses.json`, JSON.stringify({
-        frames: [{ file: 'kf-00000.jpg', cameraToWorld: IDENTITY_4 }, { file: 'kf-00001.jpg', cameraToWorld: MOVED_4 }],
-      }))
+      // The reconstruction the stand-in leaves (cloud and poses), and the keyframes the session holds (AR poses).
+      await writeCapturedRoom(tools)
+      const keyframes = await Deno.readTextFile(`${tools}/keyframes.jsonl`)
       const stub = `${tools}/python`
       await Deno.writeTextFile(stub, interpreterStub(tools))
       await Deno.chmod(stub, 0o755)
@@ -216,7 +214,7 @@ Deno.test({
         await t.step(`FLOORPLAN_AUTO=${auto}`, async () => {
           const server = await startServer({ LINGBOT_MAP_PYTHON: stub, FLOORPLAN_AUTO: auto }, async ({ scansDir, sessionsDir }) => {
             const session = await storeScan(scansDir, sessionsDir, ROOM_BASE, ROOM_SESSION)
-            await Deno.writeTextFile(`${session}/keyframes.jsonl`, `${JSON.stringify({ index: 0, file: 'kf-00000.jpg' })}\n`)
+            await Deno.writeTextFile(`${session}/keyframes.jsonl`, keyframes)
           })
           const why = (what: string) => `${what}\n${server.log()}`
           try {
