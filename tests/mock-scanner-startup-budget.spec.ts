@@ -136,6 +136,9 @@ test.describe('scanner startup budget', () => {
   test('reaching the camera takes three taps and stays under a word budget', async ({ page }) => {
     await page.goto('/?mock=xr8&onboarding=1')
     await expect(page.locator('#onboarding-overlay')).toBeVisible({ timeout: 15_000 })
+    // Onboarding opens before the AR probe lands (F-14). Until it does, the start screen reads every path as unknown
+    // and adds a fallback note; the model counts the settled screen, so wait for the probe before counting.
+    await expect(page.locator('#start-screen')).toHaveAttribute('data-probe', 'settled', { timeout: 15_000 })
 
     const onboardingWords = await page.evaluate(() =>
       Array.from(document.querySelectorAll('.onboard-desc'))
