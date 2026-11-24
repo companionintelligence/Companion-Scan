@@ -22,8 +22,9 @@
  *    `XR8.run()` is accepted, and the camera track is acquired at 960x720 — but
  *    on some starts the pipeline never emits a frame. The startup diagnostic in
  *    `eighthwall.ts` read `"frame":"unreported"` and `"projectionAspect":null`,
- *    and no pose arrived. The stall is intermittent, about two starts in eight
- *    (docs/operations/AR_DEVICE_SUPPORT.md, the Beam Pro measurement), and not
+ *    and no pose arrived. The stall is intermittent: six of the eight starts
+ *    measured stalled and two succeeded (docs/operations/AR_DEVICE_SUPPORT.md,
+ *    the Beam Pro measurement), and it is not
  *    a property of the device. The only
  *    signal is an ABSENCE, so the verdict has to be made on a timer:
  *    `firstFrameVerdict()`.
@@ -382,8 +383,8 @@ export function firstFrameVerdict(obs: FirstFrameObservation): PreflightVerdict 
       // scanner". That was a permanent claim about hardware drawn from a
       // five-second sample, and it is measurably wrong: the same XREAL Beam Pro
       // it condemned reached trackingStatus NORMAL with a pose 2.37 s after
-      // start on a later attempt. The failure is intermittent — roughly two
-      // starts in eight — and correlates with the orientation getUserMedia
+      // start on a later attempt. The failure is intermittent — six of eight
+      // starts stalled, two succeeded — and correlates with the orientation getUserMedia
       // happens to return, not with the device's capability.
       //
       // So this reports what actually happened, once, and offers the two things

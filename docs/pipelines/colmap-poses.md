@@ -147,8 +147,9 @@ Measured on the Osmo gimbal rig: a grid confined to **one narrow station**
 classified **29 of 36 image pairs `PLANAR_OR_PANORAMIC`** and registered only
 **4 of 9 images**. Widening the sweep helps (the phone's lens sits off the
 pan/tilt axes, so a large pan yields a small baseline, and each station sees
-more of the room), which is why that rig's default preset is a 105-position
-dome — but no sweep width manufactures translation. See
+more of the room), which is why that rig's default preset is the Dome: 7 columns × 2
+tilts, 14 positions a station, swept from each of several stations (the control page defaults
+to four) — but no sweep width manufactures translation. See
 [`../operations/GIMBAL_INTEGRATION.md`](../operations/GIMBAL_INTEGRATION.md).
 
 **Frame count matters more than frame quality.** A 9-photo sweep of one room

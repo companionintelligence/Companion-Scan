@@ -78,7 +78,8 @@ journalctl --user -u cscan-web -f                   # build + preview logs
 journalctl -u ollama -f                             # model load/GPU logs
 curl -fs https://$TAILSCALE_HOSTNAME:5173/health    # end-to-end probe
 npm run logs:watch                                  # live phone-side console
-                                                    # (pages loaded with ?debug=remote)
+                                                    # (pages loaded with ?debug=remote,
+                                                    # server started with CLIENT_LOGS_BROADCAST=1)
 ```
 
 **Dev iteration on the same box** (HMR instead of the prod bundle):

@@ -33,10 +33,10 @@ counts as verified only when someone ran it on the hardware and read the output 
 |---|---|---|
 | **Web, 8th Wall**: iPhone and iPad Safari | In code. No run on an iPhone or iPad is recorded. | [web-8thwall.md](docs/targets/web-8thwall.md) |
 | **Web, WebXR**: Android Chrome with ARCore, Meta Quest Browser | In code. On Android one session start was seen, and tracking was not reached. Quest support is documented, not verified. | [web-webxr.md](docs/targets/web-webxr.md) |
-| **Android app, ARCore**: the Capacitor shell with `ScanAR`, native first, then 8th Wall, then WebXR | Built at `81e437c`, the tree `main` merged as `e897380`: a local debug APK and the Mobile Build workflow's (run 45260987425). Not run on a device. | [android-arcore.md](docs/targets/android-arcore.md) |
-| **Android app, 8th Wall**: the same shell built with `VITE_AR_RUNTIME=8thwall` | Built once, locally, at `81e437c`: a debug APK. No workflow builds it, and no device run is recorded. It shares the app id, so it replaces the ARCore build on a device. | [android-8thwall.md](docs/targets/android-8thwall.md) |
-| **Meta Quest app**: a native headset app on the Meta Spatial SDK (`meta/`) | Built locally at `81e437c`: a debug APK, and its 81 JVM unit tests pass. No workflow builds it. Not run on a headset. | [meta-quest.md](docs/targets/meta-quest.md) |
-| **iOS app**: the Capacitor shell with ARKit through `ScanAR` | In code, drawn in RealityKit's `ARView` (ADR 0012). Compiled for the iOS Simulator at `81e437c` (Mobile Build run 45260987425); not run on a device. | [ios.md](docs/targets/ios.md) |
+| **Android app, ARCore**: the Capacitor shell with `ScanAR`, native first, then 8th Wall, then WebXR | Built at `81e437c`, the tree `main` merged as `e897380`, and on `main` after wave 14 by Mobile Build (run 45327838056), which also runs its unit tests. Not run on a device. | [android-arcore.md](docs/targets/android-arcore.md) |
+| **Android app, 8th Wall**: the same shell built with `VITE_AR_RUNTIME=8thwall` | Built locally at `81e437c`, and by Mobile Build's 8th Wall job on `main` after wave 14 (run 45327838056); `npm run build:8thwall` in `mobile/` makes it. No device run is recorded. It shares the app id, so it replaces the ARCore build on a device. | [android-8thwall.md](docs/targets/android-8thwall.md) |
+| **Meta Quest app**: a native headset app on the Meta Spatial SDK (`meta/`) | Built locally at `81e437c`, and by the Quest Build workflow on `main` after wave 14 (run 45327834865), whose 108 JVM unit tests pass. It signs in with `shell=quest`. Not run on a headset. | [meta-quest.md](docs/targets/meta-quest.md) |
+| **iOS app**: the Capacitor shell with ARKit through `ScanAR` | In code, drawn in RealityKit's `ARView` (ADR 0012). Compiled for the iOS Simulator at `81e437c` (Mobile Build run 45260987425), and on `main` after wave 14 (run 45327838056); not run on a device. | [ios.md](docs/targets/ios.md) |
 | **Desktop app**: the editor and viewer, for Windows, macOS and Linux | In code. It cannot capture. Sign-in has not run against a real Portal. | [desktop/README.md](desktop/README.md) |
 
 The desktop and Android apps are published only as GitHub pre-releases, and no app is in an app
@@ -708,7 +708,7 @@ The full, canonical route table lives in [docs/architecture.md](docs/architectur
 | `GET` | `/scan-locations` | Returns geo-located scan positions |
 | `GET`/`POST` | `/worlds` | List / create world projects |
 | `GET` | `/worlds/:slug` | World manifest: scans, layers, members, jobs, patches (+ `.splat` sidecars) |
-| `GET` | `/worlds/:slug/share` | Compatibility endpoint returning view/comment/edit/scanner/owner links scoped to one Place |
+| `GET` | `/worlds/:slug/share` | Compatibility endpoint returning the share links scoped to one Place, only those at or below the caller's role (an owner token gets the owner link) |
 | `POST` | `/worlds/:slug/patches` | Persists transform, label, category, notes, visibility edit patches |
 | `GET`/`POST` | `/worlds/:slug/jobs` | List / queue async world jobs (`align-scan`, `semantic-pass`, `splat-train`, `lingbot-map-reconstruct`, …) |
 | `GET` | `/jobs` / `/jobs/:id` | Legacy view of `optimize-scan` jobs (shimmed from WorldJob data, shape unchanged) |

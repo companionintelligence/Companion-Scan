@@ -110,7 +110,7 @@ sections separated by hairlines, each of which appears only when relevant:
 | **`#status-text`** | The single narrative channel: engine readiness ("8th Wall ready"), tracking ("Move camera to initialise tracking…", "Tracking — tap to capture"), capture stages ("Capturing next frame...", "Analysing…", "3 objects detected"), warnings ("⚠ Moving too fast — slow down", "Tracking lost — move slowly"), and typed server-error guidance. | `src/main.ts:141,168,176,216,220,242,285-315,470,556,567-568` |
 | **`#scan-stats`** | Live SLAM point count ("96 pts"), updated on every scanner tick that adds voxels. | `src/main.ts:551-553` |
 | **Geo chip** | Reverse-geocoded address (ellipsised at 130 px) + raw lat/lng ± accuracy. | `src/main.ts:851-865`, CSS `index.html:510-528` |
-| **Progress bar** | Determinate for model download (`overlay.setProgress`, `src/ui/overlay.ts:104-112`); switches to an indeterminate mint sweep while a capture is being inferred (`analyzing` class, CSS `index.html:597-606`, toggled `src/main.ts:222-226,238-240`). |
+| **Progress bar** | Determinate for model download (`setProgress` of `setupStatusOverlay()` in `src/main.ts`; the AR overlay no longer holds the status line or the progress bar); switches to an indeterminate mint sweep while a capture is being inferred (`analyzing` class, CSS `index.html:597-606`, toggled `src/main.ts:222-226,238-240`). |
 | **Coverage bar ("Cov")** | 0-100 % fill, red < 50 %, amber < 80 %, green ≥ 80 %, with text like "Low — keep scanning". | `src/main.ts:688-693` |
 | **Quality badges** | "⚡ Fast / ↗ Speed" (drift risk), "🌑 Low light", "✦ Refl" (reflective surface), "N areas missing" — each shown only when its condition holds. | `src/main.ts:695-704`, markup `index.html:1167-1172` |
 | **Autosave line** | "Autosave ready" → "Autosave queued" → "Saving scan..." → "Autosaved \<name\> · 07:54 AM". Autosave debounces 1.2 s after each capture and uploads a GLB snapshot. | `src/main.ts:344-380,606-609` |
@@ -196,7 +196,7 @@ Top to bottom:
 
 | Button | Emoji | What it does | Appears/disabled | Source |
 |---|---|---|---|---|
-| `#xr-mode-link` | 🥽 | Switches AR runtime: 8th Wall → `/?ar=webxr` (native WebXR), or back to `/` when already in WebXR mode (then styled `.active`). | **Hidden entirely** when the browser can't run `immersive-ar` (why it's absent in these headless-capture screenshots). | `index.html:1196`, logic `src/main.ts:186-189,733-753` |
+| `#xr-mode-link` | 🥽 | Switches AR runtime: 8th Wall → the scanner with `ar=webxr` (native WebXR), or back without it when already in WebXR mode (then styled `.active`). Every other query parameter is kept (`runtimeSwitchHref`, `src/ar/runtime-select.ts`). | **Hidden entirely** when the browser can't run `immersive-ar` (why it's absent in these headless-capture screenshots). | `index.html:1196`, logic `src/main.ts:186-189,733-753` |
 | `#panel-toggle` | ☰ | Opens/closes the Review & Export side panel (§6). Shows a mint badge with the detection count (`data-count` attr → `::after`). | Badge empty until first detection. | `index.html:1197`, badge CSS `743-759`, wiring `src/ui/panel.ts:75,188-193,217-219` |
 | `#viewer-link` | 🖥 | Plain link to the Companion Scan Spatial Editor (`/editor`). | Always. | `index.html:1198` |
 | `#stream-btn` | ☁️ | Toggles **keyframe streaming**: pose-tagged JPEG frames uploaded to the server session store during the scan (the input LingBot-Map reconstructs from). Green `.active` state + sent-count badge; title flags "OFFLINE" when uploads stall. | Always; state via `.active`. | `index.html:1199-1202`, `src/main.ts:411-441` |
@@ -442,7 +442,7 @@ IndexedDB write/read on a throwaway DB, service-worker registration state, XR ru
 
 There are **no interactive controls** beyond two footer links back to the scanners;
 results are also relayed to the box via `POST /client-logs` so a developer watching
-`npm run logs:watch` sees the phone's results without touching it
+`npm run logs:watch` (on a server started with `CLIENT_LOGS_BROADCAST=1`) sees the phone's results without touching it
 (`public/smoke.html:337-351`).
 
 ### Design intent
@@ -489,7 +489,7 @@ camera, per-object labels, transform gizmo, and the floating inspector (top-righ
 | **Share** | A compact dropdown for one Place with copyable **View**, **Comment**, **Edit**, **Scanner**, and **Owner** capability links. | `#share-menu`, `#share-links` |
 | **Views** | Independent on/off controls for GIS map, hit points, ground planes, scanned objects, camera trail, image frustums, scanned images, ground grid, and tags. Render style is a view setting, not a row of persistent toolbar buttons. | `#view-menu` |
 | **📏 Measure** | Toggles the two-click measurement tool (below). | `viewer.html:815`, `viewer.ts:1877-1883` |
-| **🗺 Map** | Toggles the geo-map drawer (Leaflet, scan pins). | `viewer.html:816`, `viewer.ts:1866-1870` |
+| **🗺 Map** | No longer a toolbar button: the geo-map drawer (Leaflet, scan pins) opens from the Views menu's "GIS map" checkbox. | `#view-toggle-map` in `viewer.html` |
 | **📡 Live** | Toggles the live-feed panel (WebRTC stream from a phone mid-scan; live frustum + points + detections). | `viewer.html:817`, `viewer.ts:1872-1875`, `livefeed.ts` |
 | **← AR App / 🥽 WebXR** | Navigation back to the phone scanner surfaces. | `viewer.html:818-819` |
 
@@ -507,8 +507,8 @@ drawn with a "3.36 m" pill label that re-projects every frame; a third click sta
 new measurement, and toggling off clears everything. Raycasts respect object
 visibility and exclude its own overlay (`src/viewer/measure.ts:66-86,104-139`; click
 routing `viewer.ts:225` region). The world is metric ENU, so measurements are
-ground-truth against `expected.json` in tests. Exposed as `window.__measureTool`
-(`viewer.ts:96-98`).
+ground-truth against `expected.json` in tests. The Measure button ships in every build;
+the test hook `window.__measureTool` is set only in a dev build or under `?mock=editor`.
 
 ### 10.2 Left drawer — Place and Scan management
 
@@ -531,7 +531,7 @@ ground-truth against `expected.json` in tests. Exposed as `window.__measureTool`
 
 | Section | Contents | Source |
 |---|---|---|
-| **Project details** | Scan/layer/job counts, GIS or local origin, and the Place/Area hierarchy. | left drawer |
+| **Project details** | Guided Processing, World export, Alignment checks and the Advanced queue, and the Place/Area hierarchy. The counter tiles and the origin label are gone. | left drawer |
 | **Layers** | Map quality and source layer visibility belong here, below navigation. Each layer remains independently toggleable. | left drawer |
 | **Places** | Create/rename Areas (building, floor, room, zone, outdoor) and assign scans without changing their capture provenance. | left drawer |
 | **Edit** | Adjust a selected scan/object transform, semantic tag, or notes. | left drawer |
@@ -544,9 +544,10 @@ ground-truth against `expected.json` in tests. Exposed as `window.__measureTool`
   (semantic analysis and Things), **Reconstruct** (LingBot-Map and splats), and
   **Publish** (Companion Memory/export). Each stage requires an explicit selected
   scan where applicable and records its job history.
-- **Scene layers**: one checkbox per layer type (point cloud, meshes, floors,
-  detections, labels, camera path, camera frustums, RGB frames, depth, semantic masks,
-  Gaussian splat) with item counts and provenance ("glb" / "derived" / "future");
+- **Scene layers**: one checkbox per layer type that has something to show (point cloud,
+  meshes, floors, detections, labels, camera path, camera frustums, RGB frames, the 4D person
+  and the calibration anchors; the depth, semantic-mask and splat rows are not listed), with
+  counts that read "N items", "N frames", "no frames" or "none" and their provenance;
   toggles drive global layer visibility (`viewer.ts:1182-1215`, counts
   `1305-1325`, visibility model `1329-1372`).
 - **LingBot-Map Reconstruction** section (`viewer.html:906-920`): status text explains
@@ -570,9 +571,6 @@ ground-truth against `expected.json` in tests. Exposed as `window.__measureTool`
 the Spatial Editor next to the seeded test homes.*
 
 **Improvement opportunities (splat layers)**
-- The generic layer list still shows a "Gaussian splat — planned · future" row even
-  though the Trained Splat section below it is now real — the stale row should be
-  removed or wired to the same state.
 - Three adjacent splat-related panels (layer row, Trained Splat, manual Gaussian
   Splats) carry different mental models (per-scan pipeline artifact vs ad-hoc viewer
   asset); a single merged section with a source badge would read better.
@@ -590,7 +588,7 @@ assign semantic categories." With a selection:
 | **Save Transform** | Persists the gizmo transform as a Place patch. | `viewer.ts:1842-1844` |
 | **Semantic tag grid** | One-active chip set (sofa/table/door/...); selection recolours in semantic mode and queues a tag write. | `viewer.ts:1766-1782` |
 | **Notes + Save Notes** | Free-text note stored on the object. | `viewer.ts:1784-1792` |
-| **Hide Object (saved as patch)** | Non-destructive hide persisted server-side. | `viewer.ts:1885-1891` |
+| **Hide Object (saved as patch)** | Non-destructive hide persisted server-side. The Edit tab lists hidden objects, each with a Show button that writes it back. | `viewer.ts` (`renderHiddenObjects`, `unhideObject`) |
 
 ### 10.6 Viewport HUD
 

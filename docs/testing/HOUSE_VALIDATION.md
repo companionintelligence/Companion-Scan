@@ -127,8 +127,8 @@ Per session, run the toolbox chain (from the editor's **Splat Toolbox**, or via
 3. **splat-detect** (splat_analyzer / OWLv2) — open-vocab detection over the
    splat or the converted point cloud.
 
-Detect runs on `HIP_VISIBLE_DEVICES=1`; train uses the wgpu adapter pin. Keep
-both explicit so a warm Ollama model does not OOM the torch job.
+Set `HIP_VISIBLE_DEVICES` for detect (unset, it pins no device) and the wgpu adapter pin
+for train. Keep both explicit so a warm Ollama model does not OOM the torch job.
 
 ---
 

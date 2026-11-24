@@ -26,9 +26,11 @@ starts on the 8th Wall engine and never on the phone's ARCore session.
 - **Built once, locally.** At commit `81e437c`, the tree `main` merged as `e897380` (#282), the
   steps under [Build](#build) made a debug APK of about 41 MB, whose main web chunk differs from the
   default build's ([Builds of the merged tree](README.md#builds-of-the-merged-tree)). That build
-  ran from a script outside this repository. No script in the repository and no workflow sets
-  `VITE_AR_RUNTIME`: the Native Release and Mobile Build workflows build the default, native-first
-  APK.
+  ran from a script outside this repository.
+- **Built in CI since wave 14.** `npm run build:8thwall` in `mobile/` (`build-web.mjs
+  --ar-runtime=8thwall`) makes this build, and the Mobile Build workflow has a job for it, which
+  built a debug APK on `main` at `8deb264` (run 45327838056). Native Release still builds only the
+  default, native-first APK.
 - **Not run on a device.** The 8th Wall path has not run inside the shell on any build
   ([mobile/README.md](../../mobile/README.md#gates)). The one 8th Wall device result is in Android
   Chrome, not in the shell: on an XREAL Beam Pro, about 2 starts in 8 reach video
@@ -42,10 +44,12 @@ starts on the 8th Wall engine and never on the phone's ARCore session.
 | Where it is read | `src/main.ts`: the `?ar=` value, else `buildForcedRuntime(import.meta.env.VITE_AR_RUNTIME)` |
 | Provider | `src/ar/eighthwall.ts`, engine `public/xr.js` |
 | The shell | as in [android-arcore.md](android-arcore.md#entry-points-and-files) |
+| Offline queue | `src/page-upload-queue.ts`, as in [android-arcore.md](android-arcore.md#entry-points-and-files) |
 
 ## Build
 
-These are the steps the 2026-11-23 build ran. `scripts/native/build-web.mjs` refuses a
+`npm run build:8thwall` in `mobile/` does the first two steps below, and `npm run build:web:8thwall` the
+first. These are the steps the 2026-11-23 build ran. `scripts/native/build-web.mjs` refuses a
 `.env` file that sets a `VITE_` variable, and passes the environment it was started with to Vite,
 so set the variable on the command line. From `mobile/`, after `npm ci` in the repo root:
 
@@ -74,7 +78,7 @@ There is no checklist for this build. On a device, use the 8th Wall rows that ap
   DEVICE_TEST_KIT.md, building the web bundle as above.
 - Read the status line before AR starts: it should read "8th Wall ready", and the console should
   show no `[native-ar] trackingStatus:` line.
-- With `?debug=remote,verbose` and `npm run logs:watch`, the provider's camera lines
+- With `?debug=remote,verbose`, and `npm run logs:watch` against a server started with `CLIENT_LOGS_BROADCAST=1`, the provider's camera lines
   (`[8thwall] Camera status: ...`, then `[8thwall] trackingStatus: NORMAL`) say whether the start
   reached video, as [AR_DEVICE_SUPPORT.md](../operations/AR_DEVICE_SUPPORT.md#practical-guidance)
   describes for the browser.
@@ -85,7 +89,7 @@ Without a device: `npm run test:native-ar` runs `native_ar_runtime_select.test.t
 
 ## Known gaps
 
-- No workflow builds this APK, and no install or run of it is recorded.
+- Native Release does not build this APK, and no install or run of it is recorded.
 - The two Android builds replace each other on a device, so comparing ARCore and 8th Wall on one
   phone means reinstalling.
 - The XR Engine licence sign-off that gates any store build applies here as in the default build

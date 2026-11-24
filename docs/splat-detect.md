@@ -1,6 +1,6 @@
 <!--
-This file is the target named by the two remediation strings in
-server/capabilities.ts:384,394 and server/splat/splat_detect.ts:174,180
+This file is the target named by the two remediation strings of the
+splat-detect-python and splat-detect-dir rows in server/exec_probe.ts
 ("see docs/splat-detect.md — Setup"). Those strings pointed at a file that did
 not exist until this doc was written; keep the "## Setup" heading below so the
 hint stays true.
@@ -159,8 +159,8 @@ device: cuda:0 | detections: 5
 
 ## Known driver/upstream mismatches
 
-`server/splat/splat_detect.ts`'s header says its facts were "confirmed via run_local.py
---help on this box" — but they describe a **ROCm fork**, not upstream `main`
+`server/splat/splat_detect.ts`'s header gives its analyzer facts as read from `run_local.py
+--help` on the host it was written on — but they describe a **ROCm fork**, not upstream `main`
 (`a3cd884`). Two of them do not hold, so a `splat-detect` job on this install still fails
 even though the capability probe reports READY:
 
@@ -184,13 +184,15 @@ even though the capability probe reports READY:
 2. **`pointcloud_to_gs.py` does not exist upstream.** The LingBot point-cloud fallback
    path spawns `$SPLAT_DETECT_DIR/pointcloud_to_gs.py`; that file is not in the
    checkout, so the fallback can only ever produce a spawn error. The trained-splat path
-   (the preferred one) is unaffected. `server/capabilities.ts:390` also advertises the
-   dir as holding it.
+   (the preferred one) is unaffected. The splat-detect-dir row's setup text in
+   `server/exec_probe.ts` also advertises the dir as holding it.
 
-Both need a change in `server/splat/splat_detect.ts`, which this doc's author did not
-own — they are reported, not fixed.
+Neither is fixed in code. The driver's header now records both, and keeps passing
+`--renderer point`, because dropping it would hand a ROCm host a rasterizer it has no build
+of. Which analyzer is the supported one, the ROCm fork or upstream, is the owner's decision
+(wave 14).
 
-`HIP_VISIBLE_DEVICES` (default `"1"`) is harmless here rather than wrong: it is a ROCm
+`HIP_VISIBLE_DEVICES` (unset by default since wave 14, and then not passed at all) is harmless here rather than wrong when set: it is a ROCm
 variable that CUDA ignores, so the run lands on GPU 0. It is *not* an alias for
 `CUDA_VISIBLE_DEVICES` — setting that to `1` on this single-GPU box would hide the only
 device.

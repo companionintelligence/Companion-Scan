@@ -26,8 +26,11 @@ is [mobile/README.md](../../mobile/README.md).
   autosaves every minute, when the app goes to the background, when ARKit is interrupted, and on
   stop. `default` never gets a map. Maps are excluded from backups and never uploaded.
 - An ARKit interruption (backgrounding, or another app on the camera) is reported as tracking
-  `notAvailable`, and the session is not reset.
-- The app is for iPhone only (`TARGETED_DEVICE_FAMILY = 1`), iOS 16.4 or later, portrait only.
+  `notAvailable`. When it ends, a session for a named Place relocalizes into the Place's map, so
+  the scan stays in the Place's coordinates; any other session restarts at once in a new frame
+  (`sessionShouldAttemptRelocalization`, since wave 14).
+- The app is for iPhone only (`TARGETED_DEVICE_FAMILY = 1`), iOS 16.4 or later, portrait only,
+  and its `Info.plist` requires `arkit`, so a phone without ARKit cannot install it.
   Sign-in runs in the system browser sheet and comes back on
   `com.companionintelligence.scan://auth`.
 - **RealityKit: compiled, not run on a device.** Since 2026-11-23 the native view is RealityKit's
@@ -46,9 +49,10 @@ is [mobile/README.md](../../mobile/README.md).
 - **Build: the merged tree compiles for the iOS Simulator.** The Mobile Build workflow's iOS
   Simulator job compiled commit `81e437c`, the tree `main` merged as `e897380` (#282), on
   2026-11-23 (run 45260987425); the same run built the Android debug APK
-  ([Builds of the merged tree](README.md#builds-of-the-merged-tree)). No device build has been
-  made: that needs a Mac with Xcode and the owner's Apple signing team, and the build host here
-  has no Xcode.
+  ([Builds of the merged tree](README.md#builds-of-the-merged-tree)). After wave 14 merged, run
+  45327838056 compiled `main` at `8deb264` with wave 14's changes to `ScanARPlugin.swift` and
+  `Info.plist`. No device build has been made: that needs a Mac with Xcode and the owner's Apple
+  signing team, and the build host here has no Xcode.
 - **Sign-in: on the simulator only.** The full round trip, the status row after a restart and the
   return from the sheet ran on the iOS simulator against a local stand-in for the Portal, not the
   real one ([mobile/README.md](../../mobile/README.md#companion-account-sign-in)).
@@ -64,6 +68,7 @@ is [mobile/README.md](../../mobile/README.md).
 | Bridge and plugin | `mobile/ios/App/App/ScanBridgeViewController.swift`, `mobile/ios/App/App/ScanARPlugin.swift` |
 | Privacy manifest | `mobile/ios/App/App/PrivacyInfo.xcprivacy` (drafted, no collected data types) |
 | Web side | `src/ar/native.ts`, `src/ar/native-bridge.ts`, `src/ar/runtime-select.ts` |
+| Offline queue | `src/page-upload-queue.ts`: the app has no service worker, so the scanner page queues the scan, summary and finalize uploads it cannot send, in the IndexedDB database `companion-scan-offline-queue`, and retries them at start, when the device is back online and every minute. `src/ui/queue-notice.ts` words its notices. Not run on a device |
 | Not used | `ArSessionPlugin.swift` is in the tree, unregistered, and not in the Xcode target ([DEVICE_TEST_KIT.md](../testing/DEVICE_TEST_KIT.md#ar-in-the-shells)) |
 
 ## Build

@@ -75,8 +75,8 @@ The engine is committed at `public/xr.js`: there is nothing to download.
 4. Select or create a Place, calibrate, and tap **Scan a Place**. The camera and motion prompts
    must come from that tap.
 
-To read the phone's console on the box, run `npm run logs:watch` and add `?debug=remote` to the
-page address.
+To read the phone's console on the box, start the server with `CLIENT_LOGS_BROADCAST=1`, run `npm run logs:watch` and
+add `?debug=remote` to the page address.
 
 ## Test
 

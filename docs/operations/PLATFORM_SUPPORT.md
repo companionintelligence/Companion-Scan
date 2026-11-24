@@ -86,14 +86,12 @@ measurement lives. Spirula has not trained a capture here.
    bare name. Both branches are unit-tested from Linux via the injectable `ExecPlatform`
    (`tests/unit/deno/capabilities.test.ts`, `tests/unit/deno/exec_probe.test.ts`).
    **UNVERIFIED on real Windows** — the tests prove the logic, not the host.
-2. Every runner builds its fallback install path from `HOME` alone
-   (`Deno.env.get('HOME') ?? '~'` — colmap_poses.ts:271, splat_train.ts:163,
-   spirula_train.ts:164-165, panoptic_scan.ts:57-58, splat_detect.ts:43-44). Windows normally sets
-   `USERPROFILE`, not `HOME`, so on Windows those fallbacks degrade to the literal string
-   `~/...` and resolve to nothing. `server/capabilities.ts` reads `USERPROFILE` as a second
-   choice (`resolveHome`), so the **report** is right on Windows even where the **runners**
-   would not be. Setting the per-tool env var (`COLMAP_BIN`, `BRUSH_BIN`, …) sidesteps this
-   entirely and is the recommended Windows configuration.
+2. Every fallback install path is built from the home directory by `resolveHome`
+   (`server/exec_probe.ts`): `HOME`, then `USERPROFILE`, for the runners and the report alike.
+   Until wave 14 the runners read `HOME` alone, so on Windows, which normally sets only
+   `USERPROFILE`, their fallbacks resolved to nothing while the report found the tools.
+   **UNVERIFIED on real Windows.** Setting the per-tool env var (`COLMAP_BIN`, `BRUSH_BIN`, …)
+   sidesteps the question and is the recommended Windows configuration.
 3. The fallback paths keep forward slashes after the home prefix
    (`C:\Users\you/brush/target/release/brush-cli`). Deno's filesystem calls accept mixed
    separators, so this is expected to work — **UNVERIFIED**.
@@ -123,11 +121,12 @@ device branch. `torch.version.hip` being non-`None` is the only honest NVIDIA/AM
 discriminator; `deriveAccelerator()` in `server/capabilities.ts` checks it first for exactly
 this reason, and the report prints `→ rocm` where a naive reading would print `→ cuda`.
 
-`server/splat/splat_detect.ts` is the one place already wired for AMD: it pins
-`HIP_VISIBLE_DEVICES` for the analyzer subprocess, defaulting to `"1"` (splat_detect.ts:102).
-That default selects the *second* device, which is a deliberate pin for the multi-GPU host it
-was written on and will select a nonexistent device on a single-GPU AMD box. Set
-`HIP_VISIBLE_DEVICES=0` there. **UNVERIFIED** — no AMD hardware was available.
+`server/splat/splat_detect.ts` is the one place already wired for AMD: it passes
+`HIP_VISIBLE_DEVICES` to the analyzer subprocess when the setting is given. Unset, the default
+since wave 14, it passes none, and the runtime picks its device. The old default, `"1"`, selected
+the *second* device, a pin for the multi-GPU host it was written on that named a nonexistent
+device on a single-GPU AMD box. On a multi-GPU AMD box, set it to choose the card.
+**UNVERIFIED** — no AMD hardware was available.
 
 ### Apple Silicon
 
@@ -141,23 +140,22 @@ No Apple hardware was available, so everything in this section is UNVERIFIED by 
   it, they each resolved `cuda` or `cpu` and never consulted `torch.backends.mps`, so a Mac
   ran on CPU silently. Check that file for the current behaviour rather than trusting this
   paragraph.
-- Brush's remediation string names Metal as supported (splat_train.ts:257). Untested here.
+- Brush's remediation string names Metal as supported (the `brush` row in `server/exec_probe.ts`). Untested here.
 - Spirula publishes `ubuntu-vulkan-x86_64` releases; no macOS build is referenced anywhere in
   this repo, which is why the OS table calls it known-not-to-work rather than untested.
 
 ## Where each tool is looked for
 
-The capability report applies one convention, in this order for every row: **the env var always
+The runners and the capability report find a tool through one function, `locateTool` in
+`server/exec_probe.ts`, with one convention, in this order for every row: **the env var always
 wins, then `PATH`, then the documented no-sudo install path.** An env var that points at nothing
 is reported missing — it is never silently replaced by a fallback, because an operator whose
 override has a typo needs to be told.
 
-The runners do not all agree with the report, as of `e897380` (2026-11-23). The Brush runner uses
-`BRUSH_BIN`, else its fallback path (`server/splat/splat_train.ts`, `resolveParams`), and the
-Spirula runner uses `SPIRULA_BIN`, else its three fallback paths (`server/splat/spirula_train.ts`,
-`resolveSpirulaBin`). Neither looks on `PATH`. A trainer installed only on `PATH` is therefore
-reported found while its `splat-train` job skips. Wave 14 ticket 0002 plans one resolver for the
-runners and the report ([14-inventory-fixes](../factory/14-inventory-fixes/README.md)).
+Until wave 14 ([14-inventory-fixes](../factory/14-inventory-fixes/README.md), ticket 0002) the
+Brush and Spirula runners skipped `PATH`, so a trainer installed only there was reported found
+while its job skipped. A few inputs are still checked for existence rather than located: the
+splat-transform CLI, and the analyzer and panoptic checkouts.
 
 | Tool | Env var | On PATH as | Documented fallback |
 | --- | --- | --- | --- |
@@ -172,6 +170,14 @@ runners and the report ([14-inventory-fixes](../factory/14-inventory-fixes/READM
 | splat_analyzer checkout | `SPLAT_DETECT_DIR` | — | `~/splat_analyzer` |
 | LingBot-Map interpreter | `LINGBOT_MAP_PYTHON` | `python3` | — |
 | LingBot-Map checkpoint | `LINGBOT_MAP_MODEL_PATH` | — | — |
+| splat-finish's Node | `SPLAT_FINISH_NODE` | `node` | — |
+| splat-transform CLI | `SPLAT_TRANSFORM_CLI` | — | the repository's `node_modules/@playcanvas/splat-transform/bin/cli.mjs` |
+| SenseNova shell | `SENSENOVA_BASH` | `bash` | — |
+| SenseNova checkout | `SENSENOVA_DIR` | — | — |
+| SenseNova model | `SENSENOVA_MODEL_PATH` | — | — |
+| PhysAg3D interpreter | `PHYSAG3D_PYTHON` | `python3` | — |
+| PhysAg3D checkout | `PHYSAG3D_DIR` | — | — |
+| PhysAg3D config | `PHYSAG3D_CONFIG` | — | — |
 
 ffmpeg has **no** env var on purpose. `scripts/ingest-video.mjs` spawns the bare name and
 resolves it from `PATH`, so an override that only the capability report honoured would
@@ -197,6 +203,14 @@ pure `stat` calls with no subprocesses, at the cost of the version strings and t
 blocks. `?fresh=1` skips the cache, for the "I just installed it" case. With sign-in on, or
 `SCAN_REQUIRE_AUTH=1`, the route needs a Companion session like the other data routes
 (`SESSION_GUARDED_PATHS`). `GET /health` is separate and reports the inference engine.
+
+Beside the tool rows the report has three service rows: `fdanyone-host` (a `GET /health` to the
+4D host, with `FDANYONE_TOKEN`), `companion-memory` (configured or not; no request is made) and
+`inference-engine` (Ollama is asked `GET /api/tags`; `onnx` needs its model folder; `mock` is
+always found), and a ready or blocked verdict for each pipeline. The service rows' requests are
+made only with versions on and network permission. With `?versions=0`, or from the CLI without
+`--allow-net` (as in the commands at the top of this page), an Ollama row with `OLLAMA_HOST`
+unset reads not found, and the capture verdict that depends on it reads blocked.
 
 ## Related
 

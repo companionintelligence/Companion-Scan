@@ -1,10 +1,6 @@
 > **Type:** Refactor / Frontend
 > **Wave:** 14-inventory-fixes
-<<<<<<< HEAD
-> **Branch:** `inv-capture-core` (local only: no push, no PR)
-=======
-> **Branch:** `inv-capture-core` (local only: no push, no PR)
->>>>>>> refs/heads/inv-capture-core
+> **Branch:** `inv-capture-core` (merged as #286)
 > **Commit style:** `refactor(capture-core): summary`, `fix(geo): summary`
 > **Design:** this ticket is the spec. Findings are the inventory's at e897380: F-NN in `curated-findings.json`, FN-NNN in `views/findings-raw.txt`.
 > **Dependencies:** None. Runs beside sessions 0001-0008 of this wave, each in its own files.
@@ -151,12 +147,8 @@ npm run verify
 - **Risk:** four Playwright specs give the page a GPS fix, so the card now appears in them and could take a click meant for something under it. — **Mitigation:** none in this branch, because the specs are not this session's files:
   - `mock-reanchor`, `mock-two-point-calibration`, `mock-offline-queue` and `mock-frame-generation` call `grantPermissions(['geolocation'])` and `setGeolocation`.
   - The fix is to seed `companion-scan-geocode-consent` in each spec's init script, for example `{host: 'nominatim.openstreetmap.org', allowed: false}`. That also stops them sending real lookups.
-<<<<<<< HEAD
-  - This is listed under the report's needs. No browser spec was run here.
-=======
   - Done in a2831be, at the owner's request: each spec seeds a no in its init script.
   - The four specs then ran against this branch's own servers on spare ports with mock inference: 41 passed, 0 failed (6.7 min, chromium-mock). That is also the first browser run of the calibration card, the photo loader, the tap reader and the re-anchor flow on this branch.
->>>>>>> refs/heads/inv-capture-core
 - **Risk:** adding EXCESSIVE_MOTION and INSUFFICIENT_FEATURES changes `classifyTracking` for a NORMAL frame carrying one. — **Mitigation:** no runtime sends that pair today. The native codec sends them only with LIMITED, which was already degraded.
 - **Risk:** FN-036 makes WebXR burst frames carry LIMITED for an emulated pose, so a calibration burst over emulated poses is refused. That is the finding's intent. — **Mitigation:** the mock specs (`?mock=webxr`, iwer) are scanner-ui's and editor's. Whether iwer reports `emulatedPosition` is written up in the report, not softened here.
 
