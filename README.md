@@ -708,7 +708,7 @@ The full, canonical route table lives in [docs/architecture.md](docs/architectur
 | `GET` | `/scan-locations` | Returns geo-located scan positions |
 | `GET`/`POST` | `/worlds` | List / create world projects |
 | `GET` | `/worlds/:slug` | World manifest: scans, layers, members, jobs, patches (+ `.splat` sidecars) |
-| `GET` | `/worlds/:slug/share` | Compatibility endpoint returning view/comment/edit/scanner/owner links scoped to one Place |
+| `GET` | `/worlds/:slug/share` | Compatibility endpoint returning the share links scoped to one Place, only those at or below the caller's role (an owner token gets the owner link) |
 | `POST` | `/worlds/:slug/patches` | Persists transform, label, category, notes, visibility edit patches |
 | `GET`/`POST` | `/worlds/:slug/jobs` | List / queue async world jobs (`align-scan`, `semantic-pass`, `splat-train`, `lingbot-map-reconstruct`, …) |
 | `GET` | `/jobs` / `/jobs/:id` | Legacy view of `optimize-scan` jobs (shimmed from WorldJob data, shape unchanged) |

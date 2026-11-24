@@ -49,8 +49,9 @@ Install a ROCm torch wheel from the PyTorch install selector. A ROCm torch repor
 it apart from NVIDIA by `torch.version.hip`, and labels it `AMD ROCm`.
 
 - On a multi-GPU host, pick a device with `HIP_VISIBLE_DEVICES`.
-- `server/splat/splat_detect.ts` defaults `HIP_VISIBLE_DEVICES` to `1`, which is wrong on a
-  single-GPU AMD box. Set it to `0`. See [PLATFORM_SUPPORT.md](PLATFORM_SUPPORT.md#rocm-is-not-a-separate-branch-and-must-not-become-one).
+- `server/splat/splat_detect.ts` passes `HIP_VISIBLE_DEVICES` to the analyzer only when it is
+  set; unset (the default since wave 14) pins no device. Until then it defaulted to `1`, which was
+  wrong on a single-GPU AMD box. See [PLATFORM_SUPPORT.md](PLATFORM_SUPPORT.md#rocm-is-not-a-separate-branch-and-must-not-become-one).
 
 ### Apple Silicon (MPS) — unverified
 

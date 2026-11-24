@@ -109,10 +109,10 @@ Recorded as follow-up, below.
 
 ### What this does NOT fix: the panoptic lift still gets nothing
 
-The 3-D lift needs **metric per-frame poses**. `server/panoptic/panoptic_segments.ts:248-251`
+The 3-D lift needs **metric per-frame poses**. `server/panoptic/panoptic_segments.ts:247-250`
 states the situation plainly for the 48-frame fixture: a video keyframe carries no capture pose
 (0 of 48), and solved SfM poses are scale-free, so the lift places nothing;
-`server/panoptic/panoptic_lift.ts:513` distinguishes the two failures ("no capture pose vs a
+`server/panoptic/panoptic_lift.ts:999-1005` distinguishes the two failures ("no capture pose vs a
 non-metric cloud") because they need different fixes.
 
 **A station capture with no AR tracking lands in exactly the same place as a video ingest.** The
@@ -122,7 +122,7 @@ capture that registers 36/36 and a capture that registers 3/17 both give the lif
 place — for different reasons, and only the first of those is fixed here.
 
 What would change it: **the device's own VIO surviving the moves between stations.** The plumbing
-already exists — `subsystems/osmo-ble/server/backend.mjs:620-637`'s `capturePhotos: false` mode
+already exists — `subsystems/osmo-ble/server/backend.mjs:1476-1488`'s `capturePhotos: false` mode
 drives the grid while the phone runs the scanner web app, which captures its own keyframes and
 tags each with an AR pose, and the comment there says why that matters: "VIO poses ARE metric
 (the IMU measures real acceleration)". On the Beam Pro that mode is unavailable today, because
@@ -140,8 +140,8 @@ operators. Specifically:
 
 1. **It is a pattern, not a new system.** No new session type, no new `WorldJobType`, no new
    manifest, no new config variable (ADR 0001). The photos go to the existing pose-less photo
-   ingest — `POST /ingest-photos` (`server/main.ts:1545`), which EXIF-orders, blur-filters and
-   auto-enqueues `lingbot-map-reconstruct` (`server/main.ts:1626`); `colmap-poses` is the CPU
+   ingest — `POST /ingest-photos` (`server/main.ts:2073`), which EXIF-orders, blur-filters and
+   auto-enqueues `lingbot-map-reconstruct` (`server/main.ts:2353`); `colmap-poses` is the CPU
    alternative for the same session shape. Several captures of one room pool with the existing
    `scripts/scan-room.ts --pool <ids…> --as <id>`.
 
@@ -224,7 +224,7 @@ the real OM6, and every one of them is a way for a capture to go wrong in the mi
   as unresolved until someone re-probes the limits deliberately.
 - **Driving into the stop is a jam, and it reports as one.** A jam closes ~0.65° of distance in
   11 s where a healthy move closes ~31° in 7.8 s, so the verdict is computed from **net
-  progress**, not from a tick count (`subsystems/osmo-ble/server/backend.mjs:470-490`). Do not
+  progress**, not from a tick count (`subsystems/osmo-ble/server/backend.mjs:1050-1072`). Do not
   reintroduce a tick-counting stall check: a tick costs ~880 ms on real hardware, so 12 ticks
   cannot fit inside the default 8000 ms budget and every genuine jam would be reported as a
   retryable timeout.
@@ -232,7 +232,7 @@ the real OM6, and every one of them is a way for a capture to go wrong in the mi
   otherwise, so every path that leaves one outstanding leaves the motors running — including a
   thrown error, an aborted scan, and the BLE link simply going away. This has cooked a real OM6.
   `stopMotors()` on every exit path is load-bearing, not defensive
-  (`subsystems/osmo-ble/server/backend.mjs:325-337`, and `moveToClosedLoop`'s `finally`).
+  (`subsystems/osmo-ble/server/backend.mjs:619-626`, and `moveToClosedLoop`'s `finally`).
 - **Tilt is asymmetric**: it converges down to about −40° but stalls near +16°, a mechanical
   limit rather than a display artefact. Two tilt rows have to live inside that band.
 - **A wedged gimbal aborts the run**, and the recovery is physical (hold Shutter + Switch +

@@ -602,8 +602,9 @@ gaussian splat (`.ply`/`.sog`), not a GLTF — a `.glb` only exists as an option
 pre-existing mobile-exported `.glb`, not something this pipeline produces). A full gaussian splat
 is a further, manually-enqueued `splat-train` job — worth doing, but 9 sparse gridded photos is
 thin input for 3DGS quality; the point cloud is the realistic fast result from one run. (This is
-the same coverage problem the parallax warning above quantifies — it is why every front-end now
-defaults to a multi-station dome rather than one grid from one spot.)
+the same coverage problem the parallax warning above quantifies — it is why the control page now
+defaults to a four-station dome rather than one grid from one spot. The CLI's `grid` still defaults to one
+station: pass `--stations 3` or more for a capture meant to reconstruct.)
 
 **And note what a splat from this path is *not*: measured.** Structure-from-motion is
 scale-blind, so a reconstruction from gridded photos has no metres in it at any stage. Nothing

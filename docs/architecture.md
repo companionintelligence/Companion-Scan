@@ -362,7 +362,7 @@ A **world** (`WorldProject`, `src/world/types.ts`) is an anchored spatial contai
 
 #### Roles & Tokens (`WORLD_STRICT_AUTH`)
 
-Places/projects carry role-scoped membership (`MemberRole`: `owner | editor | commenter | viewer | scanner`) and share slugs. The environment flag `WORLD_STRICT_AUTH=1` (`server/main.ts`) turns on strict token enforcement: requests must present a valid role token, and anonymous access is rejected. `SCAN_REQUIRE_AUTH=1` turns on the same strict world auth, and it also gates the session routes. Sign-in on enables strict world auth regardless of `WORLD_STRICT_AUTH` and `SCAN_REQUIRE_AUTH`. When none of these is set (default), routes allow anonymous access — appropriate for a single-owner LAN/Tailnet deployment. Recipients open the Spatial Editor at `/editor?project=<id>` with their granted role; a `viewer` link is read-only and a `commenter` link reserves comment capability without edit rights.
+Places/projects carry role-scoped membership (`MemberRole`: `owner | editor | commenter | viewer | scanner`) and share slugs. The environment flag `WORLD_STRICT_AUTH=1` (`server/main.ts`) turns on strict token enforcement: requests must present a valid role token, and anonymous access is rejected. `SCAN_REQUIRE_AUTH=1` turns on the same strict world auth, and it also gates the session routes. Sign-in on enables strict world auth regardless of `WORLD_STRICT_AUTH` and `SCAN_REQUIRE_AUTH`. When none of these is set (default), routes allow anonymous access — appropriate for a single-owner LAN/Tailnet deployment — except that queueing `thing-interactive-asset`, `memory-push` or a real `keyframe-purge` still needs an editor-or-better token or a Companion session, because the first two send data off the box and the third deletes. A GET of a world slug that has no file answers 404, except `default` and the `project-<id>` world of a Place in the registry, which are built on first read. Recipients open the Spatial Editor at `/editor?project=<id>` with their granted role; a `viewer` link is read-only and a `commenter` link reserves comment capability without edit rights.
 
 ### World Job Types & Processing (`/worlds/:slug/jobs`)
 
@@ -394,7 +394,7 @@ The `/worlds/:slug/jobs` queue runs **asynchronous** world jobs (`WorldJobType`,
 | `place-register` | `server/register/place_register.ts`: compares a scan's walls and obstacles with the Place's other calibrated scans | a proposed move on the job. It moves nothing: a person applies it in the editor as an ordinary scan `EditPatch` |
 | `keyframe-purge` | `server/keyframe_retention.ts`: deletes the camera frames kept longer than `KEYFRAME_RETENTION_DAYS`. Queued in the default world by that setting's timer, or by a request, which is a dry run unless `payload.dryRun` is `false` | a summary of what was, or would be, removed |
 
-Six of these — `ingest`, `extract-layers`, `align-scan`, `merge-points`, `semantic-pass`, `depth-reconstruct` — have no runner and complete through the pump's shared placeholder path (ADR 0003 "Placeholder WorldJobTypes"): a 650 ms sleep, an input check, a result that starts `No-op:` and names what was not done (`src/shared/placeholder-jobs.ts`), and the report artifact in the table. Nothing is computed and no scan changes. `export-world` has a runner: it writes one tagged file for the whole Place, `<slug>.world.glb`, built from each scan's GLB under its `localToWorld` (`server/world_export.ts`). Of the seventeen with a runner, most report a "hint" and complete as `skipped` with a remediation when their optional tool (Brush or Spirula, COLMAP, LingBot-Map's checkpoint or torch, SenseNova, the panoptic segmenter, the 4d-capture host, PhysAg3D) is not configured, so the queue runs end to end in CI and on a box with no GPU. At least three do not, as of `e897380` (2026-11-23): `memory-push` fails when Companion Memory is not connected, `lingbot-map-reconstruct` fails when its interpreter cannot be started (it skips on a missing checkpoint or torch), and `splat-finish` fails when `node` cannot be started (it skips on a missing CLI). Wave 14 plans to make those skip too ([`factory/14-inventory-fixes/`](factory/14-inventory-fixes/README.md), tickets 0001 and 0002).
+Six of these — `ingest`, `extract-layers`, `align-scan`, `merge-points`, `semantic-pass`, `depth-reconstruct` — have no runner and complete through the pump's shared placeholder path (ADR 0003 "Placeholder WorldJobTypes"): a 650 ms sleep, an input check, a result that starts `No-op:` and names what was not done (`src/shared/placeholder-jobs.ts`), and the report artifact in the table. Nothing is computed and no scan changes. `export-world` has a runner: it writes one tagged file for the whole Place, `<slug>.world.glb`, built from each scan's GLB under its `localToWorld` (`server/world_export.ts`). Of the seventeen with a runner, most report a "hint" and complete as `skipped` with a remediation when their optional tool (Brush or Spirula, COLMAP, LingBot-Map's checkpoint or torch, SenseNova, the panoptic segmenter, the 4d-capture host, PhysAg3D) is not configured, so the queue runs end to end in CI and on a box with no GPU. Since wave 14 (tickets 0001 and 0002, [`factory/14-inventory-fixes/`](factory/14-inventory-fixes/README.md)) that holds for every tool that is not found: `memory-push` skips when Companion Memory is not connected, `lingbot-map-reconstruct` when its interpreter is not found, and `splat-finish` when `node` is not found. A tool that is found and fails to start for another reason still fails the job.
 
 The editor's Queue-Job dropdown exposes thirteen of them (`viewer.html` § `#job-type`); the Splat Toolbox additionally fires `splat-train` and `splat-detect` with its own payload. The other ten are reached differently:
 
@@ -519,7 +519,7 @@ work from one), so keep secrets out of any `VITE_` name. Values below come from 
 
 - `PORT`: Hono's HTTP port (defaults to `8000`).
 - `TAILSCALE_HOSTNAME`: auto-detected from `tailscale status`; used to build the default CORS origin.
-- `ALLOWED_ORIGIN_PREFIX`: base origin for CORS filtering. Defaults to `https://$TAILSCALE_HOSTNAME` (auto-detected); falls back to a historical dev host only if no Tailscale hostname is available.
+- `ALLOWED_ORIGIN_PREFIX`: base origin for CORS filtering. Defaults to `https://$TAILSCALE_HOSTNAME` (auto-detected by `server/origin.ts`, and in parallel by `vite.config.ts`: the setting, then `tailscale status`, then a certificate file); when nothing names a host it falls back to `localhost`, with a warning at boot, and admits no tailnet origin.
 - `API_TARGET`: upstream the Vite proxy forwards to (defaults to `http://localhost:8000`).
 - `INFERENCE_MODE`: `ollama` (default), `onnx`, or `mock` (see section 4).
 - `OLLAMA_HOST`: address of the local Ollama daemon (defaults to `http://localhost:11434`).
@@ -538,9 +538,10 @@ work from one), so keep secrets out of any `VITE_` name. Values below come from 
 per-user in places a login shell does not search — COLMAP in a micromamba env, Brush in a
 cargo target dir, Spirula unzipped under `~/opt`. `command -v` therefore reports nothing on a
 box where all three are installed and working, which is a false negative that reads exactly
-like a missing dependency and has already cost hours of debugging. Each resolver probes its
-documented install path after `PATH` (`resolveColmapBin`, `DEFAULT_BRUSH_BIN`,
-`FALLBACK_SPIRULA_BINS`), and every manifest records the absolute binary that actually ran —
+like a missing dependency and has already cost hours of debugging. Each resolver goes through one
+function, `locateTool` in `server/exec_probe.ts`: the setting, then `PATH`, then the documented
+install path (`resolveColmapBin`, `DEFAULT_BRUSH_BIN` and `FALLBACK_SPIRULA_BINS` are names for
+entries of its table), and every manifest records the absolute binary that actually ran —
 that field, not `which`, is the authority on what a given artifact was produced by. ffmpeg is
 the inverse case: it *is* on `PATH`, but the server resolves it from the `PATH` it was
 started with, so installing it without restarting the server leaves ingest failing while a

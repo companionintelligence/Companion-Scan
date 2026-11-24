@@ -28,11 +28,10 @@ their own; each is pointed at a Scan server by its https address.
   and compression. A person capture is reconstructed off-box in `subsystems/4d-capture/`
   ([ADR 0006](../adr/0006-person-capture-is-a-calibrated-take-and-densification-is-a-subsystem.md)).
 - **Optional tools.** Every reconstruction tool is an external program the server runs. A missing
-  one usually makes its job complete as `skipped` with a `remediation`, so a box with none of them
-  still runs most of the queue. Known exceptions, as of `e897380` (2026-11-23): `memory-push` fails when
-  Companion Memory is not connected, `lingbot-map-reconstruct` fails when its interpreter cannot
-  be started, and `splat-finish` fails when `node` cannot be started. A missing LingBot-Map
-  checkpoint or torch, or a missing splat-transform CLI, is still a skip.
+  one makes its job complete as `skipped` with a `remediation`, so a box with none of them still
+  runs the whole queue. Since wave 14 that includes `memory-push` without Companion Memory, a
+  LingBot-Map interpreter that is not found and a `node` for splat-finish that is not found. A tool
+  that is found and fails to start for another reason still fails the job.
 - **Inference.** `INFERENCE_MODE` picks the engine: `ollama` (the default, running
   `OLLAMA_MODEL`, `qwen3-vl:4b` unless set), `onnx` (the bundled `LiquidAI/LFM2.5-VL-1.6B-ONNX`) or
   `mock` (a deterministic colour-blob engine for tests). The on-device WebGPU path runs in the

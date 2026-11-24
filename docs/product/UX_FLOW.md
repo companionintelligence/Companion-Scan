@@ -472,7 +472,7 @@ The two senses of "4D" are distinguished in ADR 0006.
 **User goal:** hand a specific person a private, explorable copy — scoped to what they should see.
 
 **Screens/controls today:**
-- **Share** (top bar, `#share-links`): copyable **view / comment / edit / owner** links, and a **Scan with a phone** block for the scanner link, sourced from `/worlds/<slug>/share`. Each has a QR that shows only on a click. Recipients open only the granted Place in the Spatial Editor.
+- **Share** (top bar, `#share-links`): copyable links for the roles at or below the caller's (**view / comment / edit**, and **owner** only for an owner), and a **Scan with a phone** block for the scanner link, sourced from `/worlds/<slug>/share`. Each has a QR that shows only on a click. Recipients open only the granted Place in the Spatial Editor.
 - **Publish** (Project tab, `GUIDED_WORKFLOWS.publish` in `src/viewer/viewer.ts`) queues:
   - `memory-push`, which pushes the scan to Companion Memory;
   - `export-world`, which writes the Place's `.world.glb`.
