@@ -46,7 +46,7 @@ Three things worth saying plainly about that table:
 OneCanvas *training* was 8× A6000 for 72.5 h — but we would never train. **Inference** is
 Qwen3-VL-8B with a frozen vision encoder, LoRA adapters and a 2-layer position-embedding MLP.
 
-At fp16 that is roughly 16 GB of weights plus activations and canvas tokens, and `beta-1`'s
+At fp16 that is roughly 16 GB of weights plus activations and canvas tokens, and the ROCm host's
 23.98 GiB per card is **plausibly enough**.
 
 **Stated as plausible, not established.** The paper reports training compute and gives no
@@ -99,7 +99,7 @@ would mean inventing an API that does not exist yet; it gets written against wha
 ## Execution order
 
 **0001 lands first and can change the shape of everything after it.** It is a measurement, not
-a feature: if Qwen3-VL-8B fits `beta-1`, this is an on-fleet capability and 0005 targets the
+a feature: if Qwen3-VL-8B fits the ROCm host, this is an on-fleet capability and 0005 targets the
 local Ollama. If it does not, it becomes a `subsystems/onecanvas/` worker on the `4d-capture`
 pattern already in the repo.
 

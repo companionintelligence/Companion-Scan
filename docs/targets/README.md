@@ -14,12 +14,12 @@ and [PLATFORM_SUPPORT.md](../operations/PLATFORM_SUPPORT.md).
 
 | Target | Devices | AR runtime | Entry point | Status | Page |
 |---|---|---|---|---|---|
-| Web, 8th Wall | iPhone and iPad, Safari | the 8th Wall XR Engine (`public/xr.js`) | `/?project=default` | In code. No run on an iPhone or iPad is recorded. | [web-8thwall.md](web-8thwall.md) |
-| Web, WebXR | Android Chrome with ARCore, Meta Quest Browser | WebXR `immersive-ar` | `/webxr.html` | In code. On Android one session start was seen, and tracking was not reached. Quest support is documented, not verified. | [web-webxr.md](web-webxr.md) |
-| Android app, ARCore | Android phones and tablets | ARCore through `ScanAR`, then 8th Wall, then WebXR | the app (`mobile/`) | In code. The debug build compiled before the branches were merged. Not run on a device. | [android-arcore.md](android-arcore.md) |
-| Android app, 8th Wall | Android phones and tablets | 8th Wall only | the app, built with `VITE_AR_RUNTIME=8thwall` | A build switch with a unit test. No build of it and no device run is recorded. | [android-8thwall.md](android-8thwall.md) |
-| Meta Quest app | Meta Quest 3 and 3S | native: Meta Spatial SDK, Camera2 passthrough | the app (`meta/`) | Builds here: a debug APK and 81 JVM unit tests (2026-11-23). Not run on a headset. | [meta-quest.md](meta-quest.md) |
-| iOS app | iPhone | ARKit through `ScanAR`, drawn in RealityKit's `ARView`, then 8th Wall | the app (`mobile/`) | In code. The Swift compiled in the workflow's iOS Simulator job on 2026-11-23 (run 45247696203). Not run on a device. | [ios.md](ios.md) |
+| Web, 8th Wall | iPhone and iPad, Safari | the 8th Wall XR Engine (`public/xr.js`) | `/?project=default` | In code. The web bundle built at `81e437c` ([below](#builds-of-the-merged-tree)). No run on an iPhone or iPad is recorded. | [web-8thwall.md](web-8thwall.md) |
+| Web, WebXR | Android Chrome with ARCore, Meta Quest Browser | WebXR `immersive-ar` | `/webxr.html` | In code, in the same bundle. On Android one session start was seen, and tracking was not reached. Quest support is documented, not verified. | [web-webxr.md](web-webxr.md) |
+| Android app, ARCore | Android phones and tablets | ARCore through `ScanAR`, then 8th Wall, then WebXR | the app (`mobile/`) | Built at `81e437c`: a local debug APK, and the Mobile Build workflow's (run 45260987425). Not run on a device. | [android-arcore.md](android-arcore.md) |
+| Android app, 8th Wall | Android phones and tablets | 8th Wall only | the app, built with `VITE_AR_RUNTIME=8thwall` | Built once, locally, at `81e437c`: a debug APK. No workflow builds it. Not run on a device. | [android-8thwall.md](android-8thwall.md) |
+| Meta Quest app | Meta Quest 3 and 3S | native: Meta Spatial SDK, Camera2 passthrough | the app (`meta/`) | Built locally at `81e437c`: a debug APK, and its 81 JVM unit tests pass. No workflow builds it. Not run on a headset. | [meta-quest.md](meta-quest.md) |
+| iOS app | iPhone | ARKit through `ScanAR`, drawn in RealityKit's `ARView`, then 8th Wall | the app (`mobile/`) | Compiled for the iOS Simulator at `81e437c` (Mobile Build run 45260987425). Not run on a device. | [ios.md](ios.md) |
 | Desktop app | Windows, macOS, Linux | none: no capture | the app (`desktop/`) | In code. Built by workflows run by hand. Sign-in has not run against a real Portal. | [desktop/README.md](../../desktop/README.md) |
 | Scan server | Linux; macOS and Windows unverified | none | `server/main.ts` | Runs on Linux: verified on one host. | [server.md](server.md) |
 
@@ -31,6 +31,25 @@ native first ([ADR 0009](../adr/0009-native-ar-runtime-beside-8th-wall.md)).
 
 Planning for the device targets is in wave 13:
 [factory/13-device-targets/README.md](../factory/13-device-targets/README.md).
+
+## Builds of the merged tree
+
+Commit `81e437c` is the tree that PR #282 merged into `main` as `e897380`: the two trees are
+identical. On 2026-11-23 it was built in two places, and nothing built from it has run on a
+device.
+
+| Build | Where | Result |
+|---|---|---|
+| Web bundle (`npm run build`), for both web targets | locally | built, about 30 MB packed |
+| Android app, ARCore (`./gradlew assembleDebug`) | locally | a debug APK, about 41 MB |
+| Android app, 8th Wall (the same, with `VITE_AR_RUNTIME=8thwall`) | locally | a debug APK, about 41 MB. Its main web chunk differs from the ARCore build's, and it has the same application id |
+| Meta Quest app (`./gradlew testDebugUnitTest assembleDebug` in `meta/`) | locally | 81 JVM unit tests pass; a debug APK, about 101 MB |
+| iOS app, Simulator (`xcodebuild`, Debug) | GitHub, the Mobile Build workflow, run 45260987425 | succeeded |
+| Android app, ARCore (`./gradlew assembleDebug`, with the dependency-lock checks) | the same run | succeeded |
+
+The local builds ran from a build script that is not in this repository; wave 13's ticket 0002
+plans to move it in. The APKs are debug builds for the owner's own devices, and none is
+published. No build ran the Android app's unit tests.
 
 ## Where the checklists are
 

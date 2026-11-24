@@ -17,7 +17,10 @@ their own; each is pointed at a Scan server by its https address.
 - **One job system.** Every background job is a `WorldJob`, run by the single-flight pump in
   `server/world/world_job_pump.ts`, with crash recovery, dedupe and bounded history
   ([ADR 0003](../adr/0003-merged-job-system.md)). Every upload queues an `optimize-scan` job
-  (`server/pipeline.ts`: quantization, Draco and point-cloud LODs). The twenty job types are
+  (`server/pipeline.ts`: quantization, Draco and point-cloud LODs). There are twenty-three job
+  types, and a client may queue twenty-two of them by name (all but `optimize-scan`). Seventeen
+  have a runner; six (`ingest`, `extract-layers`, `align-scan`, `merge-points`, `semantic-pass`,
+  `depth-reconstruct`) are No-op placeholders that complete without doing anything. They are
   listed in [architecture.md](../architecture.md#world-job-types--processing-worldsslugjobs).
 - **Reconstruction.** Two pipelines run as `WorldJob`s: the fast GLB optimizer above, and the
   slower chain of poses (LingBot-Map, or COLMAP with a quality verdict), Gaussian-splat training
@@ -25,8 +28,11 @@ their own; each is pointed at a Scan server by its https address.
   and compression. A person capture is reconstructed off-box in `subsystems/4d-capture/`
   ([ADR 0006](../adr/0006-person-capture-is-a-calibrated-take-and-densification-is-a-subsystem.md)).
 - **Optional tools.** Every reconstruction tool is an external program the server runs. A missing
-  one makes its job complete as `skipped` with a `remediation`, never fail, so a box with none of
-  them still runs the whole queue.
+  one usually makes its job complete as `skipped` with a `remediation`, so a box with none of them
+  still runs most of the queue. Known exceptions, as of `e897380` (2026-11-23): `memory-push` fails when
+  Companion Memory is not connected, `lingbot-map-reconstruct` fails when its interpreter cannot
+  be started, and `splat-finish` fails when `node` cannot be started. A missing LingBot-Map
+  checkpoint or torch, or a missing splat-transform CLI, is still a skip.
 - **Inference.** `INFERENCE_MODE` picks the engine: `ollama` (the default, running
   `OLLAMA_MODEL`, `qwen3-vl:4b` unless set), `onnx` (the bundled `LiquidAI/LFM2.5-VL-1.6B-ONNX`) or
   `mock` (a deterministic colour-blob engine for tests). The on-device WebGPU path runs in the
@@ -44,8 +50,9 @@ someone ran it and read the output:
 - **The server and the Vite frontend: VERIFIED on Linux x86_64**, on one host. macOS and Windows
   are UNVERIFIED.
 - **Tools on that host**, probed on 2026-08-30. ffmpeg ingest and the COLMAP pose solve are
-  VERIFIED. Brush and Spirula are VERIFIED as found and version-stamped only; an end-to-end COLMAP
-  and Brush run on the same host is in ADR 0007.
+  VERIFIED. Brush trained one session end to end there on 2026-08-30, from a synthetic
+  walkthrough video (166 s, recorded in ADR 0007). Spirula is VERIFIED as found and
+  version-stamped only.
 - **Panoptic segmentation** is VERIFIED end to end on a different GPU, an RTX 3070, on 2026-11-12.
 - **Known not to work:** Brush or Spirula on a CPU-only host, Spirula on macOS, and 4D person
   capture on this fleet (it needs about 44 GiB on one CUDA device, so it delegates off-box).
@@ -132,8 +139,9 @@ Without a device:
 ## Known gaps
 
 - The job queue is one worker, and it shares the box with the vision model.
-- Several job runners write a plan or placeholder artifact, with a hint, when their real worker
-  is not configured, and the editor does not show that difference.
+- Six job types have no worker. They complete with a result that starts `No-op:` and a report
+  artifact, and change nothing. Several runners complete as `skipped`, with a hint, when their
+  tool is not configured.
 - With sign-in off, which is the default, anyone who can reach the server can read and write
   scans unless `SCAN_REQUIRE_AUTH=1` is set. World reads are open by default, and
   `WORLD_STRICT_AUTH=1` requires capability tokens for protected world actions.

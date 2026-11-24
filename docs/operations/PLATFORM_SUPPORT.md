@@ -35,16 +35,16 @@ The **VERIFIED** rows below all come from one host, probed on 2026-08-30:
 platform  linux/x86_64  deno 2.9.5
 
 TOOLS
-  ok      ffmpeg               7.0.2-static  /home/liam/.local/bin/ffmpeg  (path)
-  ok      ffprobe              7.0.2-static  /home/liam/.local/bin/ffprobe  (path)
-  ok      colmap               3.13.0 (CUDA)  /home/liam/.local/micromamba/envs/colmap/bin/colmap  (fallback)
-  ok      brush                1.0.0  /home/liam/brush/target/release/brush-cli  (fallback)
-  ok      spirula              2026.8.28  /home/liam/opt/spirula/spirula  (fallback)
-  ok      panoptic-python      3.12.3  /home/liam/.venvs/panoptic/bin/python  (fallback)
+  ok      ffmpeg               7.0.2-static  /home/<user>/.local/bin/ffmpeg  (path)
+  ok      ffprobe              7.0.2-static  /home/<user>/.local/bin/ffprobe  (path)
+  ok      colmap               3.13.0 (CUDA)  /home/<user>/.local/micromamba/envs/colmap/bin/colmap  (fallback)
+  ok      brush                1.0.0  /home/<user>/brush/target/release/brush-cli  (fallback)
+  ok      spirula              2026.8.28  /home/<user>/opt/spirula/spirula  (fallback)
+  ok      panoptic-python      3.12.3  /home/<user>/.venvs/panoptic/bin/python  (fallback)
           torch: 2.13.0+cu130 → cuda (cuda 13.0)
-  ok      panoptic-worker      /home/liam/panoptic  (fallback)
-  MISSING splat-detect-python  (looked in: /home/liam/.venvs/splat-analyzer/bin/python)
-  MISSING splat-detect-dir     (looked in: /home/liam/splat_analyzer)
+  ok      panoptic-worker      /home/<user>/panoptic  (fallback)
+  MISSING splat-detect-python  (looked in: /home/<user>/.venvs/splat-analyzer/bin/python)
+  MISSING splat-detect-dir     (looked in: /home/<user>/splat_analyzer)
   ok      lingbot-map-python   3.14.4  /usr/bin/python3  (path)
           torch: absent — ModuleNotFoundError: No module named 'torch'
   MISSING lingbot-map-model    (looked in: nowhere — no candidate paths)
@@ -69,14 +69,15 @@ lying about the process that actually needs it.
 | Tool resolution (`server/capabilities.ts`) | **VERIFIED** | UNVERIFIED | UNVERIFIED | UNVERIFIED — both branches unit-tested, never run on Windows |
 | ffmpeg / ffprobe ingest | **VERIFIED** (7.0.2) | UNVERIFIED (`brew install ffmpeg` lands on PATH) | UNVERIFIED | UNVERIFIED |
 | COLMAP pose solve | **VERIFIED** (3.13.0 CUDA build, CPU features) | UNVERIFIED (`brew install colmap`) | UNVERIFIED | UNVERIFIED |
-| Brush splat training | **VERIFIED** (binary + version only) | UNVERIFIED (needs Metal) | UNVERIFIED | UNVERIFIED |
+| Brush splat training | **VERIFIED** — one session, from a synthetic walkthrough video, trained end to end on 2026-08-30 (15k iterations, 37.5 MB `.ply`, 166 s; ADR 0007), and the probe found and version-stamped it | UNVERIFIED (needs Metal) | UNVERIFIED | UNVERIFIED |
 | Spirula splat training | **VERIFIED** (binary + version only) | **Known not to work** — releases are `ubuntu-vulkan-x86_64` | Known not to work | UNVERIFIED |
 | Panoptic / splat-detect / LingBot-Map workers | **VERIFIED** (panoptic venv only) | UNVERIFIED | UNVERIFIED | UNVERIFIED |
 
 "VERIFIED (binary + version only)" means the probe found and version-stamped the tool on this
-box. It does **not** mean a capture was pushed through it in this pass. For an end-to-end run
-on this same host — COLMAP 27.6 s, Brush 166 s — see ADR 0007's Context section, which is
-where that measurement lives.
+box. It does **not** mean a capture was pushed through it. Brush is the one trainer that was:
+the end-to-end run on this same host on 2026-08-30 (COLMAP 27.6 s, Brush 166 s, on a session made
+from a synthetic walkthrough video) is in ADR 0007's Context section, which is where that
+measurement lives. Spirula has not trained a capture here.
 
 ### Windows: three things that are true by reading the code
 
@@ -107,7 +108,7 @@ where that measurement lives.
 | Panoptic segmentation (Mask2Former) | **VERIFIED** end to end on 2026-11-12, RTX 3070: two real phone frames → 10 segments, device `cuda (NVIDIA CUDA, fp16)` | UNVERIFIED | UNVERIFIED | UNVERIFIED | Unmeasured here |
 | ffmpeg ingest | **VERIFIED** | UNVERIFIED | UNVERIFIED | UNVERIFIED | works — ffmpeg here is CPU |
 | COLMAP poses | **VERIFIED** | UNVERIFIED | UNVERIFIED | UNVERIFIED | works by design — `USE_GPU = '0'` in colmap_poses.ts, CPU feature extraction is the portable default |
-| Brush / Spirula training | UNVERIFIED (present, not run in this pass) | UNVERIFIED (Vulkan) | UNVERIFIED (Brush needs Metal; Spirula has no macOS build here) | UNVERIFIED (Vulkan) | **Known not to work** — both need a Vulkan/Metal device |
+| Brush / Spirula training | Brush trained once, end to end, on the 2026-08-30 host, which has an NVIDIA GPU (ADR 0007); which adapter wgpu used is not recorded. Spirula UNVERIFIED (found and version-stamped, never run) | UNVERIFIED (Vulkan) | UNVERIFIED (Brush needs Metal; Spirula has no macOS build here) | UNVERIFIED (Vulkan) | **Known not to work** — both need a Vulkan/Metal device |
 | 4D person capture (4DAnyone) | **Known not to work on this host** — needs ~44 GiB on one CUDA device; this GPU has 8192 MiB (RTX 4080 host: 12282 MiB). Runs off-box only (ADR 0006) | Not supported (NVIDIA-only) | Not supported | Not supported | Known not to work |
 | SenseNova Recon3D | Not run in this pass (needs CUDA 12.x and FlashAttention; `scripts/setup-sensenova-wsl.sh`) | Not supported | Not supported | Not supported | Not supported |
 
@@ -146,10 +147,17 @@ No Apple hardware was available, so everything in this section is UNVERIFIED by 
 
 ## Where each tool is looked for
 
-One convention, applied in this order for every row: **the env var always wins, then `PATH`,
-then the documented no-sudo install path.** An env var that points at nothing is reported
-missing — it is never silently replaced by a fallback, because an operator whose override has
-a typo needs to be told.
+The capability report applies one convention, in this order for every row: **the env var always
+wins, then `PATH`, then the documented no-sudo install path.** An env var that points at nothing
+is reported missing — it is never silently replaced by a fallback, because an operator whose
+override has a typo needs to be told.
+
+The runners do not all agree with the report, as of `e897380` (2026-11-23). The Brush runner uses
+`BRUSH_BIN`, else its fallback path (`server/splat/splat_train.ts`, `resolveParams`), and the
+Spirula runner uses `SPIRULA_BIN`, else its three fallback paths (`server/splat/spirula_train.ts`,
+`resolveSpirulaBin`). Neither looks on `PATH`. A trainer installed only on `PATH` is therefore
+reported found while its `splat-train` job skips. Wave 14 ticket 0002 plans one resolver for the
+runners and the report ([14-inventory-fixes](../factory/14-inventory-fixes/README.md)).
 
 | Tool | Env var | On PATH as | Documented fallback |
 | --- | --- | --- | --- |

@@ -23,8 +23,8 @@ Two facts shaped everything about how it fits here.
 
 **The first is cost, and it is measured.** 4DAnyone's own published benchmarks report
 **43.3 GiB of peak CUDA allocation** and 8–26 minutes per clip for the 6-view configuration
-alone. Probed on this tailnet on 2026-08-24: `beta-1` is 2× Radeon RX 7900 XTX at 23.98 GiB
-each, on ROCm 6.4, with no CUDA; `beta-red` is a 10 GiB RTX 3080; nothing else has a usable
+alone. Probed on this tailnet on 2026-08-24: one host has 2× Radeon RX 7900 XTX at 23.98 GiB
+each, on ROCm 6.4, with no CUDA; another has a 10 GiB RTX 3080; nothing else has a usable
 GPU. That is a ~1.8× per-device shortfall against a model that does not shard across cards,
 on the wrong vendor's stack. Upstream lists "Low-memory inference (<32 GB)" as *not done* —
 and even that would not fit.

@@ -19,7 +19,7 @@ the calibration plan lives in [pipelines/SPLAT_DETECT_ROADMAP.md](pipelines/SPLA
 
 ## Setup
 
-Verified end-to-end on `beta-1` (Ubuntu, RTX 4080 Laptop 12 GiB, driver 610.57.04,
+Verified end-to-end on a fleet host (Ubuntu, RTX 4080 Laptop 12 GiB, driver 610.57.04,
 CUDA 12.8 toolkit at `/usr/local/cuda-12.8`, no sudo used). Every command is user-local.
 
 The driver's defaults are `~/.venvs/splat-analyzer/bin/python` and `~/splat_analyzer`.
@@ -113,9 +113,9 @@ $ env -i HOME=$HOME PATH=/usr/bin:/bin ~/.venvs/splat-analyzer/bin/python -c \
 
 ```bash
 $ deno run -A server/capabilities.ts | grep -iE "splat-detect"
-  ok      splat-detect-python  3.12.14  /home/liam/.venvs/splat-analyzer/bin/python  (fallback)
+  ok      splat-detect-python  3.12.14  /home/<user>/.venvs/splat-analyzer/bin/python  (fallback)
           torch: 2.11.0+cu128 → cuda (cuda 12.8)
-  ok      splat-detect-dir     /home/liam/splat_analyzer  (fallback)
+  ok      splat-detect-dir     /home/<user>/splat_analyzer  (fallback)
   READY   splat-detect
 ```
 

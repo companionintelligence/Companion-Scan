@@ -33,10 +33,10 @@ counts as verified only when someone ran it on the hardware and read the output 
 |---|---|---|
 | **Web, 8th Wall**: iPhone and iPad Safari | In code. No run on an iPhone or iPad is recorded. | [web-8thwall.md](docs/targets/web-8thwall.md) |
 | **Web, WebXR**: Android Chrome with ARCore, Meta Quest Browser | In code. On Android one session start was seen, and tracking was not reached. Quest support is documented, not verified. | [web-webxr.md](docs/targets/web-webxr.md) |
-| **Android app, ARCore**: the Capacitor shell with `ScanAR`, native first, then 8th Wall, then WebXR | In code. Compiled before the branches were merged; not run on a device. | [android-arcore.md](docs/targets/android-arcore.md) |
-| **Android app, 8th Wall**: the same shell built with `VITE_AR_RUNTIME=8thwall` | A build switch with a unit test. No build or device run is recorded. It shares the app id, so it replaces the ARCore build on a device. | [android-8thwall.md](docs/targets/android-8thwall.md) |
-| **Meta Quest app**: a native headset app on the Meta Spatial SDK (`meta/`) | Builds here: a debug APK and 81 JVM unit tests (2026-11-23). Not run on a headset. | [meta-quest.md](docs/targets/meta-quest.md) |
-| **iOS app**: the Capacitor shell with ARKit through `ScanAR` | In code, drawn in RealityKit's `ARView` (ADR 0012). Compiled in the iOS Simulator job on 2026-11-23; not run on a device. | [ios.md](docs/targets/ios.md) |
+| **Android app, ARCore**: the Capacitor shell with `ScanAR`, native first, then 8th Wall, then WebXR | Built at `81e437c`, the tree `main` merged as `e897380`: a local debug APK and the Mobile Build workflow's (run 45260987425). Not run on a device. | [android-arcore.md](docs/targets/android-arcore.md) |
+| **Android app, 8th Wall**: the same shell built with `VITE_AR_RUNTIME=8thwall` | Built once, locally, at `81e437c`: a debug APK. No workflow builds it, and no device run is recorded. It shares the app id, so it replaces the ARCore build on a device. | [android-8thwall.md](docs/targets/android-8thwall.md) |
+| **Meta Quest app**: a native headset app on the Meta Spatial SDK (`meta/`) | Built locally at `81e437c`: a debug APK, and its 81 JVM unit tests pass. No workflow builds it. Not run on a headset. | [meta-quest.md](docs/targets/meta-quest.md) |
+| **iOS app**: the Capacitor shell with ARKit through `ScanAR` | In code, drawn in RealityKit's `ARView` (ADR 0012). Compiled for the iOS Simulator at `81e437c` (Mobile Build run 45260987425); not run on a device. | [ios.md](docs/targets/ios.md) |
 | **Desktop app**: the editor and viewer, for Windows, macOS and Linux | In code. It cannot capture. Sign-in has not run against a real Portal. | [desktop/README.md](desktop/README.md) |
 
 The desktop and Android apps are published only as GitHub pre-releases, and no app is in an app
@@ -365,7 +365,7 @@ Three captures from this repo, ordered by how much the camera actually moved:
 | [Node.js](https://nodejs.org) | ≥ 22.18.0 | Vite dev server + build; type stripping for the `.mjs` scripts that import `.ts` |
 | [Deno](https://deno.land) | ≥ 2.0 | Inference server |
 | [Python 3](https://python.org) | ≥ 3.8 | Model downloader |
-| [ffmpeg](https://ffmpeg.org) (with `ffprobe`) | any | `/ingest-video` and `/ingest-photos` — `scripts/ingest-*.mjs` shell out to it. Missing, an Upload Content video fails with `spawnSync ffmpeg ENOENT` inside an HTTP 500 |
+| [ffmpeg](https://ffmpeg.org) (with `ffprobe`) | any | `/ingest-video` — `scripts/ingest-video.mjs` shells out to it. Missing, an Upload Content video fails with `spawnSync ffmpeg ENOENT` inside an HTTP 500. `/ingest-photos` does not need it: `scripts/ingest-photos.mjs` reads and scales photos in Node, with `sharp` or `jimp` |
 
 AR scanning needs a phone or tablet with a camera, or a headset with WebXR; see [Device targets](#device-targets). The 3D viewer and inference server work on desktop.
 The **Upload Content** path — a walkthrough video or photos, no phone, tailnet, cert or AR engine involved — needs only ffmpeg on the server.

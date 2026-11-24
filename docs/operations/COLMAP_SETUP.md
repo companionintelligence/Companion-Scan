@@ -106,7 +106,7 @@ deno run -A <runner calling runColmapPoses({ sessionDir })>  # 17 keyframes
 ```
 
 Result: `status: "ok"`, 5.9 s, binary resolved through the fallback to
-`/home/liam/.local/micromamba/envs/colmap/bin/colmap`, poses and seed cloud
+`/home/<user>/.local/micromamba/envs/colmap/bin/colmap`, poses and seed cloud
 written. `deno test -A tests/unit/deno/colmap_poses.test.ts` — 27 passed.
 
 **But the reconstruction was degenerate: 3 of 17 images registered, 1

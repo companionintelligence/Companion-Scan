@@ -70,9 +70,14 @@ A third reconstruction path was added by wave 10: a **person** capture (a clip o
 person, not a walkthrough of a room) is reconstructed as an animated splat sequence.
 Its GPU-class stage runs **off-box** in `subsystems/4d-capture/` because 4DAnyone needs
 ~44 GiB on one CUDA device and no host on the fleet has that — so `person-4d-reconstruct`
-is the one `WorldJob` type that delegates rather than computing. Unconfigured, it reports
-`skipped` with a hint, like every other optional GPU tool. See ADR 0006 and
-`docs/pipelines/4d-person.md`.
+delegates rather than computing. Unconfigured, it reports `skipped` with a hint, like every
+other optional GPU tool. See ADR 0006 and `docs/pipelines/4d-person.md`.
+
+It is not the only job type that delegates. Wave 13 added `thing-interactive-asset`, which hands
+one keyframe of a Thing to an operator-configured PhysAg3D controller. That controller runs its
+own agent service and sends generation to a GPU host, so the image leaves the box. It is queued
+only by a request, and unconfigured it is skipped with a hint. See `server/physag3d/` and
+`docs/pipelines/physag3d.md`.
 
 New background job types extend `WorldJob`, not a new parallel queue. New "thing" data
 extends `WorldDetection`/`DetectObject`. New "place" data extends `ScanManifest`/
@@ -116,9 +121,10 @@ about to create this codebase's third `ScanManifest` — don't.
   `"nodeModulesDir": "auto"`, so `deno install` / any `deno task` builds its own
   `node_modules/.deno/` layout for the eight `npm:` packages in its import map (hono,
   onnxruntime-node, jimp, the `@gltf-transform/*` trio, draco3dgltf, jose). Only `hono` is
-  imported by `server/main.ts` itself; the rest arrive through the modules it pulls in
+  a runtime import of `server/main.ts` itself (it also has a type-only import from
+  `@gltf-transform/core`, which leaves nothing at run time); the rest arrive through the modules it pulls in
   (`server/inference.ts`, `server/pipeline.ts`, `server/portal_auth.ts`, and the splat/lingbot runners). That setting
-  is load-bearing — it cannot simply be dropped — and `deno.json:26`'s `allowScripts`
+  is load-bearing — it cannot simply be dropped — and `deno.json:27`'s `allowScripts`
   expects `onnxruntime-node`'s install script to run, so Deno needs a real tree.
   **Install with `npm ci`, not `npm install`.** `npm ci` rebuilds the tree wholesale from
   the lockfile; `npm install` mutates an existing tree in place, which is what was once
@@ -128,8 +134,8 @@ about to create this codebase's third `ScanManifest` — don't.
   version — the real state is one **incomplete** install, not two versions. Recovery is
   `rm -rf node_modules && npm ci`. Running `npm ci` first and a `deno` task afterwards is
   safe, and is the normal local sequence. CI never hits any of this:
-  `.github/workflows/deno-ci.yml:49-50` installs with `deno install` and never runs
-  Playwright, which is why this only bites locally.
+  `.github/workflows/deno-ci.yml` installs with `deno install` (lines 62-63, and 101-102 for
+  the detection-gate job) and never runs Playwright, which is why this only bites locally.
 
 ## Do not rename
 
@@ -141,6 +147,7 @@ persisted user data or an external integration instead of erroring.
 | Identifier | Where it lives | What breaks if renamed |
 | --- | --- | --- |
 | IndexedDB database name `'ci-xr-scan'` | `src/scene/store.ts` | Orphans every existing user's persisted session data — the browser opens a fresh, empty database under the new name. |
+| IndexedDB database name `'ci-xr-projects'` | `src/project/project-store.ts` | Orphans every Place on the device: its projects, scan assignments, calibration reference photos and the frame waiting for the server. The browser opens a fresh, empty database under the new name. Adding a store behind a version bump is safe; renaming is not. |
 | sessionStorage key `'ci-xr-geo-fix'` | `src/geo/geo-tracker.ts` | Breaks in-flight geo-anchoring state for any tab that already wrote the old key. |
 | localStorage key `'companion-scan-onboarded'` | `src/main.ts` | Every existing user sees the onboarding flow again on next launch. |
 | Service-worker cache/queue names `'companion-scan-offline-queue'`, `'companion-scan-v3'`, `'companion-scan-flush'` | `public/sw.js` (also referenced from `src/pwa.ts`) | Breaks the offline upload queue for anyone with a stale service worker still installed — queued uploads become unreachable under the new name. |

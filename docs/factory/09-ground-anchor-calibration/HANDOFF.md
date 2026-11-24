@@ -249,8 +249,8 @@ Three more, from 0007:
 ## Driving the Android tablets
 
 `.mcp.json` defines one MCP server per device, each with its own bearer token from an env var
-(see `docs/testing/DEVICE_TESTING.md`). The S9 (`galaxy-tab-s9-ultra`) works; the S8
-(`liams-tab-s8-ultra`) has the camera problem above.
+(see `docs/testing/DEVICE_TESTING.md`). The S9 (the Galaxy Tab S9 Ultra) works; the S8
+(the Galaxy Tab S8 Ultra) has the camera problem above.
 
 **The bridge can tap and read the screen but cannot execute JavaScript in the device's
 browser.** That constraint drove a design choice worth reusing: `public/compass-bench.html`

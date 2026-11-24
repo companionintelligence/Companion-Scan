@@ -34,7 +34,7 @@ is [mobile/README.md](../../mobile/README.md).
   `ARView` in camera mode `.ar`, and the plugin still configures and runs the session itself. Hit
   samples are ARKit raycasts through the view. The JavaScript contract did not change. Until then
   the view was SceneKit's `ARSCNView`. The iOS Simulator job compiled it on commit `20b2e46` (run
-  45247696203). See
+  45247696203), and again on the merged tree (`81e437c`, run 45260987425). See
   [ADR 0012](../adr/0012-the-ios-shell-draws-its-native-ar-view-with-realitykit.md) and
   [wave 13](../factory/13-device-targets/README.md).
 
@@ -43,11 +43,12 @@ is [mobile/README.md](../../mobile/README.md).
 - **Not run on a device.** No ARKit iPhone has run `ScanAR`: tracking, interruptions,
   relocalization, depth and autosave are verified only on a phone, and none of them has been
   ([mobile/README.md](../../mobile/README.md#native-ar-capture)).
-- **Build: compiled on the simulator before the branches were merged.** The Mobile Build
-  workflow's iOS Simulator job compiled the Swift and passed, as recorded with #266 (`1f1e913`, run
-  44013563826). The merged tree differs in the target's `Info.plist` and in the unregistered
-  `ArSessionPlugin.swift`, which is in the tree and not in the target. No job has run on the merged
-  commit, and the build host has no Xcode.
+- **Build: the merged tree compiles for the iOS Simulator.** The Mobile Build workflow's iOS
+  Simulator job compiled commit `81e437c`, the tree `main` merged as `e897380` (#282), on
+  2026-11-23 (run 45260987425); the same run built the Android debug APK
+  ([Builds of the merged tree](README.md#builds-of-the-merged-tree)). No device build has been
+  made: that needs a Mac with Xcode and the owner's Apple signing team, and the build host here
+  has no Xcode.
 - **Sign-in: on the simulator only.** The full round trip, the status row after a restart and the
   return from the sheet ran on the iOS simulator against a local stand-in for the Portal, not the
   real one ([mobile/README.md](../../mobile/README.md#companion-account-sign-in)).
@@ -108,7 +109,8 @@ Capabilities, and run on the phone. `cap sync ios` takes the Swift Package Manag
 
 From [mobile/README.md](../../mobile/README.md#not-done):
 
-- `ScanAR` on a device, and an Xcode build of the merged tree.
+- `ScanAR` on a device, and a signed device build from Xcode: the merged tree has only been
+  compiled for the simulator.
 - A saved world map is not linked to the Place's frame: a map's origin is where its first session
   started (ADR 0010).
 - The keyframe upload does not send the depth map yet (`FrameObservation.depthUrl`).
