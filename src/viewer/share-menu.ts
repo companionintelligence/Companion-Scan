@@ -19,6 +19,8 @@ export const SHARE_ENTRIES: ReadonlyArray<{ id: string; role: ShareRole; note: s
 export interface ShareMenu {
   /** Shows the place's links. Pass a failure message instead when the links did not load. */
   apply: (links: Partial<Record<ShareRole, string>> | null, failure?: string) => void
+  /** Drops every link and shows the entries loading. A Place switch calls this, so no last-Place link stays copyable. */
+  clear: () => void
 }
 
 export function mountShareMenu(): ShareMenu {
@@ -36,7 +38,11 @@ export function mountShareMenu(): ShareMenu {
     }
   }
 
-  return { apply }
+  const clear = (): void => {
+    for (const entry of SHARE_ENTRIES) setEntry(entry.id, undefined, 'Loading…', entry.note)
+  }
+
+  return { apply, clear }
 }
 
 function setEntry(id: string, url: string | undefined, status: string, note: string): void {
@@ -57,7 +63,8 @@ function copyEntry(button: HTMLButtonElement): void {
   const restore = button.dataset['note'] ?? ''
   const flash = (text: string) => {
     noteEl.textContent = text
-    setTimeout(() => { noteEl.textContent = restore }, 1500)
+    // Not over an entry a Place switch reset or refilled in the meantime: its note is that Place's now.
+    setTimeout(() => { if (button.dataset['url'] === url) noteEl.textContent = restore }, 1500)
   }
   navigator.clipboard.writeText(url).then(() => flash('Link copied'), () => flash('Copy failed'))
 }

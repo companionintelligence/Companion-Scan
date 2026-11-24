@@ -47,6 +47,7 @@ the same things. Where the two overlap, main's code stayed and this wave was bui
 | Rename posting its own label patch (0003) | `setObjectLabel()`, which keeps the GLB's own label; the Edit tab's save queue | Rename goes through `setObjectLabel()` and the patch and queue a tag or a note goes through |
 | XYZ fields for any selection, saved straight away (0003) | Place precisely for a whole scan, whose size is locked; the `transform:<uuid>` save key | XYZ fields for an object only, saved under that key; a scan root keeps Place precisely |
 | Share links fetched with no Place-switch guard (0004) | `worldGen` guards on the fetch (V3-7) | The SHARE menu keeps them, and a failed fetch clears the last Place's phone-scan link |
+| A Share panel only this wave wrote to (0004) | `clearShareLinks()` on every world load (#270), which rewrote the panel's HTML | It resets the SHARE entries and the phone-scan link instead. Rewriting the HTML wiped the entries; the new spec caught it |
 
 Three tests on main changed, because the ported feature is the change:
 

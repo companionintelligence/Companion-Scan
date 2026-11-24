@@ -4244,12 +4244,14 @@ function closeShareQrCodes(): void {
   for (const close of shareQrClosers) close()
 }
 
-/** Empties the Share panel. A Place switch calls this, so the last Place's bearer-token links do not stay up. */
+/**
+ * Empties the SHARE menu and the Navigate menu's phone-scan link. A Place switch calls this, so the last Place's
+ * bearer-token links do not stay up. The SHARE entries are reset, not rewritten: share-menu.ts holds their listeners.
+ */
 function clearShareLinks(): void {
   closeShareQrCodes()
-  shareQrClosers.length = 0
-  const target = document.getElementById('share-links')
-  if (target) target.innerHTML = '<div class="layer-meta">Loading share links...</div>'
+  shareMenu.clear()
+  renderScannerShare(undefined)
 }
 
 /** Copy-to-clipboard wiring, shared by the scanner block and the role rows. */
