@@ -269,7 +269,9 @@ import type { EvictedScan } from './world/scan_carry.ts'
 import { createWorldHandOver, handOverAnswer } from './world/world_hand_over.ts'
 import { frameIdOf, type FrameMismatchBody, type HandOverReport, type ScanFrameCounts } from '../src/world/frame-generations.ts'
 import { composeWorldExport, readScanGlb } from './world_export.ts'
-import { guardRegistrationPatch, queuePlaceRegisterForScan, runPlaceRegisterJob } from './register/place_register.ts'
+import { guardRegistrationPatch, type PlaceRegisterSfmHost, queuePlaceRegisterForScan, runPlaceRegisterJob } from './register/place_register.ts'
+import { sfmEnabled } from './register/place_register_sfm.ts'
+import { sweepAllWorkDirs, WORK_ROOT_DIR } from './register/sfm_workspace.ts'
 import type { Document } from '@gltf-transform/core'
 import type {
   EditPatch,
@@ -1202,6 +1204,7 @@ app.delete('/scans', async (c) => {
     dropAllWorldExports: () => scanWorlds.dropAllExports(),
     removeAllFromWorlds: removeAllScansFromWorlds,
     removeSessionCopies: removeSessionDataElsewhere,
+    dropDerivedWork: () => sweepAllWorkDirs(PROJECT_MEDIA_DIR),
   })
   if (reply.status === 200) broadcast({ type: EVENT.SCANS_CLEARED, deleted: reply.body['deleted'] as number })
   return c.json(reply.body, reply.status)
@@ -5427,7 +5430,29 @@ function _runPlaceRegisterJob(slug: string, jobId: string): Promise<void> {
     readScanGlbBytes: scanGlbBytesForExport,
     commit: commitWorldJob,
     fail: failWorldJob,
+    sfm: placeRegisterSfmHost(),
   }, slug, jobId)
+}
+
+/**
+ * What the photo method of place-register (server/register/place_register_sfm.ts) needs from this server. Off unless PLACE_REGISTER_SFM=1.
+ * Its working files go in a folder of the Place's own data directory and its reference model in the earlier scan's session folder, so
+ * both are removed wherever the frames are.
+ */
+function placeRegisterSfmHost(): PlaceRegisterSfmHost {
+  return {
+    enabled: sfmEnabled((name) => Deno.env.get(name)),
+    sessionsDir: SESSIONS_DIR,
+    workRoot: (projectId) => {
+      const dir = projectMediaDirPath(PROJECT_MEDIA_DIR, projectId)
+      return dir ? `${dir}/${WORK_ROOT_DIR}` : null
+    },
+    readScanMeta: async (filename) => readScanMeta(filename, await loadSessionIndex(SESSIONS_DIR)),
+    placeFrameId: async (projectId) => {
+      const frame = (await loadProjects()).find((project) => project.projectId === projectId)?.spatialFrame
+      return frame && 'frameId' in frame && typeof frame.frameId === 'string' ? frame.frameId : null
+    },
+  }
 }
 
 async function _runSplatFinishJob(slug: string, jobId: string, signal?: AbortSignal): Promise<void> {
@@ -7722,6 +7747,8 @@ async function enqueueKeyframePurgeJob(payload: { dryRun: boolean }): Promise<vo
 // depends on has been initialized (see the comment where `worldJobPump` is
 // constructed, above, for why this can't run any earlier), and before the
 // server starts accepting requests.
+// A run of the photo method that died with the server left COLMAP's database and model of camera frames behind: gone first.
+await sweepAllWorkDirs(PROJECT_MEDIA_DIR)
 await recoverWorldJobsOnBoot()
 scheduleKeyframeRetention(Deno.env.get(KEYFRAME_RETENTION_ENV), () => enqueueKeyframePurgeJob({ dryRun: false }))
 

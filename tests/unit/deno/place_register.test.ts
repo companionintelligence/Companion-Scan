@@ -48,7 +48,7 @@ import {
   readPlacedCloud,
   runPlaceRegisterJob,
 } from '../../../server/register/place_register.ts'
-import { transformPositions } from '../../../server/register/scan_match.ts'
+import { SCALE_SEARCH_STEPS, transformPositions } from '../../../server/register/scan_match.ts'
 import {
   findDuplicateWorldJob,
   MAX_WORLD_JOB_HISTORY,
@@ -66,8 +66,15 @@ import {
 } from '../../fixtures/place-register/synthetic-room.ts'
 
 const ROOM = { width: 6, depth: 4, centre: { x: 3, z: 2 } } as const
+/**
+ * Three pieces of furniture that no half turn maps onto each other. The two this file used to have, at (1.2, 1.0) and (4.5, 3.0) in a
+ * 6 x 4 m room centred at (3, 2), swap places under a half turn about the room's middle to within 30 cm, so the room looked the same
+ * turned round, and the global ambiguity probe (scan_match.ts, WP-15a amendment) rightly refuses such a pair as ambiguous. A scan
+ * pair these tests expect to be proposed is of a room that is not symmetric.
+ */
+const FURNITURE = [{ x: 1.9, z: 2.2, w: 0.8, d: 0.6, h: 0.9 }, { x: 4.5, z: 3.0, w: 1.2, d: 0.5, h: 0.5 }, { x: 5.0, z: 1.0, w: 0.7, d: 0.4, h: 1.2 }]
 const room = (seed: number, extra: object = {}) =>
-  makeRoom({ ...ROOM, noiseM: 0.02, seed, boxes: [{ x: 1.2, z: 1, w: 0.8, d: 0.6, h: 0.9 }, { x: 4.5, z: 3, w: 1.2, d: 0.5, h: 0.5 }], ...extra })
+  makeRoom({ ...ROOM, noiseM: 0.02, seed, boxes: FURNITURE, ...extra })
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 const ERROR: Misplacement = { yawDeg: 3, dx: 0.3, dz: -0.2 }
 const SLUG = 'project-proj-1'
@@ -610,11 +617,13 @@ Deno.test('guardRegistrationPatch: the patch the job proposed is accepted, with 
   const guard = guardRegistrationPatch(current, body)
   assertEquals(guard.kind, 'ok')
   assert(guard.kind === 'ok')
+  // `residualM` is cast: `EditPatchProvenance` gained an optional `method` for the photo method, which changes what TypeScript
+  // infers `assertEquals`'s type from, and the nullable residual of a proposal no longer compiles against it. The value is unchanged.
   assertEquals(guard.provenance, {
     source: 'place-register',
     jobId: 'job-b',
     score: result.proposal.score,
-    residualM: result.proposal.inlierResidualM,
+    residualM: result.proposal.inlierResidualM as number,
   })
   // Extra keys a client adds are not stored.
   const padded = { ...body, provenance: { ...body.provenance, note: 'trust me' } }
@@ -713,6 +722,23 @@ Deno.test('comparePlacedClouds: gives the rest of the server a turn before every
   assertEquals(turns, ['yield after a', 'yield after a+c'], 'one turn per pair, each after its cloud was read and before its search')
 })
 
+Deno.test('comparePlacedClouds: when the two scans\' units differ the search of their sizes gives the rest of the server a turn after each size, and when they do not it gives one turn a pair', async () => {
+  // Eleven sizes are eleven searches, and a server has one thread: the job hands over its turn between them, not only between pairs.
+  const turnsFor = async (movingMode: ScanManifest['scaleMode'], referenceMode: ScanManifest['scaleMode']): Promise<number> => {
+    let turns = 0
+    const reference = { ...candidate('a', room(1)), scan: scan('a', { scaleMode: referenceMode }) }
+    const result = await comparePlacedClouds(
+      { scan: scan('b', { scaleMode: movingMode }), positions: misplacementOf(room(2)) },
+      [reference],
+      { yieldToServer: async () => { turns++ } },
+    )
+    assert(result)
+    return turns
+  }
+  assertEquals(await turnsFor('responsive-unconfigured', 'webxr-metric'), 1 + SCALE_SEARCH_STEPS, 'one before the pair and one after each of the sizes')
+  assertEquals(await turnsFor('responsive-unconfigured', 'responsive-unconfigured'), 1, 'the same units are not searched for size, and have the one turn before the pair')
+})
+
 Deno.test('comparePlacedClouds: reads each cloud when its pair is reached and stops reading once the searches are done', async () => {
   const moving = { scan: scan('b'), positions: misplacementOf(room(2)) }
   const reads: string[] = []
@@ -752,10 +778,11 @@ Deno.test('place-register: both Place tiers promise the floor at project height 
   for (const method of ['two-point-ground', 'ground-tap-compass'] as const) {
     const reference = scan('a', { capturedAt: '2026-11-10T09:00:00.000Z' })
     const second = scan('b', { calibrationMethod: method, capturedAt: '2026-11-12T09:00:00.000Z', localToWorld: misplacementMatrix(ERROR) })
-    // The new scan has walls and a ceiling and no floor: the only horizontal layer is 2.6 m up.
+    // The new scan has walls and a ceiling and no floor: the only horizontal layer is 2.6 m up. It keeps the room's furniture (it
+    // used to be left out): an empty rectangle looks the same turned round and is refused as ambiguous, which is not what this tests.
     const glbs = new Map<string, Uint8Array | null>([
       [reference.filename, await pointCloudGlb(room(1))],
-      [second.filename, await pointCloudGlb(room(2, { noFloor: true, boxes: [] }))],
+      [second.filename, await pointCloudGlb(room(2, { noFloor: true }))],
     ])
     const current = world([reference, second], [job('b')])
     await runPlaceRegisterJob(fakeHost(current, glbs).host, SLUG, 'job-b')

@@ -1491,6 +1491,78 @@ session, as Procedure 2 reads them (a `pitch` above −45 means the phone was no
 across and 5.000 m out along the normal (adopted: the plan's 10 cm at a 5 m probe; with five sessions the p95 is the largest). P is
 laid to within 2 cm sideways and 0.5 cm out with each tape read to 5 mm, and that comes out of the 10 cm.
 
+### Procedure 9 — server registration on real scans (DX9)
+
+*Does the server's registration say the right thing about real scans?* The `place-register` job
+([`place-register.md`](../pipelines/place-register.md)) proposes a move that would line a scan
+up with the Place's earlier scans, by their walls and, with `PLACE_REGISTER_SFM=1`, by their camera
+photographs. Every value it holds a pair to is **adopted, not measured** (ADR 0005 rule 5): set
+against synthetic rooms, where it accepted none of 480 negatives and 69.8% of the true pairs, and
+where the study itself says real clouds will score lower. Only real scans of real rooms can say
+whether they are right, and only enough of them can set a value.
+
+**How many: at least 8 rooms of 3 sessions each**, which is 24 scans, **24 same-room pairs and 252
+cross-room pairs**. **One scan pair is a smoke test, not data**: it shows that the pipeline runs on
+real scans and tunes nothing. Zero false accepts in n independent negatives bounds the true rate
+below 10% at n of 29, 5% at 59, 2% at 149 and 1% at 299 (95% confidence), and a success rate to
++-10% needs about 97 independent pairs (worst case). Three sessions of one room make only three
+same-room pairs, which is why there are eight rooms; pairs that share a session are not independent,
+so 252 is the most the data can show, not a guarantee.
+
+**Capture.** Eight rooms that differ the way real ones do: at least one with a twin elsewhere in the
+set (the same plan, such as two bedrooms of one house), one nearly symmetric and nearly empty, one
+corridor, one cluttered. Each room three times, on different days or in different light, with some
+furniture moved between visits, each visit calibrated as usual. Turn **Camera frames** on, so the
+scans have photographs for the photo method to read.
+
+**Run.** Put every scan in one scratch Place with no areas, so the job compares each scan with the
+others (scans filed under another area are left out). Start the server with `PLACE_REGISTER_SFM=1`
+and COLMAP installed ([`COLMAP_SETUP.md`](../operations/COLMAP_SETUP.md)); the card's **Check with
+photos** asks for the photo method on a scan the wall match already proposed a move for. A job
+searches at most four earlier scans (`MAX_REFERENCE_SCANS`) and reads at most eight, so a job per scan
+does not make the matrix: the collector below counts the distinct pairs it finds, and says whether
+that reaches 24 and 252.
+
+**Record.** Write each scan's room in a file, `{ "<scan id>": "kitchen", ... }`, and run
+
+```bash
+deno run --allow-read --allow-env=WORLDS_DIR,SESSIONS_DIR,SCANS_DIR scripts/dx9-collect.ts --labels rooms.json
+```
+
+(`--json` for the rows as data, `--all` for every run of a pair and not the newest.) It reads what the
+job stored and nothing else: per pair the overlap, inlier residual, score, query inliers, reference
+coverage, observability, field score, peak ratio, whether it was flagged symmetric, which starting values it
+missed and the time; for the photo method the photographs registered, inliers, the photographs left out of
+the fit, RMS, the unit mismatch with how well the camera path fixes the size and the turn (`size +-`, `turn +- deg`:
+one standard error each) and the time; how far apart the two methods put the scan, size included; the gap between the registration and the
+scan's own constellation fit; and the keyframes' count and bytes. Paste the table. **Every pair, refused
+or proposed, is a row: do not drop a refusal and do not average.**
+
+For each pair the card proposed a move for, measure the truth (a floor mark both scans saw, or a
+measured wall distance) and write the proposal's real error beside its row.
+
+**Decision.** Nothing here moves a constant by itself; the owner does, with the table in hand.
+
+- **Under 24 same-room or under 252 cross-room pairs**: a smoke test. Record it and ask; change no constant.
+- **A cross-room pair that was proposed** is a false accept, the finding that matters most. Send its row, with both
+  rooms' names, whatever the count.
+- **With the full sample and no cross-room proposal**: the false-accept rate is below 1.2% (95% confidence, the
+  most 252 pairs can show). Read the same-room refusals reason by reason before any value is loosened: a value
+  is revisited with the pair's numbers, which row says which one it missed.
+
+#### Results — Procedure 9
+
+| | Wall match | Photo match |
+|---|---|---|
+| Same-room pairs searched | | |
+| Same-room pairs proposed (true accepts) | | |
+| Cross-room pairs searched | | |
+| Cross-room pairs proposed (false accepts) | | |
+| Refusals, by reason | | |
+| Median and 95th percentile time per pair or run | | |
+| Proposals' real error against the measured truth (median, worst) | | |
+| Photo match: refused as `turn-uncertain`, and the `turn +- deg` of the proposals (median, worst) | | |
+
 ### Devices
 
 At minimum one of each provider path — they share no tracking source:
