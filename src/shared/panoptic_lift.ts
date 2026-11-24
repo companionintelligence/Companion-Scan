@@ -43,11 +43,14 @@
  *     support", i.e. the first opaque surface, with an explicit abstention when
  *     no cluster qualifies or two of them disagree.
  *
- * `resolver.ts`'s copy is deliberately left in place for now: that file is the
- * live browser resolver and is owned by other work. Once it is free, its tier 3
- * should call `liftSegment` here rather than keeping a second depth policy —
- * two policies for "which point is this" is exactly the duplication ADR 0001
- * exists to stop.
+ * `resolver.ts`'s tier 3 still keeps its own policy, on purpose now rather than
+ * for want of an owner (wave 14, FN-041): it is the live browser resolver, it
+ * must answer or fall through to a fixed 2 m guess, and switching it to the
+ * abstaining policy here changes live placement in a way nobody has measured
+ * on its inputs, which is an owner decision. The depth window is the part the
+ * two share, and the resolver now takes it from MIN_DEPTH_M and MAX_DEPTH_M
+ * below. tests/unit/node/wp-capture-core-resolver-lift.test.ts shows the two
+ * policies disagreeing, so neither is mistaken for a copy of the other.
  *
  * ── Why abstention is the point, not a shortcoming ───────────────────────────
  *

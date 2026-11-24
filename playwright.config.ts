@@ -23,7 +23,7 @@ import { defineConfig, devices } from '@playwright/test'
 const VITE_PORT = process.env['VITE_PORT'] ?? '5173'
 
 // Mirrors vite.config.ts's resolveHostname() — env, then a cert file in the repo
-// root, then the historical default. It has to: the URL this config hands the
+// root, then localhost, as vite.config.ts and the server fall back (F-01). It has to: the URL this config hands the
 // browser must be the one Vite is actually serving, and a hostname hardcoded to
 // one developer's machine resolves nowhere else, so page.goto() fails with
 // ERR_SSL_PROTOCOL_ERROR before a single assertion runs. The `tailscale status`
@@ -38,7 +38,7 @@ function resolveHostname(): string {
     const crt = fs.readdirSync(process.cwd()).find((f) => f.endsWith('.ts.net.crt'))
     if (crt) return crt.replace(/\.crt$/, '')
   } catch { /* unreadable cwd — fall through */ }
-  return 'liambook.capybara-ulmer.ts.net'
+  return 'localhost'
 }
 
 const BASE_URL = process.env['VITE_URL'] ?? `https://${resolveHostname()}:${VITE_PORT}`

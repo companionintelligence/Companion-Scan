@@ -28,6 +28,16 @@
  */
 import { transformPoint } from './geo.ts'
 import type { Vec3 } from './types.ts'
+import { isMatrix16 } from './mat4.ts'
+
+/**
+ * The calibration anchor's radius, in metres: the ring the decal draws (./anchor-marker.ts), and the distance within
+ * which the calibration flow treats a tap as selecting an existing marker rather than placing a new one, so two points
+ * closer than this count as one spot (`DUPLICATE_POINT_GAP_M`, ./frame-fit.ts). Defined here, in a module with no
+ * three.js, so that both read the one value instead of each writing 0.35 (FN-086). **Adopted from the existing flow,
+ * not measured.**
+ */
+export const ANCHOR_RADIUS_M = 0.35
 
 /**
  * Smallest `|det A| / (|c0|·|c1|·|c2|)` treated as invertible, where `A` is the
@@ -39,14 +49,6 @@ import type { Vec3 } from './types.ts'
  */
 const MIN_RELATIVE_DETERMINANT = 1e-9
 
-function isMatrix16(matrix: unknown): matrix is number[] {
-  if (!Array.isArray(matrix) || matrix.length !== 16) return false
-  // Indexed rather than `every`, which skips the holes of a sparse array.
-  for (let i = 0; i < 16; i++) {
-    if (!Number.isFinite(matrix[i])) return false
-  }
-  return true
-}
 
 /**
  * The inverse of a column-major affine 4x4, or `null` when `matrix` is not 16

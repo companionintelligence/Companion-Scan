@@ -14,16 +14,31 @@ import { fromFileUrl } from '@std/path'
 import { REPO_ROOT } from './repo-root.ts'
 import type { LfmPort } from '../src/inference/lfm-driver.ts'
 
-// fromFileUrl, not `.pathname`: the latter yields "/C:/…" on Windows, which
-// onnxruntime/Jimp then fail to open.
-const MODEL_DIR = fromFileUrl(new URL(
-  Deno.env.get('MODEL_DIR') ?? './public/models/LiquidAI/LFM2.5-VL-1.6B-ONNX/onnx/',
-  REPO_ROOT,
-))
-const TOKENIZER_DIR = fromFileUrl(new URL(
-  Deno.env.get('TOKENIZER_DIR') ?? './public/models/LiquidAI/LFM2.5-VL-1.6B-ONNX/',
-  REPO_ROOT,
-))
+/**
+ * Where the ONNX model and its tokenizer are read from: MODEL_DIR and
+ * TOKENIZER_DIR, resolved against the repo root. A function of the env reader
+ * so server/capabilities.ts can report the same directory this driver opens.
+ *
+ * fromFileUrl, not `.pathname`: the latter yields "/C:/…" on Windows, which
+ * onnxruntime/Jimp then fail to open.
+ */
+export function onnxModelPaths(
+  env: (name: string) => string | undefined = (name) => {
+    // A process without --allow-env (the capability CLI, run bare) takes the defaults rather than throwing at load.
+    try {
+      return Deno.env.get(name)
+    } catch {
+      return undefined
+    }
+  },
+): { modelDir: string; tokenizerDir: string } {
+  return {
+    modelDir: fromFileUrl(new URL(env('MODEL_DIR') ?? './public/models/LiquidAI/LFM2.5-VL-1.6B-ONNX/onnx/', REPO_ROOT)),
+    tokenizerDir: fromFileUrl(new URL(env('TOKENIZER_DIR') ?? './public/models/LiquidAI/LFM2.5-VL-1.6B-ONNX/', REPO_ROOT)),
+  }
+}
+
+const { modelDir: MODEL_DIR, tokenizerDir: TOKENIZER_DIR } = onnxModelPaths()
 
 /**
  * Build the Deno-side `LfmPort`. `ort` and `Jimp` are handed in rather than

@@ -20,26 +20,61 @@
  * lost. Keeping that partial output would mean reading the pipes as they arrive,
  * which this helper does not do.
  */
+import { isServerSessionId } from '../src/shared/session-id.ts'
 
 /** How long a killed child's pipes get to close before the helper stops waiting for them. */
 export const KILL_GRACE_MS = 5_000
 
 /** The longest delay a timer accepts; anything longer fires at once. */
-const MAX_TIMER_MS = 2_147_483_647
+export const MAX_TIMER_MS = 2_147_483_647
 
 const EXPIRED = Symbol('deadline-expired')
 
 export interface DeadlineOutput extends Deno.CommandOutput {
   /**
    * `timed out after 3 h` when the deadline fired and the child was killed,
-   * null when it finished on its own. Check this before the exit code: a killed
-   * child's code and output are whatever the kill left behind.
+   * `aborted by its job (…)` when the caller's signal did, null when it
+   * finished on its own. Check this before the exit code: a killed child's code
+   * and output are whatever the kill left behind.
    */
   timeoutReason: string | null
 }
 
 /**
+ * The reason text for a run its caller's signal stopped. The job pump aborts a
+ * job whose own deadline (WORLD_JOB_DEADLINE_MS) passed, so the child must not
+ * keep running beside the next job.
+ */
+export function abortReasonOf(signal: AbortSignal): string {
+  const reason = signal.reason
+  const text = typeof reason === 'string'
+    ? reason
+    : reason instanceof Error && reason.message
+    ? reason.message
+    : ''
+  return text ? `aborted by its job (${text})` : 'aborted by its job'
+}
+
+const ABORTED = Symbol('caller-aborted')
+
+/** The output of a run that never started because its signal had already fired. */
+function notStarted(timeoutReason: string): DeadlineOutput {
+  return {
+    code: 137,
+    signal: null,
+    success: false,
+    stdout: new Uint8Array(),
+    stderr: new Uint8Array(),
+    timeoutReason,
+  }
+}
+
+/**
  * Run `bin` with `options` and wait at most `deadlineMs` for it to exit.
+ *
+ * `signal`, when given, stops the child the same way the deadline does: the
+ * job pump passes its job's signal, so a job it has given up on does not leave
+ * its child running. A signal that has already fired spawns nothing.
  *
  * Throws only when `bin` cannot be spawned, which `output()` does too, so a
  * caller's existing spawn-failure handling still applies.
@@ -49,7 +84,9 @@ export async function runWithDeadline(
   options: Deno.CommandOptions,
   deadlineMs: number,
   killGraceMs: number = KILL_GRACE_MS,
+  signal?: AbortSignal,
 ): Promise<DeadlineOutput> {
+  if (signal?.aborted) return notStarted(abortReasonOf(signal))
   const child = new Deno.Command(bin, options).spawn()
   const exited = child.output()
 
@@ -57,15 +94,24 @@ export async function runWithDeadline(
   const expired = new Promise<typeof EXPIRED>((resolve) => {
     timer = setTimeout(() => resolve(EXPIRED), deadlineMs)
   })
-  let first: Deno.CommandOutput | typeof EXPIRED
+  let onAbort: (() => void) | undefined
+  const aborted = new Promise<typeof ABORTED>((resolve) => {
+    if (!signal) return
+    onAbort = () => resolve(ABORTED)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  let first: Deno.CommandOutput | typeof EXPIRED | typeof ABORTED
   try {
-    first = await Promise.race([exited, expired])
+    first = await Promise.race([exited, expired, aborted])
   } finally {
     if (timer !== undefined) clearTimeout(timer)
+    if (signal && onAbort) signal.removeEventListener('abort', onAbort)
   }
-  if (first !== EXPIRED) return withTimeoutReason(first, null)
+  if (first !== EXPIRED && first !== ABORTED) return withTimeoutReason(first, null)
 
-  const timeoutReason = `timed out after ${describeBudget(deadlineMs)}`
+  const timeoutReason = first === ABORTED && signal
+    ? abortReasonOf(signal)
+    : `timed out after ${describeBudget(deadlineMs)}`
   try {
     child.kill('SIGKILL')
   } catch {
@@ -154,4 +200,95 @@ export function budgetFromEnv(name: string, fallbackMs: number): number {
   // once for a delay past 2^31 - 1 ms, which would turn a very large budget into
   // an immediate kill. Capped at the longest timer.
   return Number.isFinite(ms) && ms >= 1 ? Math.min(ms, MAX_TIMER_MS) : fallbackMs
+}
+
+// ── Runner helpers ──────────────────────────────────────────────────────────
+//
+// Each of these used to be copied into five runners (ADR 0001). The integer
+// rule is `budgetFromEnv`'s, without the timer cap.
+
+/** An env read that survives a missing --allow-env rather than throwing into a job. */
+function envValue(name: string): string | undefined {
+  try {
+    return Deno.env.get(name)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * A whole-number knob from the environment, at least 1.
+ *
+ * One rule for every runner: the value is rounded down first and then kept
+ * only when it is finite and at least 1, so 0.5 takes the default rather than
+ * passing a `> 0` test and becoming 0. Text that is not a number (`12abc`)
+ * takes the default too; `parseInt` used to read it as 12. Unset, empty and
+ * unreadable all take the default.
+ */
+export function intFromEnv(name: string, fallback: number): number {
+  const raw = envValue(name)?.trim()
+  if (!raw) return fallback
+  const whole = Math.floor(Number(raw))
+  return Number.isFinite(whole) && whole >= 1 ? whole : fallback
+}
+
+/**
+ * A fractional knob from the environment that may be zero: COLMAP's 0.6
+ * thresholds, and `COLMAP_MIN_POINTS3D=0`, the documented way to turn that
+ * gate off. Negative, non-numeric, empty and unset take the default.
+ */
+export function numFromEnv(name: string, fallback: number): number {
+  const raw = envValue(name)?.trim()
+  if (!raw) return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+
+/**
+ * Whether a path's last segment is a server-minted session id. Delegates to the
+ * shared `SESSION_ID_RE` (src/shared/session-id.ts): five runners used to carry
+ * this check, and one of them once kept accepting the retired client-minted
+ * `session-*` shape after every other copy had moved on.
+ */
+export function isValidSessionDir(sessionDir: string): boolean {
+  const base = sessionDir.split('/').filter(Boolean).pop() ?? ''
+  return isServerSessionId(base)
+}
+
+/**
+ * Write a runner's manifest, best effort.
+ *
+ * A manifest that cannot be written is not a reason to fail the job: the result
+ * still reaches the coordinator in memory. So this logs under `tag` and returns.
+ * The directory is created only when `mkdir` is asked for. A runner that writes
+ * into a session dir must not ask: a session deleted mid-run would come back as
+ * a directory holding one manifest.
+ */
+export async function writeRunnerManifest(
+  path: string,
+  manifest: unknown,
+  tag: string,
+  opts: { mkdir?: boolean } = {},
+): Promise<void> {
+  try {
+    if (opts.mkdir) {
+      const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+      if (slash > 0) await Deno.mkdir(path.slice(0, slash), { recursive: true })
+    }
+    await Deno.writeTextFile(path, JSON.stringify(manifest, null, 2))
+  } catch (e) {
+    console.warn(`[${tag}] failed to write manifest:`, e)
+  }
+}
+
+/** The `{ status, manifest, log, exitCode }` a runner returns, after its manifest is written. */
+export async function finishRun<M extends { status: string }>(
+  manifestPath: string,
+  manifest: M,
+  exitCode: number,
+  log: string,
+  tag: string,
+): Promise<{ status: M['status']; manifest: M; log: string; exitCode: number }> {
+  await writeRunnerManifest(manifestPath, manifest, tag)
+  return { status: manifest.status, manifest, log, exitCode }
 }

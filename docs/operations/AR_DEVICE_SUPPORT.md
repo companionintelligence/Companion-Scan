@@ -14,8 +14,12 @@ from documents and not from a device: see [Runtime anchors](#runtime-anchors-whe
 | Device | WebXR path | 8th Wall path |
 | --- | --- | --- |
 | XREAL Beam Pro (Android 14, Chrome 151) | **VERIFIED dead** — no ARCore | **VERIFIED working, intermittently** — ~2 starts in 8 |
-| Galaxy Tab S8 Ultra | UNVERIFIED | Camera permission prompt never raised (one report, `eighthwall.ts:571`) |
+| Galaxy Tab S8 Ultra | Session start seen once (2026-08-23): an `immersive-ar` session with the HUD over it, on a tablet that never moved ([DEVICE_TESTING.md § Results — B2](../testing/DEVICE_TESTING.md#results--b2)). Tracking, capture and the calibration decal UNVERIFIED | Camera permission prompt never raised (one report; the camera status lines come from `src/ar/eighthwall.ts`) |
 | iPhone / Safari | UNVERIFIED | UNVERIFIED — the platform 8th Wall exists for, never measured here |
+
+The apps are not in this table because none has run on a device: the native `ScanAR` runtime in
+the iOS and Android apps, and the native Quest app. Their pages say what has been built and
+tested without one ([targets/](../targets/README.md)).
 
 ## XREAL Beam Pro
 
@@ -169,18 +173,20 @@ session start:
 `FIRST_POSE_TIMEOUT_MS` is unchanged, and the four-state verdict is unchanged: the grace window
 was never too short, it was started too early.
 
-### Still to fix, in a file this pass did not own
+### What this found in `src/ar/preflight.ts`
 
-Two things in `src/ar/preflight.ts` are now known to be wrong, and are left for whoever owns
-that file:
+This pass found two things wrong in `src/ar/preflight.ts`, a file it did not own:
 
-1. The module header states as established fact that on the Beam Pro "the pipeline never emits
-   a frame". It does; the stall is intermittent, ~2 starts in 8.
-2. `firstFrameVerdict()`'s no-frame branch says **"This device cannot run the live scanner"**
-   and sets `routeToUpload: true`. With the timing fixed that branch is now only reached with a
-   camera stream genuinely in hand, so it does describe a real stall — but it still overstates
-   it as a permanent property of the device, and the measurement above says retrying is the
-   right advice. The sentence should name the attempt, not the hardware.
+1. The module header stated as established fact that on the Beam Pro "the pipeline never emits
+   a frame". It does: about two starts in eight succeed, and the rest stall. Fixed in wave 14,
+   ticket 0004 (#286): the header now says the stall happens on some starts. Its rate, first
+   given the wrong way round, was corrected in #294: six of the eight starts measured stalled.
+2. `firstFrameVerdict()`'s no-frame branch said **"This device cannot run the live scanner"**
+   and set `routeToUpload: true`, a permanent claim about the device where the measurement above
+   says retrying is the right advice. That is fixed: the branch now reports "AR did not start
+   this time" as `degraded`, keeps the capture rail usable, says a second try often clears it,
+   and does not send the person to upload. Whether "often" fits a start that succeeds about two
+   times in eight is left to the owner.
 
 ## Runtime anchors: where they exist and what the app does with them
 

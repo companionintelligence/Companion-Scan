@@ -288,14 +288,12 @@ scan record that still names the Place, or a registry that cannot be read. A wor
 fixed message, the Places stay merged, and the same request finishes it. What was the world's own goes with it: its name,
 location, Things, share tokens, the notes on the whole Place, and the hand-set placements it kept (decision 7), which the
 answer counts as `placementsRemoved`. A share link, or an editor tab, still open on the source's world is answered as any
-address with no world is: `GET /worlds/:slug` builds a world with no Place (`readWorldUnlocked` and `synthesizeWorld`,
-`server/main.ts`), named from the address, which holds none of what the Place's world held (its name, address, Things or
-share tokens). It lists up to 24 of the stored scans that no Place holds (the ones that pass `shouldIncludeInWorld`) or, when
-there are none, up to eight of the stored scans of any Place (the default world's fallback), which carry their own locations
-as they do in any world, and it is saved: `GET /worlds` lists it, with `projectId` null and the scans it lists, as it lists
-every world file, and not as an emptied world with no scans. That is how the server answers an address that has no world, so
-it is not new to a merge, and it is not decided here: the owner may want such an address to be a 404. No route removes a
-world that says it is no Place's.
+address with no world is. Since wave 14 (ticket 0001, #284) that is a 404, "World not found. POST /worlds creates one."
+(`findWorld`, `server/main.ts`): only `default` and the `project-<id>` world of a Place in the registry are built on first
+read, and a merged-away Place has left the registry. Until then `GET /worlds/:slug` built and saved a world with no Place
+for any address, listing up to 24 of the stored scans that no Place holds or, when there were none, up to eight of the
+stored scans of any Place. That rule now applies only to `default` and to `POST /worlds`. No route removes a world that says
+it is no Place's.
 
 **The editor's Places panel reads the refusal, and not yet the new answer keys.** `src/viewer/places.ts` sends a merge through
 `sendUnlessReferencesDiffer`: a 409 for differing references is put to the person, who may send `acceptFrameMismatch`. It does not

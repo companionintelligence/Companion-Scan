@@ -23,13 +23,18 @@
  *                                        in SHELL_RETURN_URL with a one-time code, not a cookie
  *   GET  /authenticate/oidc?shell=desktop&challenge=…  → the same, for the desktop app. The callback
  *                                        ends in DESKTOP_RETURN_URL instead
+ *   GET  /authenticate/oidc?shell=quest&challenge=…  → the same, for the Quest app (meta/). The callback
+ *                                        ends in QUEST_RETURN_URL
  *   POST /authenticate/shell/exchange  → { code, verifier } → { token, email, name }, the shell's session
  *   GET  /authenticate/whoami          → { sub, email, name } for a valid session; also accepts the
- *                                        shell's Bearer token, or a Portal-issued Bearer JWT (JWKS-verified)
+ *                                        shell's Bearer token, or a Portal-issued Bearer JWT (JWKS-verified).
+ *                                        Every branch applies PORTAL_OIDC_ALLOWED_EMAILS
  *   POST /authenticate/logout          → clears the session cookie
  *
  * Env (names follow CI-Server / CI-Common):
- *   PORTAL_OIDC_ENABLED        master switch (default: off)
+ *   PORTAL_OIDC_ENABLED        master switch (default: off). On without OIDC_ISSUER_URL, the server
+ *                              stops at boot (portalConfigProblem): it would guard every route and
+ *                              offer no way to sign in
  *   OIDC_ISSUER_URL            Portal origin, e.g. https://portal.example.com. The sign-in
  *                              endpoints are discovered from it (see discoverPortal)
  *   OIDC_CLIENT_ID             public client id (default: ci-web-xr-scan) — must be
@@ -312,6 +317,16 @@ export function isAllowedEmail(cfg: PortalAuthConfig, email: string | undefined 
 }
 
 /**
+ * The claims of one token when it is a valid session of an allowlisted account, else null. The one test every reader of
+ * a session applies: the guard below, whoami, and main.ts's world routes, which are asked a session as Bearer or
+ * `?token=` by a signed-in shell and must not read it as a bad world token (F-05).
+ */
+export async function sessionClaimsFor(token: string, cfg: PortalAuthConfig): Promise<SessionClaims | null> {
+  const claims = await verifySession(token, cfg.sessionSecret)
+  return claims && isAllowedEmail(cfg, claims.email) ? claims : null
+}
+
+/**
  * Who is calling, as a Companion Account session: the session cookie in a browser, the shell's
  * Bearer token in the app, or the same token as a `token` query parameter, for media and
  * WebSocket URLs that cannot carry a header. Only an allowlisted email counts.
@@ -325,19 +340,51 @@ export async function scanSessionFor(c: Context, cfg: PortalAuthConfig): Promise
   const queryToken = c.req.query('token')
   if (queryToken) candidates.push(queryToken)
   for (const token of candidates) {
-    const claims = await verifySession(token, cfg.sessionSecret)
-    if (claims && isAllowedEmail(cfg, claims.email)) return claims
+    const claims = await sessionClaimsFor(token, cfg)
+    if (claims) return claims
   }
   return null
 }
 
-/** Middleware for the Scan's own API: a request without an allowlisted Companion session gets a 401. */
-export function requireScanSession(cfg: PortalAuthConfig) {
+/**
+ * Middleware for the Scan's own API: a request without an allowlisted Companion session gets a 401.
+ *
+ * `admit` lets one kind of request through without a session, and is asked first. main.ts passes the 4D clip contract
+ * (`isPersonClipFetch`): the off-box 4d-capture service has no Companion Account, and fetches a take's clips and pose
+ * tracks with its own token.
+ */
+export function requireScanSession(cfg: PortalAuthConfig, admit?: (c: Context) => boolean) {
   return async (c: Context, next: () => Promise<void>): Promise<Response | void> => {
+    if (admit?.(c)) {
+      await next()
+      return
+    }
     const claims = await scanSessionFor(c, cfg)
     if (!claims) return c.json({ error: 'Sign in with your Companion Account to use this Scan.' }, 401)
     await next()
   }
+}
+
+/** Whether the request carries `Authorization: Bearer <expected>`, compared in constant time. An empty `expected` matches nothing. */
+export function bearerMatches(c: Context, expected: string): boolean {
+  if (!expected) return false
+  const auth = c.req.header('authorization') ?? ''
+  const match = /^Bearer\s+(.+)$/i.exec(auth)
+  return match !== null && sameText(match[1].trim(), expected)
+}
+
+/** The two routes the 4d-capture service fetches a take from: a clip, and the camera track beside it. Nothing else. */
+const PERSON_CLIP_PATH = /^\/sessions\/sess-[a-z0-9-]+\/(clip\/clip\.(mp4|webm)|pose-track\.json)$/
+
+/**
+ * The 4D clip contract (wave 14, with server/person4d/person_4d.ts and subsystems/4d-capture/): the off-box
+ * 4d-capture service fetches `clip.url` and `poseTrackUrl` with `Authorization: Bearer <FDANYONE_TOKEN>`. With the
+ * session guard on, that token, and only on a GET (or HEAD) of exactly those two routes, stands in for a session.
+ * `token` is FDANYONE_TOKEN; unset, nothing is admitted this way.
+ */
+export function isPersonClipFetch(c: Context, token: string): boolean {
+  if (c.req.method !== 'GET' && c.req.method !== 'HEAD') return false
+  return PERSON_CLIP_PATH.test(c.req.path) && bearerMatches(c, token)
 }
 
 /**
@@ -396,16 +443,29 @@ export const SHELL_RETURN_URL = 'com.companionintelligence.scan://auth'
  * src/shared/shell-sign-in.ts.
  */
 export const DESKTOP_RETURN_URL = 'computer.ci.scan.desktop://auth'
-/** Set beside the shell challenge when the desktop app started the sign-in. */
+/**
+ * Where a Quest app sign-in ends: the Quest app's own URL scheme, registered by an intent filter in
+ * meta/ (wave 13 ticket 0010). Fixed like the two above; the request only chooses which. The app opens
+ * the sign-in in the system browser and sends the token it exchanges as `Authorization: Bearer`. Keep it in
+ * step with the Quest app's own copy, SignInReturn.PREFIX (meta/app/.../quest/auth/SignInReturn.kt).
+ */
+export const QUEST_RETURN_URL = 'com.companionintelligence.scan.quest://auth'
+/**
+ * Set beside the shell challenge when an app other than the phone app started the sign-in: its `shell`
+ * value (`desktop`, `quest`), so the callback knows which fixed URL to end in. The phone app's sign-in
+ * sets none and is unchanged.
+ */
 const SHELL_APP_COOKIE = 'oidc_shell_app'
 
 /**
  * The app a shell sign-in returns to: `shell=1` is the phone app (the value it has always sent),
- * `shell=desktop` the desktop app. Any other value is a web sign-in.
+ * `shell=desktop` the desktop app, `shell=quest` the Quest app. Any other value is a web sign-in.
+ * The answer is always one of the three constants, never anything taken from the request.
  */
-export function shellReturnFor(shell: string | undefined): string | null {
+export function shellReturnFor(shell: string | undefined | null): string | null {
   if (shell === '1') return SHELL_RETURN_URL
   if (shell === 'desktop') return DESKTOP_RETURN_URL
+  if (shell === 'quest') return QUEST_RETURN_URL
   return null
 }
 /** How long the one-time code from a shell sign-in waits to be exchanged. */
@@ -465,13 +525,27 @@ export function signInEnabled(cfg: PortalAuthConfig): boolean {
   return cfg.enabled && cfg.issuerUrl !== ''
 }
 
+/**
+ * Why this sign-in configuration cannot start, or null. Sign-in switched on with no issuer would install the session
+ * guard and strict world auth (main.ts) while registering no sign-in route, so no request could ever get in (F-11).
+ * main.ts asks this at boot and stops with the message rather than serve a guard nobody can pass.
+ */
+export function portalConfigProblem(cfg: PortalAuthConfig): string | null {
+  if (cfg.enabled && cfg.issuerUrl === '') {
+    return 'PORTAL_OIDC_ENABLED is on but OIDC_ISSUER_URL is empty, so nobody could sign in while every data route ' +
+      'requires it. Set OIDC_ISSUER_URL to the CI-Portal origin, or turn PORTAL_OIDC_ENABLED off.'
+  }
+  return null
+}
+
 export function registerPortalAuth(app: Hono, cfg: PortalAuthConfig, deps: PortalAuthDeps) {
   // Registered before the early return below, and nothing else on this path is:
   // a stock install must be able to say sign-in is off, and this route says only that.
   app.get('/authenticate/status', (c) => c.json({ enabled: signInEnabled(cfg) }))
   if (!cfg.enabled) return
   if (!cfg.issuerUrl) {
-    console.warn('[portal-auth] PORTAL_OIDC_ENABLED is set but OIDC_ISSUER_URL is empty — sign-in disabled')
+    // main.ts stops at boot before this (portalConfigProblem). A caller that does not ask gets no route either.
+    console.warn(`[portal-auth] ${portalConfigProblem(cfg)}`)
     return
   }
   console.log(`[portal-auth] Companion Account sign-in enabled (issuer ${cfg.issuerUrl}, client ${cfg.clientId})`)
@@ -506,9 +580,11 @@ export function registerPortalAuth(app: Hono, cfg: PortalAuthConfig, deps: Porta
     if (shell && !PKCE_SHAPE.test(shellChallenge)) return c.text('Shell sign-in needs a PKCE challenge', 400)
     if (shell) setCookie(c, SHELL_CHALLENGE_COOKIE, shellChallenge, HANDSHAKE_TTL_SEC, '/authenticate')
     else clearCookie(c, SHELL_CHALLENGE_COOKIE, '/authenticate')
-    // Which app gets the code back. Only the desktop app is marked; the phone app's sign-in is unchanged.
-    if (shellReturn === DESKTOP_RETURN_URL) setCookie(c, SHELL_APP_COOKIE, 'desktop', HANDSHAKE_TTL_SEC, '/authenticate')
-    else clearCookie(c, SHELL_APP_COOKIE, '/authenticate')
+    // Which app gets the code back. The desktop and Quest apps are marked with their `shell` value; the phone app's
+    // sign-in sets nothing and is unchanged.
+    if (shellReturn === DESKTOP_RETURN_URL || shellReturn === QUEST_RETURN_URL) {
+      setCookie(c, SHELL_APP_COOKIE, c.req.query('shell') ?? '', HANDSHAKE_TTL_SEC, '/authenticate')
+    } else clearCookie(c, SHELL_APP_COOKIE, '/authenticate')
     const { verifier, challenge } = await createPkcePair()
     const state = createStateNonce()
     setCookie(c, STATE_COOKIE, state, HANDSHAKE_TTL_SEC, '/authenticate')
@@ -605,7 +681,8 @@ export function registerPortalAuth(app: Hono, cfg: PortalAuthConfig, deps: Porta
       exp: Math.floor(Date.now() / 1000) + cfg.sessionTtlSec,
     }
     const shellChallenge = cookie(c, SHELL_CHALLENGE_COOKIE)
-    const desktopApp = cookie(c, SHELL_APP_COOKIE) === 'desktop'
+    // The marked app's fixed URL; no mark (or a mark that names no app) is the phone app, as before.
+    const appReturn = shellReturnFor(cookie(c, SHELL_APP_COOKIE)) ?? SHELL_RETURN_URL
     clearCookie(c, SHELL_CHALLENGE_COOKIE, '/authenticate')
     clearCookie(c, SHELL_APP_COOKIE, '/authenticate')
     if (shellChallenge && PKCE_SHAPE.test(shellChallenge)) {
@@ -615,8 +692,9 @@ export function registerPortalAuth(app: Hono, cfg: PortalAuthConfig, deps: Porta
       const shellCode = b64url(crypto.getRandomValues(new Uint8Array(32)))
       shellCodes.set(shellCode, { challenge: shellChallenge, claims, expiresAt: Date.now() + SHELL_CODE_TTL_MS })
       clearCookie(c, REDIRECT_COOKIE, '/authenticate')
-      console.log(`[portal-auth] ${profile.email} signed in via Companion Account (${desktopApp ? 'desktop app' : 'shell'})`)
-      return c.redirect(`${desktopApp ? DESKTOP_RETURN_URL : SHELL_RETURN_URL}?code=${shellCode}`, 302)
+      const app = appReturn === DESKTOP_RETURN_URL ? 'desktop app' : appReturn === QUEST_RETURN_URL ? 'Quest app' : 'shell'
+      console.log(`[portal-auth] ${profile.email} signed in via Companion Account (${app})`)
+      return c.redirect(`${appReturn}?code=${shellCode}`, 302)
     }
 
     setCookie(c, SESSION_COOKIE, await signSession(claims, cfg.sessionSecret), cfg.sessionTtlSec)
@@ -681,7 +759,12 @@ export function registerPortalAuth(app: Hono, cfg: PortalAuthConfig, deps: Porta
     const sess = cookie(c, SESSION_COOKIE)
     if (sess) {
       const claims = await verifySession(sess, cfg.sessionSecret)
-      if (claims) return c.json({ sub: claims.sub, email: claims.email, name: claims.name ?? null, via: 'session' })
+      if (claims) {
+        // The same allowlist as the shell token and the Portal JWT below: an email taken off PORTAL_OIDC_ALLOWED_EMAILS
+        // is not signed in here any more, whatever cookie its browser still holds (F-11).
+        if (!isAllowedEmail(cfg, claims.email)) return c.json({ error: 'Not authorized for this scanner' }, 403)
+        return c.json({ sub: claims.sub, email: claims.email, name: claims.name ?? null, via: 'session' })
+      }
     }
     const auth = c.req.header('authorization')
     if (auth?.startsWith('Bearer ')) {

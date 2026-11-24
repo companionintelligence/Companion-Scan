@@ -176,10 +176,39 @@ test('the desktop builds: Windows NSIS and MSI, a universal ad-hoc signed macOS 
 })
 
 test('the mobile build workflow pins its actions, uses no third-party action, and bakes no server in', () => {
-  for (const file of ['.github/workflows/mobile-build.yml', '.github/workflows/desktop-build.yml']) {
+  for (const file of ['.github/workflows/mobile-build.yml', '.github/workflows/desktop-build.yml', '.github/workflows/quest-build.yml', '.github/workflows/subsystem-tests.yml']) {
     const wf = read(file)
     for (const m of wf.matchAll(/uses: (\S+)/g)) assert.match(m[1]!, /^actions\/[\w-]+@[0-9a-f]{40}$/, `${file}: ${m[1]}`)
     assert.doesNotMatch(wf, /^\s*VITE_API_BASE\s*:/m, `${file}: no server address built in`)
     assert.doesNotMatch(wf, /android-actions\/setup-android|dtolnay\/rust-toolchain/, `${file}: no third-party action`)
+  }
+})
+
+test('every native and subsystem test suite has a workflow job, and every such workflow runs only when started by hand (F-36, FN-166, FN-193)', () => {
+  const read2 = (file: string) => read(file).replace(/\r\n/g, '\n')
+  const mobile = read2('.github/workflows/mobile-build.yml')
+  assert.match(mobile, /working-directory: mobile\/android\n {8}run: \.\/gradlew testDebugUnitTest :app:assembleDebugAndroidTest --no-daemon/, 'the Android JVM tests, and the instrumented tests compiled')
+  assert.match(mobile, /npm run build:web:8thwall --prefix mobile[\s\S]*?name: scan-android-8thwall-debug-apk/, 'the 8th Wall variant is built and kept')
+  const quest = read2('.github/workflows/quest-build.yml')
+  assert.match(quest, /working-directory: meta\n {8}run: \.\/gradlew :app:testDebugUnitTest --no-daemon/, "the Quest app's JVM tests")
+  assert.match(quest, /working-directory: meta\n {8}run: \.\/gradlew :app:assembleDebug --no-daemon/, 'and its build')
+  // In the developer build only. The release job gets them once a desktop-build run has passed them: until then a step that
+  // has never run would sit between the installers and the release.
+  assert.match(read2('.github/workflows/desktop-build.yml'), /run: npm run build --prefix desktop[^\n]*\n(?: +#[^\n]*\n)*(?: +- name: Desktop shell unit tests \(Rust\)\n {8}if: runner\.os == 'Linux'\n {8}run: cargo test --locked --manifest-path desktop\/src-tauri\/Cargo\.toml)/, 'the Rust tests, after the build that makes what they embed')
+  const subsystems = read2('.github/workflows/subsystem-tests.yml')
+  assert.match(subsystems, /npm ci --ignore-scripts --prefix subsystems\/osmo-ble\n[\s\S]*?npm run test:protocol --prefix subsystems\/osmo-ble/, "the gimbal subsystem's own test script")
+  for (const script of ['test:gimbal:stall', 'test:gimbal:control', 'test:gimbal:link']) {
+    assert.match(subsystems, new RegExp(`npm run ${script}\\n`), `the root's ${script}`)
+    assert.ok(JSON.parse(read('package.json')).scripts[script], `${script} is a root script`)
+  }
+  assert.match(subsystems, /npm test --prefix subsystems\/4d-capture/, "the 4D service's tests")
+  assert.ok(JSON.parse(read('subsystems/osmo-ble/package.json')).scripts['test:protocol'], 'the gimbal script the job calls exists')
+  assert.ok(JSON.parse(read('subsystems/4d-capture/package.json')).scripts.test, 'and the 4D one')
+  for (const file of ['.github/workflows/quest-build.yml', '.github/workflows/subsystem-tests.yml']) {
+    const wf = read2(file)
+    assert.match(wf, /^on:\n {2}workflow_dispatch:\n\n/m, `${file}: started by hand only, as the other workflows are`)
+    assert.match(wf, /^permissions:\n {2}contents: read\n/m, `${file}: read-only`)
+    const checkouts = [...wf.matchAll(/- uses: actions\/checkout@[^\n]*\n {8}with:\n {10}persist-credentials: false\n/g)]
+    assert.equal(checkouts.length, (wf.match(/- uses: actions\/checkout@/g) ?? []).length, `${file}: no checkout keeps its token`)
   }
 })

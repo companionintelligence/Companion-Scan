@@ -20,6 +20,8 @@ import { trackingIsUsable } from '../ar/tracking-quality.ts'
 import { epochOf } from '../ar/frame-epoch.ts'
 import { isQueuedOffline } from '../shared/offline-queue.ts'
 import { apiUrl } from '../shared/api-base.ts'
+import { rotationAngleDeg } from '../shared/pose-math.ts'
+import { FRAME_JPEG_MAX_LONG_EDGE_PX, FRAME_JPEG_QUALITY, encodeFrameJpeg, fitLongEdge } from './frame-image.ts'
 
 export interface KeyframeStreamerOptions {
   /** Min time between keyframes (default 1200 ms) */
@@ -95,8 +97,8 @@ const DEFAULTS: Required<KeyframeStreamerOptions> = {
   minDistanceM: 0.3,
   minRotationDeg: 20,
   maxQueue: 3,
-  maxLongEdgePx: 1280,
-  jpegQuality: 0.8,
+  maxLongEdgePx: FRAME_JPEG_MAX_LONG_EDGE_PX,
+  jpegQuality: FRAME_JPEG_QUALITY,
   pollIntervalMs: 350,
   hold: () => false,
   runId: () => null,
@@ -106,6 +108,16 @@ const OFFLINE_RETRY_MS = 10_000
 const UPLOAD_RETRIES = 3
 /** Longest one keyframe upload may take before it counts as failed (as the fixed 20 s it was). */
 const UPLOAD_TIMEOUT_MS = 20_000
+
+/**
+ * Whether a failed keyframe upload is worth another attempt. A 5xx (or anything else that is not a 4xx) is; a 4xx is
+ * the request's own fault and is not, except 408 Request Timeout and 429 Too Many Requests, which HTTP defines as
+ * "try again later". Those wait out the same back-off as a network error.
+ */
+export function keyframeUploadRetryable(status: number): boolean {
+  if (status === 408 || status === 429) return true
+  return !(status >= 400 && status < 500)
+}
 
 export class KeyframeStreamer {
   private _opts: Required<KeyframeStreamerOptions>
@@ -387,13 +399,9 @@ export class KeyframeStreamer {
     const dz = b.position.z - a.position.z
     if (Math.sqrt(dx * dx + dy * dy + dz * dz) >= this._opts.minDistanceM) return true
 
-    // Quaternion angle: θ = 2·acos(|q1·q2|)
-    const dot = Math.abs(
-      a.rotation.x * b.rotation.x + a.rotation.y * b.rotation.y +
-      a.rotation.z * b.rotation.z + a.rotation.w * b.rotation.w,
-    )
-    const angleDeg = 2 * Math.acos(Math.min(1, dot)) * (180 / Math.PI)
-    return angleDeg >= this._opts.minRotationDeg
+    // The full turn between the two orientations (src/shared/pose-math.ts): the same angle the old 2·acos(|q1·q2|)
+    // gave for unit quaternions, without its loss of precision near zero or its 90 degrees for a zero quaternion.
+    return rotationAngleDeg(a.rotation, b.rotation) >= this._opts.minRotationDeg
   }
 
   // ── Capture + encode ────────────────────────────────────────────────────────
@@ -410,17 +418,14 @@ export class KeyframeStreamer {
     // The run is read where the epoch is, for the same reason: the frame belongs to the scan that was live when it was taken.
     const arRunId = this._opts.runId()
 
-    const scale = Math.min(1, this._opts.maxLongEdgePx / Math.max(width, height))
-    const w = Math.round(width * scale)
-    const h = Math.round(height * scale)
+    // The size the JPEG is encoded at, which the intrinsics below describe.
+    const { width: w, height: h } = fitLongEdge(width, height, this._opts.maxLongEdgePx)
 
-    const imageData = new ImageData(new Uint8ClampedArray(pixels), width, height)
-    const bitmap = await createImageBitmap(imageData)
-    const oc = new OffscreenCanvas(w, h)
-    const ctx = oc.getContext('2d') as OffscreenCanvasRenderingContext2D
-    ctx.drawImage(bitmap, 0, 0, w, h)
-    bitmap.close()
-    const blob = await oc.convertToBlob({ type: 'image/jpeg', quality: this._opts.jpegQuality })
+    // The one frame encoder (./frame-image.ts), in one pass: a keyframe is never re-encoded smaller.
+    const blob = await encodeFrameJpeg(pixels, width, height, {
+      maxLongEdgePx: this._opts.maxLongEdgePx,
+      quality: this._opts.jpegQuality,
+    })
 
     const meta = {
       index: this._index++,
@@ -503,7 +508,7 @@ export class KeyframeStreamer {
         // skips the retry loop: re-POSTing only queues another copy.
         if (isQueuedOffline(resp)) return false
         if (resp.ok) return true
-        if (resp.status >= 400 && resp.status < 500) return false // not retryable
+        if (!keyframeUploadRetryable(resp.status)) return false
       } catch { /* network error or timeout — retry */ } finally {
         clearTimeout(timeout)
         if (this._inflight === attemptControl) this._inflight = null

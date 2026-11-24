@@ -35,7 +35,8 @@ Treat that document as the current state of the hardware; this README covers the
 
 ```bash
 npm install
-npm run test:protocol   # DUML codec vs. a real frame, the dome/station planner, device resolution
+npm run test:protocol   # DUML codec vs. a real frame, the dome/station planner, device resolution,
+                        # the backend interlock, its access rules and its move-to guard
 npm run backend         # :8788 — the ONE process that owns the BLE connection (node --watch)
 npm run web             # http://localhost:8787 — "Scanner Control" UI (Web Bluetooth or backend)
 npm run cli -- grid --stations 4 --dry-run   # scripted capture runs against the backend
@@ -107,9 +108,14 @@ is made unplannable rather than detected at position 14 of 105:
   margin at each stop.
 - `POST /api/grid-capture` **refuses** an explicit `pans` list containing an unreachable column,
   with a 400 naming the columns and how far past the stop each one is.
-- The web UI's pan from/to is read *along* the arc, so `96 → -114` sweeps 96 → 180 → −114 rather
-  than numerically through 0, and the Run button is disabled while any column is in the dead
-  zone.
+- The web UI's pan from/to is read *along* the arc the backend reports in its status (measured,
+  or the fallback), so `96 → -114` sweeps 96 → 180 → −114 rather than numerically through 0. The
+  Run button is disabled while any column is past a stop of that arc, and the presets are shapes
+  relative to it, so they follow a measured arc.
+- `POST /api/move-to` refuses (400) a pan outside the arc in use or a tilt outside -45°..+16°.
+  That makes the MCP `gimbal_move_to`, `gimbal_sweep` and `gimbal_recenter` safe too. The sweep
+  steps along the arc, and recenter aims at the arc's centre rather than at pan 0, which is in
+  the fallback dead zone.
 - The old shipped `Dome` preset was `-150..150` step 30: **6 of its 11 columns were inside the
   stop.** Those numbers are kept as a regression fixture in `protocol/dome.test.mjs`.
 
@@ -148,6 +154,10 @@ So the arc is a **value that can be measured**, with the constants as the fallba
 - `POST /api/grid-capture` probes at the **start of every station** by default (for a
   centre/span plan — send `probeArc: false` to skip) and **re-derives the columns** inside what
   it measured, keeping the column count so `total` stays true.
+  - `npm run cli -- grid` sends a centre/span unless `--pans` is given, so CLI runs probe.
+    `--no-probe-arc` skips it. Until wave 14 the CLI sent its columns, so it never probed.
+  - The web UI sends explicit columns, so page runs do not probe; whether it should is an
+    owner decision.
 - The measurement **does not outlive the setup it describes.** It is discarded when the capture
   parks for a station move, on connect/disconnect, on a gimbal reset, when a sweep jams against
   a limit the arc did not have, and after 15 minutes — the backstop for a tripod moved between
@@ -175,9 +185,34 @@ Read from the shell that starts `npm run backend`, not from `.env`:
 - `BACKEND_PORT`: the port. Default `8788`.
 - `BACKEND_TEST_ROUTES=1`: turns on `POST /api/test/recenter-probe` and `POST /api/test/command-probe`,
   the bench probes that fire one command and report whether the gimbal moved. Off by default. With
-  them off, a request to either returns `404 Test route disabled`.
+  them off, a request to either returns `404 Test route disabled`, `GET /api/status` says
+  `testRoutes: false`, and the web UI's test matrix says the routes are off.
+- `OSMO_BACKEND_TOKEN`: a shared secret. Unset, nothing is checked, as before. Set, every route
+  except the CORS preflight needs `Authorization: Bearer <token>`, and `/ws` takes it as
+  `?token=`, because a browser cannot put headers on a WebSocket.
+  - The CLI and the MCP server read the same variable from their own environment.
+  - The web UI has a token field under Connect, Advanced. It is remembered in that browser only,
+    in localStorage.
+  - No response, log line or message carries the token.
+- `BACKEND_ALLOWED_ORIGINS`: which browser pages may call the backend. Unset means the Gimbal
+  control page's own origin: port 8787 on the host the backend was reached at, or any loopback
+  name. A comma-separated list of origins replaces that, and `*` restores the old answer-everyone
+  behaviour.
+  - A request with no `Origin` header (the CLI, the MCP server, curl) is never refused for its
+    origin.
+  - The check runs on the server before any route, and on the `/ws` upgrade. CORS alone never
+    stopped a cross-site POST from moving the gimbal, because a simple request skips the preflight.
+  - The default does not stop a DNS-rebinding page served on port 8787. The token, an explicit
+    list, or `BACKEND_HOST=127.0.0.1` does.
+- `BACKEND_HOST`: the bind address. Unset means every interface, as before. That is what the rig
+  needs, because the operator opens the web UI from a phone.
 
-The `.env` fallback reads `ANDROID_MCP_*` names only, so set these in the shell.
+The web UI's server (`npm run web`) takes `PORT` (default `8787`) and `WEB_HOST` (its bind
+address, default every interface). It serves only `web/` and `protocol/`, the files the page
+loads. If you move it off 8787, list its origin in `BACKEND_ALLOWED_ORIGINS`.
+
+The `.env` fallback reads `ANDROID_MCP_*` names only, so set these in the shell. The rules live in
+`server/access.mjs`.
 
 ### Configuring the phone it drives
 
@@ -281,6 +316,13 @@ it:
   sleeping phone because the pause is reported in `GET /api/status` as `awaitingStation`,
 - `POST /api/grid-advance` directly.
 
+To end the capture there instead, keeping every station so far, use any of these. Each calls
+`POST /api/grid-stop`:
+- the web UI's **Stop scan**;
+- `npm run cli -- stop`;
+- Ctrl-C at the CLI's prompt;
+- the MCP tool `stop_grid_capture`.
+
 What the pause guarantees, for a wait of any length:
 
 - **Motors are not latched.** The speed command is a latch, not a pulse, and the operator is
@@ -296,6 +338,9 @@ What the pause guarantees, for a wait of any length:
 - **The manual controls come back.** The scan interlock that rejects joystick/recenter commands
   mid-sweep (two controllers fighting for two motors) is lifted while parked, because the capture
   is not driving the motors then. Confirmed on hardware: 409 during a sweep, 200 while parked.
+  The web UI re-enables the joystick, Center, the orientation and stick buttons, raw send and the
+  test matrix while parked. Photo stays off, because a camera-mode run holds the phone's one MCP
+  session for the whole capture.
   A move or probe you start while parked is allowed too, as long as no other move or probe is
   still driving the motors. While one is, the parked scan refuses the same non-stop commands it
   refuses mid-sweep, with a 409. Stops still go through. The run cannot advance until that move
@@ -308,7 +353,7 @@ What the pause guarantees, for a wait of any length:
   - turning the stick on (turning it off is still allowed)
   - a move-to and an arc probe
 
-  Zero-speed stops always go through. The web UI disables these same controls while a scan runs.
+  Zero-speed stops always go through. The web UI disables these same controls while a scan sweeps.
 - **No overlap with an outside move.** A move-to or probe started while parked can still be
   driving when the operator advances. `POST /api/grid-advance` refuses with a 409 until it has
   finished, and a capture cannot start while one is still driving the gimbal.
@@ -326,7 +371,8 @@ Stopping after 3 of 5 stations must leave three whole domes, not a half-written 
 - Every frame carries its station on the wire and in its filename. "Which station was bad" is
   the first question when a solve comes back short, and a bare running index cannot answer it.
 - `POST /api/grid-stop` while parked ends the run on a clean seam — a whole number of domes —
-  and says so, rather than aborting mid-sweep.
+  and says so, rather than aborting mid-sweep. Ctrl-C in the CLI sends it, and keeps reading until
+  the run's `done` event, so `manifest.json` ends complete; a second Ctrl-C exits at once.
 - The verdict comes from one place (`assessCapture` in `protocol/dome.mjs`) for every consumer.
   `complete` means every planned station was swept; **`usable`** means it can be reconstructed,
   and it is false for a single station however many positions converged, false when nothing
@@ -355,13 +401,14 @@ Start it with `--http` (or `MCP_TRANSPORT=http`) instead of the bare `npm run mc
 OSMO_MCP_TOKEN=<a-long-random-secret> node server/mcp-server.mjs --http
 ```
 
-It binds all interfaces (like `server/backend.mjs`), so it's reachable over Tailscale as soon as
-it's running. Env vars:
+It binds all interfaces (as `server/backend.mjs` does by default), so it's reachable over
+Tailscale as soon as it's running. Env vars:
 
 | Var | Default | Purpose |
 |---|---|---|
 | `OSMO_MCP_HTTP_PORT` | `8789` | Port to listen on (`8787` is `web/server.mjs`, `8788` is `server/backend.mjs`) |
 | `OSMO_MCP_TOKEN` | *(required)* | Bearer token clients must send; the server refuses to start without one, since this port is reachable by anyone on the tailnet |
+| `OSMO_BACKEND_TOKEN` | *(unset)* | The backend's own token, sent on to it when the backend was started with one. A different secret from `OSMO_MCP_TOKEN`. |
 
 Every request to `/mcp` is checked against `Authorization: Bearer <OSMO_MCP_TOKEN>` before it
 ever reaches the MCP transport — missing or wrong tokens get a `401` and nothing else.
@@ -383,8 +430,8 @@ The stdio registration (`"command": "node", "args": [...]`) and the HTTP one are
 run whichever transport matches how you're registering it; both share the same BLE connection
 logic and tool set.
 
-Includes `gimbal_sweep`, `gimbal_move_to`, `plan_scan_grid` and `get_orientation` tools built for
-driving automated capture sweeps — the intended use case is mounting a phone in the gimbal to
+Includes `gimbal_sweep`, `gimbal_move_to`, `plan_scan_grid`, `get_orientation` and
+`stop_grid_capture` tools built for driving automated capture sweeps — the intended use case is mounting a phone in the gimbal to
 drive an external scanning client through a room, without that client needing any awareness of
 the gimbal at all (see below). Positioning is **closed-loop** (speed corrections against live
 telemetry) because the absolute-angle opcode is dead: always check `converged` in the result
@@ -398,10 +445,12 @@ in `../../docs/operations/GIMBAL_INTEGRATION.md`. Key finding from that integrat
 client auto-captures purely off the phone's own tracked movement (distance/rotation thresholds),
 so no signaling between this subsystem and the scanner client is needed for a basic sweep —
 physically moving the phone via `gimbal_sweep` is sufficient on its own. For an exact photo
-count instead, the backend orchestrates the whole run itself — `POST /api/grid-capture`, driven
-by `npm run cli -- grid` or the web UI's **Run scan**, moving the gimbal and taking each photo
-on the phone before feeding CI-Spatial's own `/ingest-photos`. See `GIMBAL_INTEGRATION.md`'s
-grid-capture section.
+count instead, the backend orchestrates the whole run itself: `POST /api/grid-capture`, driven by
+`npm run cli -- grid` or the web UI's **Run scan**, moves the gimbal and takes each photo on the
+phone. Only the CLI's `--ingest` then posts the photos to CI-Spatial's own `/ingest-photos`. The
+web UI's Run scan leaves them on the phone, linked from each result row, and with Capture set to
+**Scanner app** it takes none: the phone's scanner page captures its own pose-tagged keyframes.
+See `GIMBAL_INTEGRATION.md`'s grid-capture section.
 
 **One thing to know before expecting 3D out of it:** a gimbal turning in place gives
 structure-from-motion no parallax, so COLMAP cannot solve poses from a single-station grid —
@@ -415,8 +464,10 @@ and what to do about it are documented in `GIMBAL_INTEGRATION.md` and
 protocol/          shared codec — pure JS, runs unmodified in both Node and the browser
   duml.mjs            DUML frame encode/decode, CRC8/CRC16, notify-stream reassembly
   duml.test.mjs        validates the codec against a real captured frame — run this first
-  stall.mjs            jam/wedge detection, per tick and per position (tested from real telemetry)
-  dome.mjs             the reachable pan arc, dome planning, and the "is this a capture?" verdict
+  stall.mjs            jam/wedge detection, per tick and per position (tested from real telemetry),
+                       and the subsystem's one angle wrap (wrapDeg)
+  dome.mjs             the reachable pan arc, dome planning and the grid order, the move-to target
+                       check and the along-arc sweep, and the "is this a capture?" verdict
   dome.test.mjs        the arc and the COLMAP registration rates, as assertions
   device_registry.mjs  which phone to drive and which per-device token variable holds its
                        key — pure resolution over .mcp.json + the environment
@@ -429,6 +480,8 @@ protocol/          shared codec — pure JS, runs unmodified in both Node and th
                         /ws — displayed alongside gimbal telemetry, never averaged into it
 server/
   ble-transport.mjs      Node BLE transport (@stoprocent/noble): scan, connect, pair, write-char fallback
+  access.mjs             who may call the backend (token, origins, bind) and which files the page
+                         server hands out — pure rules, tested in access.test.mjs
   backend.mjs             the single BLE owner: HTTP + /ws, closed-loop move-to, multi-station
                           capture (sweep a dome -> park for the tripod move -> sweep the next)
   android-capture.mjs     minimal MCP-over-HTTP client for the phone in the cradle (photo capture)
@@ -440,8 +493,11 @@ server/
 web/                 "Scanner Control" PWA — two pathways, direct Web Bluetooth and backend
   index.html            markup + styles for both pathways
   app.mjs                 direct Web Bluetooth client, sharing protocol/* with the Node side
-  backend-client.mjs      backend pathway: scan presets (planned along the reachable arc),
-                          station count, the between-station prompt, the scan-in-progress lock
+  backend-client.mjs      backend pathway: scan presets (planned along the backend's arc),
+                          station count, the between-station prompt, Stop, the scan-in-progress lock
+  page-state.mjs          the page's rules as pure functions: which controls are live, the status
+                          dot, the progress bar, the presets, what Run scan sends (Node-tested)
+  controls.mjs            what both pathways share: log, raw-command filler, stick toggle, joystick
   orientation.mjs         compass dial + tilt gauge rendering
   joystick.mjs            virtual joystick (mouse/touch/arrow keys), shared by both pathways
   coverage.mjs            persistent cmdSet:cmdId coverage grid — "what have I actually tried"

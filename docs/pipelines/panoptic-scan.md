@@ -204,7 +204,9 @@ only says a list was *found*.
 ## Stuff is deliberately kept out of `thing_match`
 
 `server/thing_match.ts` fuses detections into `Thing`s by label + world position
-within `THING_MATCH_RADIUS_M` (0.75 m). That is right for a chair and wrong for
+within `THING_MATCH_RADIUS_M` (0.75 m). The label is filed under the capture canon
+(`server/prompt.ts`), so an ADE20K `coffee table` meets the VLM's `table`, and a
+`television receiver, television, …` its `tv`. That is right for a chair and wrong for
 a wall: one physical wall is tens of metres of surface, so it would land as
 dozens of "Thing"s at 0.75 m spacing.
 

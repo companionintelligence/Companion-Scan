@@ -140,8 +140,10 @@ interface StartScreen {
 function showArHelp(reason: string, userAgent: string, origin: string, desktopShell = false): StartScreen {
   const help = { textContent: '', innerHTML: '', hidden: true }
   const screen: StartScreen = { startLabels: [], helpText: '', helpShown: false, banners: [] }
+  // showArHelp() asks src/ui/platform-advice.ts's appShell() which app it runs in (FN-009). These pages are
+  // the desktop app or a browser, never a phone app.
   const run = new Function(
-    'reason', 'setStartButtonState', 'navigator', 'location', 'document', 'showPermissionBanner', 'isDesktopShell',
+    'reason', 'setStartButtonState', 'navigator', 'location', 'document', 'showPermissionBanner', 'isDesktopShell', 'appShell',
     stripTypeScriptTypes(`${topLevelFunction(main, 'showArHelp')}\nshowArHelp(reason)`),
   )
   run(
@@ -152,6 +154,7 @@ function showArHelp(reason: string, userAgent: string, origin: string, desktopSh
     { getElementById: (id: string) => (id === 'ar-help' ? help : null) },
     (message: string) => { screen.banners.push(message) },
     () => desktopShell,
+    () => (desktopShell ? 'desktop' : null),
   )
   return { ...screen, helpText: help.textContent || help.innerHTML, helpShown: !help.hidden }
 }

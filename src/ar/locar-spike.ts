@@ -6,7 +6,7 @@
  * `?projection=mercator` is the control. It leaves locar's stock Web Mercator in place, so the browser test can show
  * the difference.
  *
- * This is a viewer check, not a capture runtime (ADR 0012). locar gives a 3-DoF orientation and a GPS position, with
+ * This is a viewer check, not a capture runtime (ADR 0014). locar gives a 3-DoF orientation and a GPS position, with
  * no visual tracking, hit test, anchor or depth.
  */
 import * as THREE from 'three'

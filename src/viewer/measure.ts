@@ -30,7 +30,7 @@
  * Making the readout state its own frame — the way `splat-layer.ts`'s
  * `formatAlignmentStatus` does for a splat — is unfinished work, not a decision.
  *
- * Exposed as `window.__measureTool` for automated tests.
+ * Exposed as `window.__measureTool` for automated tests, in a dev build opened with `?mock=editor` only (viewer.ts).
  */
 import * as THREE from 'three'
 

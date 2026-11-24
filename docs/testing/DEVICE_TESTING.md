@@ -20,19 +20,20 @@ then WebXR, when it cannot start: Checklist D.
   npm run qr -- "/webxr.html"                     # WebXR entry (Android)
   ```
 
-- To see the phone's console on the box, run `npm run logs:watch` and load
-  pages with `?debug=remote` appended.
+- To see the phone's console on the box, start the server with `CLIENT_LOGS_BROADCAST=1`, run
+  `npm run logs:watch`, and load pages with `?debug=remote` appended. Without that setting
+  the server keeps the lines in `scans/client-logs.jsonl` and sends `logs:watch` nothing.
 
 ## 60-second triage — /smoke.html
 
 Open `https://<host>:5173/smoke.html?debug=remote` on the device first. All
 rows should be PASS (Service Worker may WARN on first visit; XR8 reports n/a —
-it only loads in the scanner). Results also stream to `npm run logs:watch`.
+it only loads in the scanner). Results also reach the box: `scans/client-logs.jsonl`, and `npm run logs:watch` with `CLIENT_LOGS_BROADCAST=1` on the server.
 If anything fails here, fix it before AR testing — see Triage below.
 
 ## Checklist A — iPhone Safari (8th Wall SLAM)
 
-Suggested devices: `iphone182`, `liam-ipad-pro`.
+Suggested devices: an iPhone and an iPad Pro.
 
 | # | Step | Expected result |
 |---|------|-----------------|
@@ -86,7 +87,7 @@ runtimes.
 
 **Watch the box side throughout:** `journalctl --user -u cscan-server -f` for
 API traffic and inference timing; `npm run logs:watch` for on-device console
-errors (page must be loaded with `?debug=remote`).
+errors (page loaded with `?debug=remote`, server started with `CLIENT_LOGS_BROADCAST=1`).
 
 ## Checklist B — Android Chrome (WebXR)
 
@@ -117,8 +118,8 @@ disposal to follow `session.end()`. None of that is reachable from a unit test;
 the automated coverage in `anchor_calibration.test.ts` deliberately does not
 touch the renderer at all.
 
-Needs an **ARCore-backed Android** (`galaxy-tab-s9-ultra` or
-`liams-tab-s8-ultra`). iPhone/Safari does *not* exercise this code — no
+Needs an **ARCore-backed Android** (the Galaxy Tab S9 Ultra or
+the Tab S8 Ultra). iPhone/Safari does *not* exercise this code — no
 `immersive-ar`, so it runs the 8th Wall provider instead. Quest browser is a
 useful second data point because its controller-driven input hits the
 `pointerdown` path a touchscreen never does, but is not required.
@@ -184,7 +185,7 @@ readout lines and the compass app's reading.
 
 | Device | Android | Chrome | ARCore | 1 decal | 2 world-locked | 3 no flicker | 4 north | 5 scan ok | 6 restart | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|
-| liams-tab-s8-ultra | 16 | 151.0.7922.169 | 1.55.261550593 | — | — | — | — | — | — | 2026-08-23, driven over MCP. Session reached, decal not: see below. |
+| Galaxy Tab S8 Ultra | 16 | 151.0.7922.169 | 1.55.261550593 | — | — | — | — | — | — | 2026-08-23, driven over MCP. Session reached, decal not: see below. |
 
 **Partial run, 2026-08-23 — what a remote MCP session can and cannot reach.**
 Driven from a desk, device stationary. Established:
@@ -299,7 +300,7 @@ menu on the Mac and use the console. The commands below run there.
 | 1 | Launch the app, start the scanner, grant camera permission | The camera shows behind the web view, fitted whole (contain fit); the HUD sits on top |
 | 2 | Walk slowly around a room | Pose events move the overlay; the HUD tracking reads NORMAL |
 | 3 | Aim at a wall: `await Capacitor.Plugins.ScanAR.hitTest({ x: 0.5, y: 0.5 })` | `rotation` is not `[0,0,0,1]`; its Y axis is horizontal (the wall's normal), so a placed item faces the wall |
-| 4 | Background the app for 10 s, then return | The Web Inspector shows the state after return: the first `tracking` event is `notAvailable`, then pose events carry `normal` or `limited.relocalizing`. The page logs each change as `[native-ar] trackingStatus: NOT_AVAILABLE`, then `NORMAL` (or `LIMITED (RELOCALIZING)`), and, because tracking was missing for more than a second (`RECOVERY_SUSPECT_MS`), a suspect epoch: `[native-ar] frame discontinuity <n>: recovered`. That line says the coordinates may have moved, not that they did: judge whether the scan keeps its coordinates by the overlay, which should sit on the same spot of the floor. Whether a loss this long should open an epoch for the native session, as it does for the web runtimes, is the owner's call; until it is made, record what the log shows |
+| 4 | Background the app for 10 s, then return | The Web Inspector shows the state after return: the first `tracking` event is `notAvailable`, then pose events carry `normal` or `limited.relocalizing`. The page logs each change as `[native-ar] trackingStatus: NOT_AVAILABLE`, then `NORMAL` (or `LIMITED (RELOCALIZING)`), and, because tracking was missing for more than a second (`RECOVERY_SUSPECT_MS`), a suspect epoch: `[native-ar] frame discontinuity <n>: recovered`. That line says the coordinates may have moved, not that they did: judge whether the scan keeps its coordinates by the overlay, which should sit on the same spot of the floor. Whether a loss this long should open an epoch for the native session, as it does for the web runtimes, is the owner's call; until it is made, record what the log shows Since wave 14 a session with no named Place (`?world=default`) does not relocalize: ARKit restarts it at once in a new frame, so expect a fresh start there instead of `limited.relocalizing` (`sessionShouldAttemptRelocalization`). |
 | 5 | Walk the room for a few seconds, then `await Capacitor.Plugins.ScanAR.saveWorldMap({ name: 'room-7' })` | Resolves with `{ name, bytes }`. Right after start it rejects with ARKit's reason, so save once the room is mapped |
 | 6 | Quit the app fully, relaunch, stand where the map was saved, and run `await Capacitor.Plugins.ScanAR.start({ depth: false, hitGrid: 20, worldMap: 'room-7' })` before the scanner starts | Resolves with `worldMap: "loaded"`; `tracking` events go `limited.relocalizing`, then `normal`, and the overlay lines up with the saved room |
 | 7 | Quit the app fully again, relaunch, and run the same start with `worldMap: 'room-none'` | Resolves with `worldMap: "missing"`, and the session runs fresh |
@@ -312,11 +313,16 @@ map name from the page's `?world=` Place (never `default`), so these rows are
 the check of relocalization until the Place flow is confirmed on a phone (see
 ADR 0010).
 
+**In the Android app**, row 4 reads differently. ARCore has no relocalization state, so after a
+resume a session that had already tracked reports `notAvailable`, then plain `limited`, with no
+reason, until it tracks again; the page reads that as LIMITED with no reason
+(`ScanARRules.java`, `everTracked`). Not run on a device.
+
 ## Results matrix
 
 Copy per test session:
 
-| Step | iphone182 | liam-ipad-pro | z-fold7 | tab-s8-ultra | Notes |
+| Step | iPhone | iPad Pro | Z Fold7 | Tab S8 Ultra | Notes |
 |------|-----------|---------------|---------|--------------|-------|
 | Smoke page all green | | | | | |
 | A2/B2 permissions from tap | | | | | |
@@ -364,7 +370,7 @@ in the field. The reference is taken from the first pose after tracking locks,
 not at t=0, since the pre-lock pose is meaningless.
 
 `?debug=` is a comma-separated list, so `?debug=pose,remote` shows the readout
-*and* mirrors the console to `npm run logs:watch` — useful for recording
+*and* mirrors the console to the box (`npm run logs:watch`, with `CLIENT_LOGS_BROADCAST=1` on the server) — useful for recording
 numbers without stopping to write them down.
 
 ```bash
@@ -438,7 +444,8 @@ That line is an invented example of the shape, not a measurement. The code is
 table below equal to the keys it writes.
 
 **Arm it.** `probe` makes the lines and `remote` is what sends them off the phone, to the
-same place `npm run logs:watch` reads. Without `remote` they stay in the phone's console.
+box: `scans/client-logs.jsonl`, and `npm run logs:watch` when the server runs with `CLIENT_LOGS_BROADCAST=1`.
+Without `remote` they stay in the phone's console.
 
 ```bash
 npm run qr -- "?debug=remote,probe"                 # 8th Wall path (iPhone, Android)
@@ -527,7 +534,7 @@ the sampler (see the table).
 | `alpha`, `beta`, `gamma` | deg | The raw angles of the last orientation event that said something about the compass, as the browser delivered them: Euler angles of type Z-X'-Y'' (`alpha` 0 to 360, `beta` −180 to 180, `gamma` −90 to 90). On Android that is the last *absolute* event, not whichever of the two streams spoke last. On an iPhone `alpha` counts from an arbitrary direction. |
 | `abs` | | That event's `absolute` flag: 1 when its angles are measured from the earth's frame, 0 when from an arbitrary one, `null` when the event has no such property, which is every event on an iPhone (Safari on iOS does not implement it). |
 | `wkHead`, `wkAcc` | deg | That event's `webkitCompassHeading` (the heading iOS reports for itself, from magnetic north) and `webkitCompassAccuracy` (the error iOS claims; **negative means iOS says the heading is invalid**, and then `line.B` is `null`). |
-| `turn` | deg | How far the AR pose's camera frame is turned from the browser's orientation frame about the screen's normal, from −180 to 180, read from the direction gravity has in the plane of the screen in each (`screenTurnDeg` in `src/geo/compass-heading.ts`). About 0 when the two frames are the same, about 90 or −90 when one of them follows the screen into landscape and the other does not. The pairing of a top-edge heading rests on it, and this is the only measurement of it: Procedure 4 reads it. `null` when gravity cannot be read in the screen's plane (the phone lies nearly flat) or there is no sample. |
+| `turn` | deg | How far the AR pose's camera frame is turned from the browser's orientation frame about the screen's normal, from −180 to 180, read from the direction gravity has in the plane of the screen in each (`screenTurnDeg` in `src/geo/compass-heading.ts`). About 0 when the two frames are the same, about 90 or −90 when one of them follows the screen into landscape and the other does not. In the Scan apps it should read about 0: since wave 14 both plugins send display-oriented poses and both apps are locked to portrait, so the two frames coincide on a phone whose natural orientation is portrait; about ±90 there would mean sensor-oriented poses. Not run on a device. The pairing of a top-edge heading rests on it, and this is the only measurement of it: Procedure 4 reads it. `null` when gravity cannot be read in the screen's plane (the phone lies nearly flat) or there is no sample. |
 | `kept` | | The hits the tap's point is the median of: 12 for a burst of twelve usable hits, 1 for a tap read with one hit (`tap=single`, or a runtime whose burst saw no frame), 0 for a tap the floor ray placed with no hit at all. For a refused tap, the usable hits the sampler had counted when it refused it (none are counted for `tracking`). |
 | `sprM` | m | How far the kept hits scatter: the root-mean-square distance from their median. `null` for one hit, which has no scatter to measure. For a tap refused for scatter (`rej` `unsteady`), the scatter that refused it. It is the jitter inside one tap, which `TAP_SPREAD_MAX_M` (4 cm, adopted) limits. It is not how far two visits' taps land from each other, and nothing here feeds it into the noise figure a verdict is judged by. |
 | `src` | | Where the point came from: `burst` (the median of a burst of hits), `single-hit` (one hit) or `floor-ray` (the camera ray through the pixel met the fitted floor, which only `tap=floor` lets set the point). `null` for a refused tap. |
@@ -1082,7 +1089,7 @@ Google Play Services for AR.
 
 **Arm it.** `npm run qr -- "webxr.html?debug=remote,pose,probe"` for the phone, and the same address
 typed into the headset's browser. Lines the page writes with `console.warn` reach
-`npm run logs:watch` and `scans/client-logs.jsonl` under `remote` alone. Add `verbose` only to see
+`npm run logs:watch` and `scans/client-logs.jsonl` under `remote` alone (`logs:watch` gets them only from a server started with `CLIENT_LOGS_BROADCAST=1`). Add `verbose` only to see
 every status change (`[webxr] trackingStatus: ...`): it also fills the relay's 50-message buffer with
 the scanner's ticks. Afterwards, on the box,
 `grep -h '\[webxr\]\|\[scan\] tracking' scans/client-logs.jsonl`: each row's `ts` is the phone's clock
@@ -1246,9 +1253,9 @@ floor and Angle is the one the 1.4 m height gives, atan(*d* ÷ 1.4): 36° at 1 m
 
 At minimum one of each provider path — they share no tracking source:
 
-- **8th Wall SLAM**: `iphone182` or `liam-ipad-pro` (Safari)
-- **WebXR**: `galaxy-tab-s9-ultra` or `liams-tab-s8-ultra` (Chrome, needs ARCore)
-- **Native ARKit and ARCore** (the Scan shells, `ScanAR`): an iPhone with ARKit, with and without LiDAR (Checklist D), and an ARCore phone or tablet with Google Play Services for AR installed (`galaxy-tab-s9-ultra`, in the Android shell)
+- **8th Wall SLAM**: an iPhone or an iPad Pro (Safari)
+- **WebXR**: the Galaxy Tab S9 Ultra or the Tab S8 Ultra (Chrome, needs ARCore)
+- **Native ARKit and ARCore** (the Scan shells, `ScanAR`): an iPhone with ARKit, with and without LiDAR (Checklist D), and an ARCore phone or tablet with Google Play Services for AR installed (the Galaxy Tab S9 Ultra, in the Android shell)
 
 ## Remote-controlled testing (android-remote-control-mcp)
 
@@ -1286,14 +1293,14 @@ the matching environment variable below.
 
 | Tailnet host | Tailscale IP | Device | `.mcp.json` server | Token env var |
 |---|---|---|---|---|
-| `liams-tab-s8-ultra` | 100.86.76.113 | Galaxy Tab S8 Ultra (SM-X900) | `android-tab-s8-ultra` | `ANDROID_MCP_TOKEN_TAB_S8_ULTRA` |
-| `galaxy-tab-s9-ultra` | 100.102.92.116 | Galaxy Tab S9 Ultra (SM-X910) | `android-tab-s9-ultra` | `ANDROID_MCP_TOKEN_TAB_S9_ULTRA` |
-| `beam-pro-1` | 100.127.78.6 | XREAL X4000 | `android-beam-pro-1` | `ANDROID_MCP_TOKEN_BEAM_PRO_1` |
-| `beam-pro` | 100.97.126.117 | XREAL X4200 | `android-beam-pro` | `ANDROID_MCP_TOKEN_BEAM_PRO` |
+| `<tab-s8-host>` | `<tailnet IP>` | Galaxy Tab S8 Ultra (SM-X900) | `android-tab-s8-ultra` | `ANDROID_MCP_TOKEN_TAB_S8_ULTRA` |
+| `<tab-s9-host>` | `<tailnet IP>` | Galaxy Tab S9 Ultra (SM-X910) | `android-tab-s9-ultra` | `ANDROID_MCP_TOKEN_TAB_S9_ULTRA` |
+| `<beam-pro-1-host>` | `<tailnet IP>` | XREAL X4000 | `android-beam-pro-1` | `ANDROID_MCP_TOKEN_BEAM_PRO_1` |
+| `<beam-pro-host>` | `<tailnet IP>` | XREAL X4200 | `android-beam-pro` | `ANDROID_MCP_TOKEN_BEAM_PRO` |
 
 ### Connecting Claude Code (tailnet — preferred)
 
-`.mcp.json` points each server at `http://<host>.capybara-ulmer.ts.net:8080/mcp`,
+`.mcp.json` points each server at `http://<host>.<tailnet>.ts.net:8080/mcp`,
 with every token left as a `${...}` placeholder. Claude Code expands those
 placeholders from its process environment. On Windows, persist the four values
 for your user account:
@@ -1535,4 +1542,4 @@ the URL; the bearer token is the only control. Prefer the tailnet.
 | Camera prompt never appears | Not a secure context, or Start not triggered by a user tap | Check /smoke.html Secure Context row; don't script the tap |
 | HMR/live-reload dead on phone (dev mode) | `TAILSCALE_HOSTNAME` mismatch pins HMR to the wrong host | Export the right hostname before `npm start` (auto-detect usually handles it) |
 | 🥽 toggle missing on iPhone Safari | Correct behavior — Safari has no WebXR `immersive-ar` | Use HelloXR (App Store id6757726359) for the WebXR path on iOS |
-| No console output in `logs:watch` | Page loaded without `?debug=remote` | Reload with the query param (or set `localStorage['remote-log']='1'`) |
+| No console output in `logs:watch` | Page loaded without `?debug=remote`, or the server started without `CLIENT_LOGS_BROADCAST=1` | Reload with the query param (or set `localStorage['remote-log']='1'`), and restart the server with the setting. With the query param the lines also reach `scans/client-logs.jsonl` |

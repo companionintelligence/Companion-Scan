@@ -228,7 +228,7 @@ npx playwright test tests/api-person-capture.spec.ts --project=api
 
 - **Risk:** Clips accumulate without bound. Nothing in this repo prunes session directories, and
   a 1080p clip is orders of magnitude larger than the JPEG keyframes that layout was sized for.
-  beta-1's disk is already at 89%. — **Mitigation:** out of scope to solve here, but **must not
+  the ROCm host's disk is already at 89%. — **Mitigation:** out of scope to solve here, but **must not
   be silent**: state the growth characteristic in `docs/pipelines/4d-person.md` (0008) and record
   it in the wave's "Found and deferred" as retention policy work.
 - **Risk:** Making `/ingest-video` modal adds a branch to a route that already has two size

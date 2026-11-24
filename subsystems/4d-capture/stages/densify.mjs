@@ -11,8 +11,9 @@
  * under "Confidence levels".
  */
 import { spawn } from 'node:child_process'
-import { access, readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
+import { runProcess } from './extract.mjs'
 
 /**
  * 4DAnyone requires `views_per_layer` to be divisible by 4 or 6.
@@ -52,9 +53,10 @@ export async function readDensifyOutput(clipOutDir) {
   const metadataPath = path.join(clipOutDir, 'metadata.json')
   const densePath = path.join(clipOutDir, 'videos', 'dense')
 
+  // stat, not access: Deno's node:fs access() asks for the uid, a permission its test runner does not grant.
   for (const [label, p] of [['cameras.json', camerasPath], ['videos/dense/', densePath]]) {
     try {
-      await access(p)
+      await stat(p)
     } catch {
       throw new Error(`4DAnyone output is missing ${label} (looked in ${clipOutDir})`)
     }
@@ -92,19 +94,23 @@ export async function densify({ clipPath, viewsPerLayer, env = process.env, work
   const dataDir = path.join(workDir, 'fdanyone')
   const args = buildDensifyArgs({ videoPath: clipPath, viewsPerLayer, dataDir })
 
-  const code = await new Promise((resolve, reject) => {
-    const child = spawnFn(python, args, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] })
-    let stderr = ''
-    child.stderr?.on('data', d => { stderr += String(d) })
-    child.on('error', reject)
-    child.on('close', c => resolve({ code: c, stderr }))
-  })
-
+  const code = await runProcess(python, args, { spawnFn, cwd: dir })
+  if (code.spawnError) {
+    // An interpreter that cannot be started is a missing tool, not a failed run.
+    return {
+      status: 'skipped',
+      remediation: `Could not start ${python} for 4DAnyone (${code.spawnError.message ?? code.spawnError}). Set FDANYONE_PYTHON to the 4DAnyone environment's python.`,
+    }
+  }
   if (code.code !== 0) {
     return { status: 'error', error: `4DAnyone exited ${code.code}: ${String(code.stderr).slice(-500)}` }
   }
 
   const clipName = path.basename(clipPath, path.extname(clipPath))
-  const out = await readDensifyOutput(path.join(dataDir, clipName))
-  return { status: 'ok', ...out }
+  try {
+    const out = await readDensifyOutput(path.join(dataDir, clipName))
+    return { status: 'ok', ...out }
+  } catch (err) {
+    return { status: 'error', error: err instanceof Error ? err.message : String(err) }
+  }
 }

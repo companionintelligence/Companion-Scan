@@ -2,7 +2,7 @@
 
 End-to-end field test of the Companion-Scan pipeline in a real, lived-in,
 **two-story house** — the operator's own test house. This is the acceptance run:
-capture every room two ways (live AR + video), process on beta-1, and review
+capture every room two ways (live AR + video), process on the server box, and review
 whether the reconstructions are aligned, complete, and recognizable.
 
 > **Privacy:** this document never records the street address. Refer only to
@@ -39,11 +39,11 @@ Capture is a **pass** only when every row holds. Numbers are floors, not targets
 
 ## Phase 0 — Preflight (from the laptop, over Tailscale)
 
-Do this **before** walking into the house. All from the laptop; beta-1 stays put.
+Do this **before** walking into the house. All from the laptop; the server box stays put.
 
 1. **Readiness gate:**
    ```sh
-   API_URL=http://beta-1.capybara-ulmer.ts.net:8000 npm run test:house
+   API_URL=http://<server-host>.<tailnet>.ts.net:8000 npm run test:house
    ```
    All green. This confirms the server is healthy, the engine is ready, the world
    has scanner+editor members, the `splat-train`/`lingbot-map-reconstruct`/
@@ -96,7 +96,7 @@ Upload either way:
 - **Scanner:** the **Upload video** control → `POST /ingest-video`.
 - **curl (from the laptop):**
   ```sh
-  curl -X POST http://beta-1.capybara-ulmer.ts.net:8000/ingest-video \
+  curl -X POST http://<server-host>.<tailnet>.ts.net:8000/ingest-video \
     -F video=@floor1.mp4 -F name='Downstairs (video)' -F fps=2
   # → 202 { sessionId, scanId, jobId, frameCount }
   ```
@@ -127,8 +127,8 @@ Per session, run the toolbox chain (from the editor's **Splat Toolbox**, or via
 3. **splat-detect** (splat_analyzer / OWLv2) — open-vocab detection over the
    splat or the converted point cloud.
 
-Detect runs on `HIP_VISIBLE_DEVICES=1`; train uses the wgpu adapter pin. Keep
-both explicit so a warm Ollama model does not OOM the torch job.
+Set `HIP_VISIBLE_DEVICES` for detect (unset, it pins no device) and the wgpu adapter pin
+for train. Keep both explicit so a warm Ollama model does not OOM the torch job.
 
 ---
 

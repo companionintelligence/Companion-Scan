@@ -8,10 +8,10 @@ The Galaxy Tab S9 Ultra MCP is reachable through the local `.mcp.local.json` con
 
 Confirmed live app over Tailscale:
 
-- Scanner / uploader: `https://everxr-01.capybara-ulmer.ts.net:5173/?project=default`
-- Mock scanner for repeatable tablet smoke: `https://everxr-01.capybara-ulmer.ts.net:5173/?mock=xr8&onboarding=0&project=default`
-- Spatial Editor: `https://everxr-01.capybara-ulmer.ts.net:5173/editor?project=default`
-- Health: `https://everxr-01.capybara-ulmer.ts.net:5173/health`
+- Scanner / uploader: `https://<deploy-host>.<tailnet>.ts.net:5173/?project=default`
+- Mock scanner for repeatable tablet smoke: `https://<deploy-host>.<tailnet>.ts.net:5173/?mock=xr8&onboarding=0&project=default`
+- Spatial Editor: `https://<deploy-host>.<tailnet>.ts.net:5173/editor?project=default`
+- Health: `https://<deploy-host>.<tailnet>.ts.net:5173/health`
 
 The mock URL is only for deterministic UI/regression coverage. It is never valid
 evidence for a real-camera test. Live camera evidence must use the clean scanner URL
@@ -27,7 +27,7 @@ colour-blob scene.
    room/location, lighting, and the device location shown by the app.
 2. Close the existing Chrome tab for CI-Spatial. If the device is in a stale or
    blank Chrome state, close Chrome itself, reopen it, and navigate to the clean
-   scanner URL: `https://everxr-01.capybara-ulmer.ts.net:5173/`.
+   scanner URL: `https://<deploy-host>.<tailnet>.ts.net:5173/`.
 3. Do not use `?mock=xr8`, `?mock=webxr`, or `?onboarding=0`. Those routes can render
    simulated camera pixels or bypass the permission flow.
 4. Start a new session and grant camera and motion permissions. Resolve every OS
@@ -91,9 +91,9 @@ npm run test:tablet-user
 Useful overrides:
 
 ```bash
-TABLET_TEST_URL=https://everxr-01.capybara-ulmer.ts.net:5173 npm run test:tablet-user
+TABLET_TEST_URL=https://<deploy-host>.<tailnet>.ts.net:5173 npm run test:tablet-user
 TABLET_KEEP_GOING=1 npm run test:tablet-user
-TABLET_MCP_URL=http://galaxy-tab-s9-ultra.capybara-ulmer.ts.net:8080/mcp TABLET_MCP_BEARER=... npm run test:tablet-user
+TABLET_MCP_URL=http://<tablet-host>.<tailnet>.ts.net:8080/mcp TABLET_MCP_BEARER=... npm run test:tablet-user
 ```
 
 Run the browser-level product flow:
@@ -116,7 +116,7 @@ npm run test:auth:unit
 
 | Area | Test | Pass signal |
 |---|---|---|
-| Tailscale launch | Open scanner on the tablet in Chrome. | Secure Chrome URL is on the `everxr-01` Tailscale host and page title/text says Companion Scan. |
+| Tailscale launch | Open scanner on the tablet in Chrome. | Secure Chrome URL is on the deploy host's Tailscale name and page title/text says Companion Scan. |
 | Start screen | Inspect the first screen. | Scan a Place and Upload Content entry points are present; each opens Place/Area selection before its scanner or uploader. |
 | Mock scan | Open `?mock=xr8&onboarding=0`, tap Start AR. | HUD switches to scanning/tracking and point/capture UI is usable. |
 | Capture | Tap Capture once. | Latest Scan or object/review feedback appears without a capture-failed status. |

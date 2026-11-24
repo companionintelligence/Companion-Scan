@@ -1,20 +1,31 @@
 // Browser-side client for the standalone Node backend (server/backend.mjs). Talks over
 // HTTP for commands/queries and WebSocket for live frame/status streaming — no Web Bluetooth
 // involved on this path at all, so no picker, no per-tab connection lifetime.
+//
+// Which control is live when, what the status dot shows, the progress bar, the presets and the
+// Run scan request are decided in ./page-state.mjs, which Node tests. This file applies them.
 
-import { attachJoystick } from './joystick.mjs';
 import { attachOrientationReadout } from './orientation.mjs';
 import { attachFrameLog } from './frame-log.mjs';
 import { attachCoverage } from './coverage.mjs';
+import { createLog, rawCommandFiller, attachStickToggle, attachLatchedJoystick } from './controls.mjs';
 import { decodeQuaternion } from '../protocol/telemetry.mjs';
 import { decodeFrame } from '../protocol/duml.mjs';
 import { PHONE_TELEMETRY, isPhoneTelemetry } from '../protocol/phone_telemetry.mjs';
-// The same planner the backend plans with, so the count and the arc warning this panel renders
-// describe the run the backend would actually accept — not a second opinion about it.
-import { toArcDeg, fromArcDeg, unreachablePans, MIN_STATIONS_FOR_PARALLAX, PAN_ARC_START_DEG, PAN_ARC_END_DEG } from '../protocol/dome.mjs';
+// The arc the backend reports in its status: measured from this tripod position, or its fallback.
+// The panel builds its columns along that arc and checks them against it, so the count and the arc
+// warning describe the run the backend would accept. It used to check against the fallback while
+// the backend refused against its measured arc. The backend still checks every plan itself, and
+// its refusal is shown when the two disagree.
+import { arcFromPayload, DEFAULT_PAN_ARC } from '../protocol/dome.mjs';
+import {
+  controlStates, progressPercent, gridRequestBody, axisValues, panColumns, presetFields,
+  planSummary, stationCount, MAX_STEPS_PER_AXIS,
+} from './page-state.mjs';
 
 const els = {
   url: document.getElementById('be-url'),
+  token: document.getElementById('be-token'),
   status: document.getElementById('be-status'),
   scan: document.getElementById('be-btn-scan'),
   devices: document.getElementById('be-devices'),
@@ -34,6 +45,7 @@ const els = {
   rawSend: document.getElementById('be-btn-raw-send'),
   gridBothOrientations: document.getElementById('be-grid-both'),
   gridRun: document.getElementById('be-btn-grid'),
+  stop: document.getElementById('be-btn-stop'),
   stations: document.getElementById('be-stations'),
   stationPrompt: document.getElementById('be-station-prompt'),
   stationNote: document.getElementById('be-station-note'),
@@ -59,6 +71,7 @@ const els = {
   capture: document.getElementById('be-btn-capture'),
   captureBoth: document.getElementById('be-btn-capture-both'),
   testMatrix: document.getElementById('be-test-matrix'),
+  testRoutesNote: document.getElementById('be-test-routes-note'),
   coverage: document.getElementById('be-coverage'),
   frames: document.getElementById('be-frames'),
   log: document.getElementById('be-log'),
@@ -67,15 +80,11 @@ const els = {
 // backend WebSocket as gimbal telemetry, which the direct/Web-Bluetooth panel never opens.
 const orientationReadout = attachOrientationReadout(els.orientation, { showPhone: true });
 
-// Clicking a frame-log row or a coverage-grid cell loads it straight into Raw Command so a
-// gap in coverage, or an unknown RX frame you just spotted, is one click from being probed.
-function loadIntoRawCommand({ cmdSet, cmdId, payloadHex }) {
-  els.rawCmdSet.value = cmdSet;
-  els.rawCmdId.value = cmdId;
-  if (payloadHex !== undefined) els.rawPayload.value = payloadHex;
-}
+// Shared with the Direct pathway (./controls.mjs), which used to keep its own copy.
+const loadIntoRawCommand = rawCommandFiller({ cmdSet: els.rawCmdSet, cmdId: els.rawCmdId, payload: els.rawPayload });
 const frameLog = attachFrameLog(els.frames, { onSelect: loadIntoRawCommand });
 const coverage = attachCoverage(els.coverage, { onSelect: loadIntoRawCommand });
+const log = createLog(els.log);
 
 function hexToBytes(hex) {
   return new Uint8Array((hex.match(/../g) || []).map((b) => parseInt(b, 16)));
@@ -112,7 +121,7 @@ function logTxFrame(frameHex, { label, verdict } = {}) {
 const TEST_DEFS = [
   { id: 'stick-enable', label: 'Stick control: Enable', desc: 'stickControlEnable(true) — HIGH confidence, disassembly-confirmed. Precondition for motion commands?', type: 'stickControlEnable', params: { enable: true }, waitMs: 800 },
   { id: 'stick-disable', label: 'Stick control: Disable', desc: 'stickControlEnable(false)', type: 'stickControlEnable', params: { enable: false }, waitMs: 800 },
-  { id: 'recenter', label: 'Recenter (0,0,0)', desc: 'absoluteAngle all-zero — MEDIUM confidence struct shape', type: 'recenter', params: { durationSeconds: 1 }, waitMs: 2000 },
+  { id: 'recenter', label: 'Recenter (0,0,0)', desc: 'absoluteAngle all-zero — the 0x14 opcode, which does nothing on an OM6 (A/B tested 2026-08-21); kept for comparison', type: 'recenter', params: { durationSeconds: 1 }, waitMs: 2000 },
   { id: 'angle-pitch-up', label: 'Angle: Pitch +20°', desc: 'absoluteAngle pitchDeg=20', type: 'absoluteAngle', params: { pitchDeg: 20, durationSeconds: 1 }, waitMs: 2000 },
   { id: 'angle-pitch-down', label: 'Angle: Pitch -20°', desc: 'absoluteAngle pitchDeg=-20', type: 'absoluteAngle', params: { pitchDeg: -20, durationSeconds: 1 }, waitMs: 2000 },
   { id: 'angle-yaw-right', label: 'Angle: Yaw +20°', desc: 'absoluteAngle yawDeg=20', type: 'absoluteAngle', params: { yawDeg: 20, durationSeconds: 1 }, waitMs: 2000 },
@@ -127,16 +136,27 @@ const TEST_DEFS = [
   { id: 'mode-fpv', label: 'Orientation: byte 2', desc: 'setMode(fpv)', type: 'setMode', params: { mode: 'fpv' }, waitMs: 1200 },
 ];
 
-function log(line, cls = '') {
-  const row = document.createElement('div');
-  if (cls) row.className = cls;
-  row.textContent = `${new Date().toLocaleTimeString()}  ${line}`;
-  els.log.appendChild(row);
-  els.log.scrollTop = els.log.scrollHeight;
-}
-
 function baseUrl() {
   return els.url.value.replace(/\/$/, '');
+}
+
+// The backend's token, when it was started with OSMO_BACKEND_TOKEN (see server/access.mjs). It is
+// entered under Connect, Advanced, and remembered in this browser only: localStorage, a convenience
+// of this page that nothing else reads. It goes in an Authorization header on every request, and as
+// ?token= on the WebSocket, which cannot carry headers. It is never logged.
+const TOKEN_KEY = 'osmo-be-token';
+function backendToken() {
+  return els.token ? els.token.value.trim() : '';
+}
+function authHeaders(extra = {}) {
+  const token = backendToken();
+  return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+}
+try {
+  const saved = localStorage.getItem(TOKEN_KEY);
+  if (saved && els.token) els.token.value = saved;
+} catch {
+  /* private browsing / storage disabled — the token just won't persist across reloads */
 }
 
 async function api(method, path, body) {
@@ -144,13 +164,13 @@ async function api(method, path, body) {
   try {
     res = await fetch(`${baseUrl()}${path}`, {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: authHeaders(body ? { 'Content-Type': 'application/json' } : {}),
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
     throw new Error(`Can't reach ${baseUrl()} — is the backend running? Start it with "npm run backend" in a terminal.`);
   }
-  const json = await res.json();
+  const json = await res.json().catch(() => ({}));
   // The backend's refusals carry a `remediation` — which column is in the dead zone, which
   // ANDROID_MCP_TOKEN_* to set — and dropping it here left the UI showing a problem with no
   // fix attached. Same shape the CLI already prints.
@@ -159,46 +179,56 @@ async function api(method, path, body) {
 }
 
 /**
- * Lock the manual controls while a scan owns the gimbal, and say so loudly.
+ * Everything the controls are decided from (see controlStates in ./page-state.mjs).
  *
- * The joystick is the one that actually matters: it streams `speed` commands to the same two
- * motors the grid's closed-loop controller is steering, so a single stray touch mid-run puts
- * two controllers in a fight. That is not hypothetical — it wedged a 105-position dome at one
- * pose for six consecutive positions, each burning the full timeout and photographing the same
- * view. The backend rejects those commands too (409); this is the half that stops the user
- * being offered a control that cannot work.
+ * The scan lock matters most for the joystick: it streams `speed` commands to the same two motors
+ * the grid's closed-loop controller is steering, so a stray touch mid-run puts two controllers in
+ * a fight. That is not hypothetical: it wedged a 105-position dome at one pose for six consecutive
+ * positions. The backend rejects those commands too (409). The lock stops the page offering a
+ * control that cannot work, and lifts while the run is parked, as the backend's does.
  */
-let scanActive = false;
-/**
- * Whether the currently-typed plan stays inside the gimbal's reachable pan arc.
- *
- * A third input to "may the operator press Run", alongside connected and not-scanning. It is a
- * separate flag rather than a check at click time so the button is visibly unavailable while
- * the numbers are wrong, next to the summary line saying which columns are the problem.
- */
-let planIsReachable = true;
-function setScanActive(active) {
-  scanActive = active;
-  document.body.classList.toggle('scanning', active);
-  // Pointer-events off as well as the visual disable: `.disabled` on the pad is a class the
-  // joystick module also uses for "not connected", and a class alone still lets a touch start
-  // a drag on some builds.
-  els.joystickPad?.classList.toggle('disabled', active || !lastConnected);
-  els.joystickPad?.toggleAttribute('inert', active);
-  // The orientation buttons send setMode, which the backend refuses (409) while a scan owns the gimbal.
-  // The raw send can carry any of those frames, so it is locked the same way.
-  for (const el of [els.recenter, els.landscape, els.stickToggle, els.capture, els.captureBoth, ...els.modeButtons, els.rawSend]) {
-    if (el) el.disabled = active || !lastConnected;
+const state = {
+  backendUp: false,
+  linked: false,
+  streaming: false,
+  scanning: false,
+  parked: false,
+  planReachable: true,
+  testRoutes: false,
+  arc: DEFAULT_PAN_ARC,
+  busy: { run: false, stop: false, photo: false },
+};
+/** The test-matrix buttons, and the ones with a probe in flight. Declared before anything refreshes. */
+const testButtons = [];
+const busyTests = new Set();
+/** Whether the run this page is watching takes photos ('camera') or not ('scanner'), when known. */
+let runCapture = null;
+
+/** Apply controlStates to every control. Called whenever anything it reads changes. */
+function refreshControls() {
+  const c = controlStates(state);
+  for (const el of [els.disconnect, els.pin, els.pair]) if (el) el.disabled = !c.linkControls;
+  for (const el of [els.recenter, els.landscape, els.stickToggle, ...els.modeButtons, els.rawSend]) if (el) el.disabled = !c.manual;
+  // Pointer-events off as well as the visual disable: `.disabled` on the pad alone still lets a
+  // touch start a drag on some builds.
+  els.joystickPad?.classList.toggle('disabled', !c.manual);
+  els.joystickPad?.toggleAttribute('inert', !c.manual);
+  for (const el of [els.capture, els.captureBoth]) if (el) el.disabled = !c.photo;
+  for (const { btn, def } of testButtons) btn.disabled = !c.tests || busyTests.has(def.id);
+  if (els.testRoutesNote) els.testRoutesNote.hidden = state.testRoutes || !state.backendUp;
+  if (els.gridRun) els.gridRun.disabled = !c.run;
+  if (els.stop) {
+    els.stop.hidden = !state.scanning;
+    els.stop.disabled = !c.stop;
   }
-  // The test matrix sends the same motion commands, so it is locked the same way.
-  for (const el of testButtons) el.disabled = active || !lastStreaming;
-  // The grid is closed-loop, so it restores on the streaming tier — not on `lastConnected`,
-  // which is only "a handle exists". See setConnectedControlsEnabled.
-  if (els.gridRun) els.gridRun.disabled = active || !lastStreaming;
+  // Two orientations per position are two photos, and the scanner app takes none.
+  if (els.gridBothOrientations) els.gridBothOrientations.disabled = els.captureMode?.value === 'scanner';
+  document.body.classList.toggle('scanning', state.scanning);
+  document.body.classList.toggle('scan-parked', state.scanning && state.parked);
   // The between-station prompt belongs to a running capture and nothing else — a run that ends
   // while parked (stop, timeout, a fault) must not leave a live "continue" button behind for
   // the operator to press into a 409.
-  if (!active) showStationPrompt(null);
+  if (!state.scanning) showStationPrompt(null);
 }
 
 /**
@@ -216,40 +246,23 @@ function showStationPrompt(info) {
   if (!info) return;
   els.stationNote.textContent = `Move the tripod to station ${info.nextStation} of ${info.stationsPlanned}. `
     + 'Put it where the previous stations can see it and it can see them, and not in a line with '
-    + 'them — stations in a row share one baseline and stay degenerate.'
+    + 'them — stations in a row share one baseline and stay degenerate. The joystick and Center '
+    + 'work while the capture waits; Stop scan ends it here with every station so far kept.'
     + (info.linkUp === false ? ' WARNING: the BLE link to the gimbal has dropped — reconnect first.' : '');
 }
 
-// Tracked so setScanActive can restore the right state when a scan ends: "enabled" is the AND
-// of connected and not-scanning, and neither alone is enough to decide it.
-let lastConnected = false;
-let lastStreaming = false;
-
 /**
- * Enable controls by what the link can actually do, in two tiers.
- *
- * `linked` — a GATT handle exists, so commands go out. Everything that only WRITES stays
- * available at this tier, deliberately including the joystick: a gimbal that has stopped
- * reporting is a gimbal whose motors may well be latched and driving, and taking the manual
- * controls away exactly then removes the operator's only way to stop it.
- *
- * `streaming` — notifications are arriving. Only this tier unlocks the things that READ
- * telemetry back: the grid run (closed-loop per position) and the test-matrix probes (whose
- * whole verdict is a before/after pose comparison). Offering those over a silent link is what
- * produced captures that looked complete and were photographed blind.
+ * Take the arc from a status frame. A preset is a shape relative to the arc (see SCAN_PRESETS in
+ * ./page-state.mjs), so it follows a new arc; Custom is the operator's own numbers, and only gets
+ * re-checked.
  */
-function setConnectedControlsEnabled(linked, streaming = linked) {
-  lastConnected = linked;
-  lastStreaming = streaming;
-  for (const el of [els.disconnect, els.pin, els.pair, els.recenter, els.landscape, els.stickToggle, els.capture, els.captureBoth, ...els.modeButtons, els.rawSend]) {
-    el.disabled = !linked;
-  }
-  for (const el of [els.gridRun, ...testButtons]) {
-    el.disabled = !streaming;
-  }
-  els.joystickPad.classList.toggle('disabled', !linked);
-  // A reconnect mid-scan must not hand the joystick back — re-apply the scan lock last.
-  if (scanActive) setScanActive(true);
+function applyArc(panArc) {
+  const arc = arcFromPayload(panArc);
+  const prev = state.arc;
+  if (prev.startDeg === arc.startDeg && prev.endDeg === arc.endDeg && prev.source === arc.source) return;
+  state.arc = arc;
+  if (selectedPreset && selectedPreset !== 'custom') selectPreset(selectedPreset);
+  else renderGridSummary();
 }
 
 // Auto-reconnects on a fixed interval so the page picks up the backend the moment you start it
@@ -268,6 +281,23 @@ function scheduleReconnect() {
     connectWs();
   }, RECONNECT_MS);
 }
+
+// A new token or backend URL takes effect at once: closing the socket reconnects with it.
+els.token?.addEventListener('change', () => {
+  try {
+    const token = backendToken();
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* storage disabled — the token still applies to this page */
+  }
+  refusalCheckedAt = 0;
+  ws?.close();
+});
+els.url.addEventListener('change', () => {
+  refusalCheckedAt = 0;
+  ws?.close();
+});
 
 // Remembers the last device we successfully connected to (noble reconnects by peripheral id
 // with no scan needed, same as a manual dropdown pick) so a page reload doesn't require
@@ -300,11 +330,12 @@ function forgetDevice() {
  */
 function renderLinkStatus(msg) {
   const link = msg.link ?? (msg.connected ? 'streaming' : 'disconnected');
-  const streaming = link === 'streaming';
-  const linked = streaming || link === 'linked';
-  setConnectedControlsEnabled(linked, streaming);
+  state.streaming = link === 'streaming';
+  state.linked = state.streaming || link === 'linked';
+  // The status dot reads this (ui.mjs), not the wording below.
+  els.status.dataset.link = link;
 
-  if (streaming) {
+  if (state.streaming) {
     els.status.textContent = `backend: streaming telemetry${msg.paired ? ', paired' : ''}`;
   } else if (link === 'linked') {
     // Named as the problem it is. This is the state that used to read "connected".
@@ -312,8 +343,9 @@ function renderLinkStatus(msg) {
   } else {
     els.status.textContent = `backend: ${link}`;
   }
+  refreshControls();
 
-  if (streaming) {
+  if (state.streaming) {
     linkedButSilentLogged = false;
     return;
   }
@@ -398,21 +430,64 @@ async function runAutoconnect() {
   }
 }
 
+/** The /ws URL, with the token as ?token= when there is one: a WebSocket cannot carry headers. */
+function wsUrl() {
+  const url = baseUrl().replace(/^http/, 'ws') + '/ws';
+  const token = backendToken();
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+}
+
+/**
+ * Say why the backend will not take this page, when that is the reason the socket closed.
+ *
+ * A refused WebSocket upgrade looks to a page exactly like a backend that is not running. So this
+ * asks the same backend over plain HTTP. Its 401 or 403 carries the setting to change (the backend
+ * reflects the origin on a refusal so this page can read it). At most once every 10 seconds.
+ */
+let refusalCheckedAt = 0;
+async function explainRefusal() {
+  if (Date.now() - refusalCheckedAt < 10000) return;
+  refusalCheckedAt = Date.now();
+  let res;
+  try {
+    res = await fetch(`${baseUrl()}/api/status`, { headers: authHeaders(), signal: AbortSignal.timeout(3000) });
+  } catch {
+    return; // not reachable at all; the generic message stands
+  }
+  if (res.status !== 401 && res.status !== 403) return;
+  const body = await res.json().catch(() => ({}));
+  if (state.backendUp) return;
+  const why = [body.error || `HTTP ${res.status}`, body.remediation].filter(Boolean).join(' — ');
+  els.status.textContent = `backend refused this page: ${why}`;
+  log(`Backend refused this page: ${why}`, 'warn');
+}
+
 function connectWs() {
-  const wsUrl = baseUrl().replace(/^http/, 'ws') + '/ws';
-  ws = new WebSocket(wsUrl);
+  const url = wsUrl();
+  // Never log the token, even this page's own.
+  const shown = url.replace(/\?token=.*$/, '?token=…');
+  ws = new WebSocket(url);
   ws.addEventListener('open', () => {
+    state.backendUp = true;
+    // The gimbal's link is unknown until the first status frame, which the backend sends at once.
+    els.status.dataset.link = 'unknown';
     els.status.textContent = 'backend connected';
-    log(`WS connected to ${wsUrl}`, 'ok');
+    log(`WS connected to ${shown}`, 'ok');
     hasLoggedDown = false;
+    refreshControls();
   });
   ws.addEventListener('close', () => {
+    state.backendUp = false;
+    state.linked = false;
+    state.streaming = false;
+    els.status.dataset.link = 'disconnected';
     els.status.textContent = `backend not reachable at ${baseUrl()} — start it with "npm run backend" in a terminal (auto-retrying every ${RECONNECT_MS / 1000}s)`;
-    setConnectedControlsEnabled(false);
+    refreshControls();
     if (!hasLoggedDown) {
-      log(`WS closed — will keep retrying ${wsUrl} every ${RECONNECT_MS / 1000}s until the backend is up`, 'warn');
+      log(`WS closed — will keep retrying ${shown} every ${RECONNECT_MS / 1000}s until the backend is up`, 'warn');
       hasLoggedDown = true;
     }
+    explainRefusal();
     scheduleReconnect();
   });
   ws.addEventListener('error', () => {
@@ -421,11 +496,15 @@ function connectWs() {
   ws.addEventListener('message', (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'status') {
-      renderLinkStatus(msg);
       // A capture already in flight when this page connected — after a reload, or a phone
       // waking from sleep mid-pause. Restore both halves of that state from status, because
       // the grid-progress events that would have told us happened before this socket existed.
-      if (msg.scanning !== undefined) setScanActive(msg.scanning);
+      if (msg.scanning !== undefined) state.scanning = msg.scanning === true;
+      state.parked = Boolean(msg.awaitingStation);
+      // An older backend sends no testRoutes; it is then unknown, so the matrix stays offered.
+      state.testRoutes = msg.testRoutes !== false;
+      applyArc(msg.panArc);
+      renderLinkStatus(msg);
       showStationPrompt(msg.awaitingStation ? { ...msg.awaitingStation, linkUp: msg.connected } : null);
       if (!msg.connected) tryAutoconnect();
     } else if (msg.type === 'grid-progress') {
@@ -449,7 +528,6 @@ function connectWs() {
     }
   });
 }
-connectWs();
 
 els.scan.addEventListener('click', async () => {
   els.scan.disabled = true;
@@ -559,107 +637,56 @@ els.landscape.addEventListener('click', async () => {
 // Every photo path — one-off or scan — runs through the phone's MCP server, and it fails in one
 // of two ways you cannot guess from the error text alone. This used to be a permanent paragraph
 // under the Auto scan panel; it is screen space spent on something that only matters at the
-// moment a capture actually fails, so it is logged there instead.
+// moment a capture actually fails, so it is logged there instead. Only for camera captures: the
+// scanner app takes no photos.
 const MCP_HINT = 'Photos go through the phone\'s MCP server: the backend needs ANDROID_MCP_URL + ANDROID_MCP_TOKEN, and the phone allows one MCP session at a time — detach any other one (e.g. a Claude Code session) first.';
 
 // One-off "take a photo right now" quick actions — not a scan, just the gimbal's current
 // position. Both hit /api/capture-photo, which owns its own MCP session to the phone the same
 // way /api/grid-capture does (see that endpoint's own comment for why this can't live here).
-els.capture?.addEventListener('click', async () => {
-  els.capture.disabled = true;
+// While the request runs the buttons are busy, and afterwards they go back to whatever the state
+// allows, not simply enabled: a scan may have started meanwhile, or the link gone.
+async function capturePhotoNow(body, describe) {
+  state.busy.photo = true;
+  refreshControls();
   try {
-    log('Capturing photo...');
-    const { shots } = await api('POST', '/api/capture-photo', {});
-    log(`Captured: ${shots[0]?.photoUrl ?? '(no url)'}`, 'ok');
+    const { shots } = await api('POST', '/api/capture-photo', body);
+    describe(shots);
   } catch (err) {
     log(`Capture failed: ${err.message}`, 'warn');
     log(MCP_HINT, 'warn');
   } finally {
-    els.capture.disabled = false;
+    state.busy.photo = false;
+    refreshControls();
   }
+}
+els.capture?.addEventListener('click', () => {
+  log('Capturing photo...');
+  capturePhotoNow({}, (shots) => log(`Captured: ${shots[0]?.photoUrl ?? '(no url)'}`, 'ok'));
 });
-els.captureBoth?.addEventListener('click', async () => {
-  els.captureBoth.disabled = true;
-  try {
-    log('Capturing landscape + best-guess portrait...');
-    const { shots } = await api('POST', '/api/capture-photo', { bothOrientations: true });
+els.captureBoth?.addEventListener('click', () => {
+  log('Capturing landscape + best-guess portrait...');
+  capturePhotoNow({ bothOrientations: true }, (shots) => {
     for (const s of shots) log(`  ${s.orientation}: ${s.photoUrl}`, 'ok');
-  } catch (err) {
-    log(`Capture failed: ${err.message}`, 'warn');
-    log(MCP_HINT, 'warn');
-  } finally {
-    els.captureBoth.disabled = false;
-  }
+  });
 });
 
 // ── Scan type + grid parameters ─────────────────────────────────────────────
-// Each preset is a from/to/step range per axis, which is what the old comma-separated lists
-// already were in disguise.
-//
-// Ordered widest-first, and `dome` is the default: reconstruction quality is driven by how
-// much of the room each station sees, and the failure this pipeline actually keeps hitting is
-// too FEW distinct viewing angles, not too many. A measured example from this rig: a capture
-// confined to one narrow station classified 29 of 36 image pairs PLANAR_OR_PANORAMIC and
-// registered only 4 of 9 images. Defaulting to the widest sweep puts the good outcome on the
-// path of least resistance; the narrower presets stay one tap away for a quick check.
+// Each preset is a dome shape relative to the reachable arc in use, filled into from/to/step
+// fields; see SCAN_PRESETS in ./page-state.mjs for the shapes and why Dome is the default.
 //
 // Every range sits inside what was actually probed as safe on hardware. Tilt converges down to
 // about -40 degrees but stalls near +16 — a real mechanical limit, not a display choice.
 //
-// Pan is the one that was WRONG here until this pass, and expensively so. These presets used
-// to run -150..150, which reads as a wide sweep and is in fact a 300-degree request straight
-// across the arc the gimbal cannot reach: its pan travels +82 degrees round THROUGH 180 to
-// about -100, and cannot rotate through the front at all. Six of that preset's eleven columns
-// were inside the stop (see protocol/dome.test.mjs, which keeps the old numbers as a fixture).
-// A move into the stop does not error — the gimbal twitches and springs back while the
-// controller holds a speed against it, which is the exact condition that thermally shut a real
-// OM6 down. Pan from/to is now read ALONG that arc (see panValues), so the sweep goes the way
-// the hardware can actually turn and the front is not expressible.
-//
-// The interior rows of the multi-row presets are interpolations, not separately measured
-// angles: they lie between two tilts that were run on hardware, which is a plan choice rather
-// than a re-measurement. "Custom" is simply whatever is in the fields.
-const SCAN_PRESETS = {
-  // Full dome — the default. 150 degrees of pan (7 columns) x 2 tilt rows = 14 positions per
-  // station, which at 4 stations is 56 frames. Sized against the capture that actually
-  // reconstructed: 5 stations, 36 images, all 36 registered, 9,914 points. Positions per
-  // station is the cheap axis and stations is the expensive one, so this spends where it pays.
-  dome: { pan: { from: 96, to: -114, step: 25 }, tilt: { from: -25, to: 5, step: 30 } },
-  // Quick — a coarse pass for checking the rig works, not for reconstructing. 4 columns x 2
-  // rows. Still multi-station, because a single-station capture is degenerate at any density
-  // and a "quick look" that cannot be solved teaches nothing.
-  quick25: { pan: { from: 111, to: -129, step: 40 }, tilt: { from: -20, to: 5, step: 25 } },
-  // Horizontal band — a wide, shallow sweep for long or corridor-shaped rooms, where the
-  // useful information is spread around the horizon rather than up and down. Takes nearly the
-  // whole 178-degree arc, stopping ~10 degrees short of each stop so a move that overshoots
-  // its tolerance still lands inside it.
-  band: { pan: { from: 92, to: -104, step: 20 }, tilt: { from: -15, to: 5, step: 20 } },
-};
-
-// A few hundred positions is hours of gimbal-and-phone time, and a mistyped step is the easy
-// way to ask for one by accident (a step of 0 wouldn't terminate at all). Generation stops at
-// this many values per axis and the summary line says so, rather than truncating in silence.
-const MAX_STEPS_PER_AXIS = 60;
-
-// Mirrors DEFAULT_KEYFRAME_OPTIONS.minRotationDeg in src/capture/keyframes.ts. Duplicated
-// rather than imported because that is TypeScript inside the Vite app and this is a plain
-// ES module served by a different server — the same deliberate parallel-implementation pair
-// as vite.config.ts/server/main.ts's resolveHostname. If the scanner default changes, this
-// must change with it, and nothing will fail loudly.
-const SCANNER_MIN_ROTATION_DEG = 20;
-
-function axisValues({ from, to, step }) {
-  const lo = Math.min(from, to);
-  const hi = Math.max(from, to);
-  const stride = Math.max(1, Math.abs(step));
-  const out = [];
-  // The 1e-9 slack keeps the far endpoint in when lo/hi/stride divide evenly but land a hair
-  // under hi through float accumulation.
-  for (let v = lo; v <= hi + 1e-9 && out.length < MAX_STEPS_PER_AXIS; v += stride) {
-    out.push(Math.round(v * 10) / 10);
-  }
-  return out;
-}
+// Pan used to be WRONG here, and expensively so. These presets once ran -150..150, which reads as
+// a wide sweep and is in fact a 300-degree request straight across the arc the gimbal cannot
+// reach. Its pan travels about +82 degrees round THROUGH 180 to about -100, and cannot rotate
+// through the front at all. Six of that preset's eleven columns were inside the stop (see
+// protocol/dome.test.mjs, which keeps the old numbers as a fixture). A move into the stop does not
+// error: the gimbal twitches and springs back while the controller holds a speed against it, the
+// exact condition that thermally shut a real OM6 down. Pan from/to is read ALONG the arc (see
+// panColumns), so the sweep goes the way the hardware can actually turn and the front cannot be
+// expressed. "Custom" is simply whatever is in the fields.
 
 // An empty or half-typed field reads as 0 rather than NaN — mid-edit the box is legitimately
 // blank, and a NaN would poison the whole grid instead of just that number.
@@ -672,109 +699,61 @@ function readAxis(name) {
   return { from: num(group.from), to: num(group.to), step: num(group.step) };
 }
 
-/**
- * Pan columns, generated ALONG the reachable arc rather than numerically between two degrees.
- *
- * axisValues() sorts from/to and walks upward, which is right for tilt and wrong for pan: pan's
- * reachable travel crosses the +/-180 seam, so the numerically-smaller endpoint is often the one
- * further round the arc. 96 -> -114 walked numerically is -114..96, i.e. the entire dead zone;
- * walked along the arc it is the intended 96 -> 180 -> -114. Converting both ends into arc
- * coordinates first makes the seam a non-event and makes the front inexpressible, which is the
- * point — the gimbal cannot rotate through it, and asking it to is what jams the motors.
- */
-function panValues({ from, to, step }) {
-  return axisValues({ from: toArcDeg(from), to: toArcDeg(to), step })
-    .map((arc) => Math.round(fromArcDeg(arc) * 10) / 10);
-}
-
 function currentGrid() {
-  const pan = readAxis('pan');
-  const tilt = readAxis('tilt');
-  return { pans: panValues(pan), tilts: axisValues(tilt) };
+  return { pans: panColumns(readAxis('pan'), state.arc), tilts: axisValues(readAxis('tilt')) };
 }
 
-/** Stations requested, floored at 1 — an empty or half-typed field must not read as zero. */
 function currentStations() {
-  const n = Math.trunc(Number(els.stations?.value));
-  return Number.isFinite(n) && n >= 1 ? Math.min(12, n) : 1;
+  return stationCount(els.stations?.value);
 }
 
 // The position count was never visible before the run started — the old free-text lists made
 // you count commas. It is the number that decides whether this is a two-minute or a two-hour
-// run, so it is stated next to the control that sets it.
+// run, so it is stated next to the control that sets it, with whatever is wrong with the plan.
 function renderGridSummary() {
   const { pans, tilts } = currentGrid();
   const stations = currentStations();
-  const perStation = pans.length * tilts.length;
+  const summary = planSummary({
+    pans,
+    tilts,
+    stations,
+    arc: state.arc,
+    captureMode: els.captureMode?.value,
+    panStep: readAxis('pan').step,
+    tiltStep: readAxis('tilt').step,
+  });
   const total = document.createElement('strong');
-  total.textContent = `${stations} × ${perStation} = ${stations * perStation} positions`;
+  total.textContent = `${stations} × ${summary.perStation} = ${summary.total} positions`;
   const detail = document.createElement('span');
-  detail.textContent = ` · pan ${pans[0]}…${pans[pans.length - 1]}° ×${pans.length} · tilt ${tilts[0]}…${tilts[tilts.length - 1]}° ×${tilts.length}`;
+  detail.textContent = ` · pan ${pans[0]}…${pans[pans.length - 1]}° ×${pans.length} · tilt ${tilts[0]}…${tilts[tilts.length - 1]}° ×${tilts.length}`
+    + ` · arc ${state.arc.source === 'measured' ? 'measured from this spot' : 'built-in, not measured here'}`;
   els.gridSummary.replaceChildren(total, detail);
-
-  // A plan that crosses the dead zone is refused, not attempted, and it is refused HERE rather
-  // than by the backend two seconds into a run — the operator is looking at the fields that
-  // caused it. The Run button goes with it: offering a control whose only outcome is a 400 is
-  // the same mistake as offering the joystick mid-scan.
-  const unreachable = unreachablePans(pans);
-  planIsReachable = unreachable.length === 0;
-  if (unreachable.length) {
+  for (const text of summary.warnings) {
     const warn = document.createElement('span');
     warn.className = 'gp-warn';
-    warn.textContent = ` · ${unreachable.length} column(s) are in the gimbal's dead zone `
-      + `(${unreachable.map((u) => `${u.pan}°`).join(', ')}) — pan travels ${PAN_ARC_START_DEG}° round `
-      + `through 180° to ${PAN_ARC_END_DEG}° and cannot rotate through the front`;
+    warn.textContent = ` · ${text}`;
     els.gridSummary.appendChild(warn);
   }
-  if (els.gridRun) els.gridRun.disabled = !planIsReachable || scanActive || !lastConnected;
-
-  // Stations, not positions, are what decide whether this can be reconstructed at all — so a
-  // one-station plan is called out however many positions it has. Measured: one dome from one
-  // spot registered 3 of 17 images; five stations registered 36 of 36.
-  if (stations < MIN_STATIONS_FOR_PARALLAX) {
-    const warn = document.createElement('span');
-    warn.className = 'gp-warn';
-    warn.textContent = ' · one station is pure rotation — no baseline to triangulate against '
-      + '(3 of 17 images registered, measured). Use 3–5 stations.';
-    els.gridSummary.appendChild(warn);
-  }
-  if (pans.length >= MAX_STEPS_PER_AXIS || tilts.length >= MAX_STEPS_PER_AXIS) {
+  if (summary.capped) {
     const capped = document.createElement('span');
     capped.className = 'gp-capped';
     capped.textContent = ` · capped at ${MAX_STEPS_PER_AXIS} per axis`;
     els.gridSummary.appendChild(capped);
   }
-
-  // Scanner mode has a step floor that camera mode does not, and getting it wrong fails
-  // SILENTLY: the scanner emits a keyframe only once the camera has rotated at least
-  // minRotationDeg (default 20), so a finer grid drives the gimbal through every position and
-  // captures nothing at some of them. The run reports 105/105 "converged" and the session ends
-  // up with far fewer frames than positions, which looks like a capture bug rather than a
-  // configuration one. Say so before the run, not after.
-  if (els.captureMode?.value === 'scanner') {
-    const panStep = Math.abs(readAxis('pan').step);
-    const tiltStep = Math.abs(readAxis('tilt').step);
-    const tooFine = [
-      panStep && panStep < SCANNER_MIN_ROTATION_DEG ? `pan ${panStep}°` : null,
-      tiltStep && tiltStep < SCANNER_MIN_ROTATION_DEG ? `tilt ${tiltStep}°` : null,
-    ].filter(Boolean);
-    if (tooFine.length) {
-      const warn = document.createElement('span');
-      warn.className = 'gp-warn';
-      warn.textContent = ` · ${tooFine.join(' and ')} below the scanner's ${SCANNER_MIN_ROTATION_DEG}° keyframe threshold — those positions capture nothing`;
-      els.gridSummary.appendChild(warn);
-    }
-  }
+  // A plan that crosses the dead zone is refused here, not attempted: Run goes with it. Offering a
+  // control whose only outcome is a 400 is the same mistake as offering the joystick mid-scan.
+  state.planReachable = summary.reachable;
+  refreshControls();
 }
 
 let selectedPreset = null;
 function selectPreset(name) {
   selectedPreset = name;
   for (const btn of els.scanTypes) btn.classList.toggle('selected', btn.dataset.preset === name);
-  const preset = SCAN_PRESETS[name]; // 'custom' has no entry, so it leaves the fields alone
-  if (preset) {
+  const fields = presetFields(name, state.arc); // 'custom' has none, so it leaves the fields alone
+  if (fields) {
     for (const axis of ['pan', 'tilt']) {
-      for (const key of ['from', 'to', 'step']) els.axis[axis][key].value = String(preset[axis][key]);
+      for (const key of ['from', 'to', 'step']) els.axis[axis][key].value = String(fields[axis][key]);
     }
   }
   renderGridSummary();
@@ -793,63 +772,40 @@ for (const axis of ['pan', 'tilt']) {
 }
 // Station count is not part of any preset — the presets describe one dome's shape, and how many
 // domes a room needs is a property of the room, not of the sweep. It still redraws the summary,
-// because it is a multiplier on every number in it.
+// because it is a multiplier on every number in it. The capture mode decides the scanner's step
+// warning and whether both orientations apply, so it redraws too. It used to redraw nothing.
 els.stations?.addEventListener('input', renderGridSummary);
-selectPreset('dome');
+els.captureMode?.addEventListener('change', renderGridSummary);
 
-// Promoted to the main view since the test matrix flags this as a possible precondition for
-// motion commands to be honored — a local toggle (not read back from the device, which has no
-// query for this state) tracking what we last told it.
-let stickEnabled = false;
-els.stickToggle.addEventListener('click', async () => {
-  const next = !stickEnabled;
-  try {
-    const { frameHex } = await api('POST', '/api/command', { type: 'stickControlEnable', params: { enable: next } });
-    logTxFrame(frameHex, { label: `StickControlEnable(${next})` });
-    stickEnabled = next;
-    els.stickToggle.textContent = `Stick: ${stickEnabled ? 'ON' : 'OFF'}`;
-    els.stickToggle.classList.toggle('active', stickEnabled);
-  } catch (err) {
-    log(`Stick control toggle failed: ${err.message}`, 'warn');
-  }
-});
-
-// speedLatched: a non-zero speed has gone out and no stop has followed it yet.
-let speedLatched = false;
-attachJoystick(els.joystickPad, {
-  onMove: (vector) => {
-    speedLatched = true;
-    api('POST', '/api/command', { type: 'speed', params: vector }).catch((err) => log(`Joystick move failed: ${err.message}`, 'warn'));
-  },
-  onStop: () => {
-    speedLatched = false;
-    api('POST', '/api/command', { type: 'speed', params: {} }).catch(() => {
-      /* best-effort stop */
-    });
+// The stick toggle and the joystick's latched-speed guard are shared with the Direct pathway
+// (./controls.mjs); only the transport is this pathway's own.
+attachStickToggle(els.stickToggle, {
+  log,
+  send: async (enable) => {
+    const { frameHex } = await api('POST', '/api/command', { type: 'stickControlEnable', params: { enable } });
+    logTxFrame(frameHex, { label: `StickControlEnable(${enable})` });
   },
 });
 
-// Leaving mid-drag (tab closed or hidden) would leave the last speed latched on the gimbal, because
-// nothing sends the stop once the page is gone. Sent only while a speed is latched. keepalive lets
-// the request outlive the page; the abort caps it at 2 s, the same bound disconnect() uses.
-function stopOnPageExit() {
-  if (!speedLatched) return;
-  speedLatched = false;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2000);
-  fetch(`${baseUrl()}/api/command`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'speed', params: {} }),
-    keepalive: true,
-    signal: ctrl.signal,
-  }).catch(() => {
-    /* best-effort: the page is going away either way */
-  }).finally(() => clearTimeout(timer));
-}
-window.addEventListener('pagehide', stopOnPageExit);
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') stopOnPageExit();
+attachLatchedJoystick(els.joystickPad, {
+  log,
+  sendMove: (vector) => api('POST', '/api/command', { type: 'speed', params: vector }),
+  sendStop: () => api('POST', '/api/command', { type: 'speed', params: {} }),
+  // keepalive lets the request outlive the page; the abort caps it at 2 s, the same bound
+  // disconnect() uses.
+  exitStop: () => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2000);
+    fetch(`${baseUrl()}/api/command`, {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ type: 'speed', params: {} }),
+      keepalive: true,
+      signal: ctrl.signal,
+    }).catch(() => {
+      /* best-effort: the page is going away either way */
+    }).finally(() => clearTimeout(timer));
+  },
 });
 
 els.rawSend.addEventListener('click', async () => {
@@ -870,7 +826,8 @@ els.rawSend.addEventListener('click', async () => {
 // Build the labeled test matrix rows from TEST_DEFS. Each button fires its command via the
 // generic /api/test/command-probe endpoint and shows an inline moved/no-movement verdict, so
 // you can pair what you see on the physical gimbal with an objective telemetry-based check.
-const testButtons = [];
+// The backend serves that route only with BACKEND_TEST_ROUTES=1, and says so in its status, so
+// the buttons stay off with a note when it is off rather than answering 404 one by one.
 for (const def of TEST_DEFS) {
   const row = document.createElement('div');
   row.className = 'test-row';
@@ -890,7 +847,8 @@ for (const def of TEST_DEFS) {
   row.appendChild(verdict);
 
   btn.addEventListener('click', async () => {
-    btn.disabled = true;
+    busyTests.add(def.id);
+    refreshControls();
     verdict.textContent = 'running...';
     verdict.className = 'verdict';
     try {
@@ -914,12 +872,13 @@ for (const def of TEST_DEFS) {
       log(`[${def.label}] failed: ${err.message}`, 'warn');
     } finally {
       // Not a blind re-enable: a scan that started while this probe ran owns the gimbal, and the link may be gone.
-      btn.disabled = scanActive || !lastStreaming;
+      busyTests.delete(def.id);
+      refreshControls();
     }
   });
 
   els.testMatrix.appendChild(row);
-  testButtons.push(btn);
+  testButtons.push({ btn, def });
 }
 
 // ── Grid capture ───────────────────────────────────────────────────────────────
@@ -929,10 +888,18 @@ for (const def of TEST_DEFS) {
 // WS the page is already connected to — a 9-position run takes minutes, and a silent request
 // that long is indistinguishable from a hang.
 function renderGridProgress(msg) {
+  // A bare "[n/total]" line is easy to miss on a phone held at arm's length while the rig is
+  // moving; the bar is the part that reads at a glance from across the room.
+  const pct = progressPercent(msg);
+  if (pct !== null && els.gridBar) els.gridBar.style.width = `${pct}%`;
+
   if (msg.phase === 'start') {
     els.gridResults.innerHTML = '';
+    runCapture = msg.capturedBy === 'scanner-app' ? 'scanner' : 'camera';
     els.gridProgress.textContent = `Starting ${msg.stationsPlanned} station(s) × ${msg.perStation} positions…`;
-    setScanActive(true);
+    state.scanning = true;
+    state.parked = false;
+    refreshControls();
     return;
   }
   if (msg.phase === 'station-start') {
@@ -944,6 +911,8 @@ function renderGridProgress(msg) {
     label.textContent = msg.stationLabel;
     row.appendChild(label);
     els.gridResults.appendChild(row);
+    state.parked = false;
+    refreshControls();
     showStationPrompt(null);
     return;
   }
@@ -951,6 +920,8 @@ function renderGridProgress(msg) {
     // The bar deliberately stays where it is — the run has not lost ground, it is waiting on a
     // human, and rewinding it would read as a restart.
     els.gridProgress.textContent = `Paused — move the tripod to station ${msg.nextStation} of ${msg.stationsPlanned}.`;
+    state.parked = true;
+    refreshControls();
     showStationPrompt(msg);
     return;
   }
@@ -980,6 +951,8 @@ function renderGridProgress(msg) {
     return;
   }
   if (msg.phase === 'resumed') {
+    state.parked = false;
+    refreshControls();
     showStationPrompt(null);
     return;
   }
@@ -991,14 +964,14 @@ function renderGridProgress(msg) {
     els.gridProgress.textContent = `[station ${msg.station} · ${msg.stationPosition}/${msg.perStation}] moving to pan=${msg.target.pan} tilt=${msg.target.tilt}…`;
     return;
   }
-  if (msg.phase === 'moving' || msg.phase === 'capturing') {
-    // A bare "[n/total]" line is easy to miss on a phone held at arm's length while the rig
-    // is moving; the bar is the part that reads at a glance from across the room.
-    const pct = msg.total ? Math.round((msg.position / msg.total) * 100) : 0;
-    if (els.gridBar) els.gridBar.style.width = `${pct}%`;
-  }
   if (msg.phase === 'capturing') {
-    els.gridProgress.textContent = `[station ${msg.station} · ${msg.stationPosition}/${msg.perStation}] ${msg.converged ? 'converged' : 'NOT converged'} — taking photo…`;
+    // In scanner mode the backend takes no photo: it holds still so the phone's scanner page
+    // can capture a keyframe. Saying "taking photo" there would describe a capture that is not
+    // happening. A page that reloaded mid-run never saw the start event, so it says neither.
+    const doing = runCapture === 'scanner'
+      ? 'holding still for the scanner app…'
+      : runCapture === 'camera' ? 'taking photo…' : 'capturing…';
+    els.gridProgress.textContent = `[station ${msg.station} · ${msg.stationPosition}/${msg.perStation}] ${msg.converged ? 'converged' : 'NOT converged'} — ${doing}`;
     return;
   }
   if (msg.phase === 'captured') {
@@ -1013,8 +986,10 @@ function renderGridProgress(msg) {
     label.textContent = `s${msg.station}.${msg.stationPosition} pan=${(msg.pan ?? 0).toFixed(1)} tilt=${(msg.tilt ?? 0).toFixed(1)} (${msg.ticks} ticks)`;
     row.appendChild(label);
     // The photo stays on the phone; these link to the device's own share URL rather than
-    // proxying bytes through the backend.
-    const shots = [{ href: msg.photoUrl, text: 'photo' }];
+    // proxying bytes through the backend. A scanner-app position has no photo at all: the
+    // phone's scanner page captured it, so there is nothing to link.
+    const shots = [];
+    if (msg.photoUrl) shots.push({ href: msg.photoUrl, text: 'photo' });
     if (msg.photoUrlPortrait) shots.push({ href: msg.photoUrlPortrait, text: 'photo (portrait*)' });
     for (const shot of shots) {
       const link = document.createElement('a');
@@ -1025,11 +1000,19 @@ function renderGridProgress(msg) {
       link.style.marginLeft = '6px';
       row.appendChild(link);
     }
+    if (!shots.length && msg.capturedBy === 'scanner-app') {
+      const note = document.createElement('span');
+      note.className = 'test-desc';
+      note.textContent = ' · captured by the scanner app';
+      row.appendChild(note);
+    }
     els.gridResults.appendChild(row);
     return;
   }
   if (msg.phase === 'done') {
-    setScanActive(false);
+    state.scanning = false;
+    state.parked = false;
+    refreshControls();
     // `usable` and `complete`, not just a converged count. A run can converge every position it
     // attempted and still be worthless — a single station is pure rotation, and it is exactly
     // the shape that reports 100% and then registers 3 of 17 images. The headline says which of
@@ -1045,9 +1028,9 @@ function renderGridProgress(msg) {
     return;
   }
   if (msg.phase === 'error') {
-    // Not setScanActive(false): a `done` summary always follows, and it is the one that decides
-    // whether anything usable survived. Ending the scan state here would drop the prompt and
-    // the final verdict on the floor.
+    // Not ending the scan state here: a `done` summary always follows, and it is the one that
+    // decides whether anything usable survived. Ending the scan state here would drop the prompt
+    // and the final verdict on the floor.
     els.gridProgress.textContent = `Fault after ${msg.captured} position(s): ${msg.error}`;
     log(`Capture fault: ${msg.error}`, 'warn');
   }
@@ -1057,29 +1040,39 @@ function renderGridProgress(msg) {
 // endpoint streams NDJSON (one JSON object per line, see backend.mjs's grid-capture handler)
 // so a multi-minute run keeps the connection demonstrably alive instead of sending zero bytes
 // until the very end — which is what silently killed real runs before this existed. This page
-// already renders progress from the WS broadcast (renderGridProgress below), so the stream here
+// already renders progress from the WS broadcast (renderGridProgress above), so the stream here
 // only needs to be read to know when the run actually finished — but reading and discarding it
 // still matters, since an unconsumed body can itself stall/backpressure the connection.
 els.gridRun?.addEventListener('click', async () => {
-  els.gridRun.disabled = true;
+  state.busy.run = true;
+  refreshControls();
+  const captureMode = els.captureMode?.value === 'scanner' ? 'scanner' : 'camera';
   try {
     // Same generator the summary line above the button rendered from, so the run is exactly the
     // one the count promised — no second parse of the same fields to drift out of step with it.
     const { pans, tilts } = currentGrid();
     const stations = currentStations();
-    const bothOrientations = els.gridBothOrientations?.checked ?? false;
-    log(`Capture: ${stations} station(s) x ${pans.length * tilts.length} position(s)${bothOrientations ? ' x 2 orientations' : ''}...`);
+    const body = gridRequestBody({
+      pans,
+      tilts,
+      stations,
+      captureMode,
+      bothOrientations: els.gridBothOrientations?.checked ?? false,
+    });
+    log(`Capture: ${stations} station(s) x ${pans.length * tilts.length} position(s)${body.bothOrientations ? ' x 2 orientations' : ''}, `
+      + `${captureMode === 'scanner' ? 'the scanner app captures (no photos)' : 'photos via the phone'}...`);
     const res = await fetch(`${baseUrl()}/api/grid-capture`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pans, tilts, stations, bothOrientations }),
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
     });
     // A rejected plan (a pan column in the dead zone, no device token) answers with one JSON
     // object, not NDJSON — read it as such so its message reaches the operator intact instead
-    // of surfacing as a parse error over the top of it.
+    // of surfacing as a parse error over the top of it. The remediation is kept: it names the
+    // arc the backend checked against, which is the thing to know when it disagrees with this page.
     if (!res.ok) {
       const rejected = await res.json().catch(() => ({}));
-      throw new Error(rejected.error || `HTTP ${res.status}`);
+      throw new Error([rejected.error || `HTTP ${res.status}`, rejected.remediation].filter(Boolean).join(' — '));
     }
     if (!res.body) throw new Error(`HTTP ${res.status}`);
     let buf = '';
@@ -1108,10 +1101,31 @@ els.gridRun?.addEventListener('click', async () => {
     // The backend broadcasts partial progress on the WS as it goes, and renderGridProgress has
     // already drawn whatever completed — so this only needs to report, not reconstruct state.
     log(`Grid capture failed: ${err.message}`, 'warn');
-    log(MCP_HINT, 'warn');
+    if (captureMode === 'camera') log(MCP_HINT, 'warn');
     els.gridProgress.textContent = `Failed: ${err.message}`;
   } finally {
-    els.gridRun.disabled = false;
+    state.busy.run = false;
+    refreshControls();
+  }
+});
+
+// Stop the capture: after the current position while it sweeps, at once while it is parked.
+// The same POST /api/grid-stop as the CLI's `stop` (and its Ctrl-C) and the MCP
+// stop_grid_capture tool. Nothing on the page called it before, so a parked run waited for its
+// 30-minute cap. No confirm: stopping ends on a clean seam and keeps every station so far, and
+// it is the safety action, so it should not have friction in front of it.
+els.stop?.addEventListener('click', async () => {
+  state.busy.stop = true;
+  refreshControls();
+  try {
+    const result = await api('POST', '/api/grid-stop');
+    log(result.note ?? (result.stopped ? 'Stopping the capture.' : 'No capture was running.'), result.stopped ? 'ok' : '');
+    if (result.stopped && result.note) els.gridProgress.textContent = result.note;
+  } catch (err) {
+    log(`Could not stop the capture: ${err.message}`, 'warn');
+  } finally {
+    state.busy.stop = false;
+    refreshControls();
   }
 });
 
@@ -1136,3 +1150,8 @@ els.advance?.addEventListener('click', async () => {
     els.advance.textContent = wasLabel;
   }
 });
+
+// Last, once every handler and the state above exist: the first plan, and the socket.
+selectPreset('dome');
+refreshControls();
+connectWs();

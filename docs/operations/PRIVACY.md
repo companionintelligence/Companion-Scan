@@ -57,6 +57,10 @@ A camera frame is a photograph of the inside of a home. It can show people, scre
   sent. The words are in `KEYFRAME_CONSENT_COPY` (`src/capture/keyframe-consent.ts`) and say, in short: camera photos and
   where the phone was go to your Scan server to build 3D models; photos can show people, screens and papers; they go only
   to your Scan server; turning it off stops sending at once; frames already sent stay on your server until deleted.
+  **That is not the whole story on a server where the owner has set up PhysAg3D** (section 7): a frame someone picks for a
+  `thing-interactive-asset` job also goes to the owner's agent service and GPU host, and a copy stays in a case folder on the
+  server until the frame is deleted. The words do not say so. Whether they must, and so whether `KEYFRAME_CONSENT_COPY_VERSION`
+  goes up and everyone is asked again, is a Decision (section 10).
 - **The default.** Streaming has always been **off** until a person taps Stream: that is the only start in the scanner
   (`src/main.ts`, the `#stream-btn` handler). Decision D15 makes it **on by default for a scan in a Place**. That is
   built as: on only when this device has agreed, otherwise off. A device that has not agreed, or has withdrawn, starts
@@ -129,7 +133,9 @@ The setting is the server's `KEYFRAME_RETENTION_DAYS` (`.env.example`, `server/k
 - **Side effect.** A purge removes the whole session folder, including what a job wrote there (poses, a LingBot-Map or
   COLMAP point cloud). A job that needs the frames afterwards fails with the message it already gives for a session with
   no frames ("requires RGB keyframe observations"). Files a job wrote beside the scan (`<scan>.lingbot.glb`, a splat) are
-  not in the session folder and stay until the scan is deleted.
+  not in the session folder and stay until the scan is deleted. A copy of a frame is different: a PhysAg3D case folder that
+  copied one of the session's frames (section 7) is removed, whole, before the session is, and a session whose frames a
+  `thing-interactive-asset` run is using is kept, with its copy, for the next pass. The asset made from it stays, as a splat does.
 - **It logs counts and nothing else**, for example "Retention 90 days: deleted 12 of 340 capture sessions (1.4 GB). Kept 8
   newer or undated and 3 that are a scan's own source. 0 could not be deleted." No session, scan, path or place is named.
 
@@ -137,9 +143,9 @@ The setting is the server's `KEYFRAME_RETENTION_DAYS` (`.env.example`, `server/k
 
 | Action | What it removes | Code |
 |---|---|---|
-| `DELETE /scans/:filename` | The GLB and its sidecar; the optimizer's files; **LingBot-Map's point cloud** (`.lingbot.glb`); **every file a splat job made from the scan** (`.splat.ply`, `.sog`, `.compressed.ply`, their manifests, `.interactions.json`) and a person scan's `.4d/` folder; **the folders SenseNova wrote for the scan's finished jobs** (`.sensenova/<jobId>/`); **the camera-frame sessions only that scan names**; **every world export that holds a copy of it** (`<world>.world.glb`, built again on request), found by what the export holds and not only by which worlds list the scan now, so the export of a world the scan was moved out of goes too, and so does an export that cannot be read as an export, because it cannot be shown not to hold the scan (it goes with a scan that was found: its files or camera frames, a world that lists it, or an export that names it, and the answer's `worldExports` counts every export removed; a request for a scan that is not there is a 404 and removes nothing, whatever exports are in the folder); and the scan from every world: its row, its jobs, its comments and its patches, the placement a move kept in the world it left among them. A session another scan still names is kept, and the answer says which scan holds it. **Refused (409) while a job is running on the scan** (the answer names the job); jobs still waiting for it are cancelled. A scan whose files are already gone but that a world still lists is taken out of the world | `server/scan_deletion.ts`, `server/scan_job_guard.ts`, `server/scan_world_side.ts`, `server/session_deletion.ts` |
-| `DELETE /sessions/:id` | One session's frames, poses and job output. Refused (409) for the session an upload is made from. 404 once it is gone | `server/session_deletion.ts` |
-| `DELETE /scans?confirm=delete-all` | Every scan, the files the splat and person jobs made from them, `.sensenova/`, every world export, every session, and a scan upload that was cut short; and from every world its scan rows and its scan jobs, and, for a world that held scans, every patch that is not about the whole world (a Thing's relabel is one), its comments and the origin inferred from the scans' locations. A world that holds no scan row, because every scan was moved out of it, is cleaned of what names a scan as well (the placements a move kept, the notes a move handed over, the comments on a scan) and keeps the rest. Refused (409) while a job runs on any scan. A scan still arriving keeps its file. Places and their reference photos stay | `server/scan_deletion.ts`, `server/main.ts` |
+| `DELETE /scans/:filename` | The GLB and its sidecar; the optimizer's files; **LingBot-Map's point cloud** (`.lingbot.glb`); **every file a splat job made from the scan** (`.splat.ply`, `.sog`, `.compressed.ply`, their manifests, `.interactions.json`) and a person scan's `.4d/` folder; **its interactive assets' folder** (`<scan>.interactive/`: the GLBs and delivery reports, and the PhysAg3D case folders, each with a copy of the frame it was made from); **the folders SenseNova wrote for the scan's finished jobs** (`.sensenova/<jobId>/`); **the camera-frame sessions only that scan names**, each after the PhysAg3D case folders that copied one of its frames, under `PHYSAG3D_RUNS_DIR` too; **every world export that holds a copy of it** (`<world>.world.glb`, built again on request), found by what the export holds and not only by which worlds list the scan now, so the export of a world the scan was moved out of goes too, and so does an export that cannot be read as an export, because it cannot be shown not to hold the scan (it goes with a scan that was found: its files or camera frames, a world that lists it, or an export that names it, and the answer's `worldExports` counts every export removed; a request for a scan that is not there is a 404 and removes nothing, whatever exports are in the folder); and the scan from every world: its row, its jobs, its comments and its patches, the placement a move kept in the world it left among them. A session another scan still names is kept, and the answer says which scan holds it. **Refused (409) while a job is running on the scan** (the answer names the job); jobs still waiting for it are cancelled. A scan whose files are already gone but that a world still lists is taken out of the world | `server/scan_deletion.ts`, `server/scan_job_guard.ts`, `server/scan_world_side.ts`, `server/session_deletion.ts` |
+| `DELETE /sessions/:id` | One session's frames, poses and job output, and, first, **every PhysAg3D case folder that holds a copy of one of its frames**, wherever it is (beside a scan or under `PHYSAG3D_RUNS_DIR`); the asset made from it stays until its scan is deleted. Refused (409) for the session an upload is made from. Kept, with a 500 that says to try again, while a `thing-interactive-asset` run is using its frames: a phone keeps such a session on its list and asks again, where it drops one it got a 409 for. 404 once it is gone, and a copy a first deletion could not remove goes then | `server/session_deletion.ts`, `server/physag3d/asset_files.ts` |
+| `DELETE /scans?confirm=delete-all` | Every scan, the files the splat and person jobs made from them, `.sensenova/`, every `<scan>.interactive/` folder, every world export, every session with the PhysAg3D case folders that copied its frames, and a scan upload that was cut short; and from every world its scan rows and its scan jobs, and, for a world that held scans, every patch that is not about the whole world (a Thing's relabel is one), its comments and the origin inferred from the scans' locations. A world that holds no scan row, because every scan was moved out of it, is cleaned of what names a scan as well (the placements a move kept, the notes a move handed over, the comments on a scan) and keeps the rest. Refused (409) while a job runs on any scan. A scan still arriving keeps its file. Places and their reference photos stay | `server/scan_deletion.ts`, `server/main.ts` |
 | `DELETE /projects/:id` | The Place's **reference photos**, **its world** (`worlds/project-<id>.json`: its name, latitude, longitude and street address, its Things and their observations, comments and share tokens) with the **export** built from it, and then its registry entry, in that order, so a failure (500, a fixed message) leaves a Place that can be deleted again. The notes of the scans its world still lists are handed to the Place those scans are filed under first, and the delete is refused (409, a fixed message, the Place and its world kept) while they cannot be. A world file that cannot be read (not a file that is not JSON: one that cannot be opened) stops the delete with the same 500, since it may be this Place's. The save that takes the entry out does not keep the registry it replaces as `projects.json.bak`, which still holds the Place's name, address and location: the backup is made the registry as saved, before the registry is replaced, so it holds no Place the registry does not (a failure there is the same 500, with the Place still listed). A registry that cannot be read is the exception: the backup is left as it was (see `projects.json.bak`, below). A request for that world's address afterwards builds a new world, as it does for any name; it holds none of what the Place's world held (its name, address, Things, comments or share tokens), and lists the stored scans a world for any name lists, which carry their own locations as they do in any world (see "What deletion does not do", below). Refused (409) while the Place holds any scan, an upload scan included (they have no GLB, so they were not counted before). **A Place that is not in the registry** (a merge took it out) is still answered: a world of it that is left, with its export, and its reference photos, are removed (200, `worldsRemoved`), after the notes of the scans that world still lists have been handed to the Place those scans are filed under; refused (409, a fixed message, the world kept as it is) while they cannot be, and 404 when nothing of the Place is left. Only a world that says it is that Place's is touched, and none is while the registry cannot be read (an unreadable registry reads every Place as gone: the answer is the 500 and nothing is removed) | `server/main.ts`, `server/place_deletion.ts`, `server/wp-a-projects.ts` |
 | `POST /projects/:id/merge` | The merged-away Place's **reference photos**, first; its registry entry (the registry's backup is made the registry as saved, as above); and, after the scans have been filed under the target and their notes handed to its world (ADR 0011), the merged-away Place's **world and its export**. The answer says `sourceWorldRemoved`: `false` when the world was kept, because a scan is still listed in it (its hand-over is waiting for the other world, or it is an upload with no GLB yet, which a merge never moves), because a job is queued or running in it, because a scan's record still names the Place, or because the registry cannot be read. Asking for the same merge again removes it once nothing is in the way; `DELETE /projects/<the merged-away id>` removes it unless a scan's record still names the Place or the notes of a scan with a file are waiting to be handed over (409 in both). A world that cannot be removed is a 500 with a fixed message, the Places stay merged, and the same request finishes it. The placements a person set by hand over a scan against the merged-away world's origin (ADR 0011 keeps them in that world, and the answer says `handOver.placementsKept` while the world stays) go with the world: the answer does not report them as kept, and counts them as `placementsRemoved`, from the world's own file as it is removed, so a repeat of the merge counts them too | `server/main.ts`, `server/place_deletion.ts` |
 
@@ -190,16 +196,17 @@ once what is in it has been handed over.
   Place it can find there, the default Place, does not replace it. In that case the backup can still hold the default Place's record. The
   `.corrupt-<time>` copy is the owner's: it holds whatever Places the unreadable file held, no deletion reads, changes or removes it, and it stays
   until the owner removes it.
-- **A world that has gone is built again when its address is asked for** (a stale link, an open editor tab). The new world holds none of what the Place's
-  world held (its name, address, Things, comments or share tokens), and it lists up to 24 of the stored scans that no Place holds (the ones that look like
-  scans) or, when there are none, up to eight of the stored scans of any Place, which carry their own locations as they do in any world: a world for any
-  name does, and `GET /worlds/<slug>` answers a request that carries no token. That is how the server builds a world with no Place, and a deletion does
-  not change it.
+- **A world that has gone is not built again** when its address is asked for (a stale link, an open editor tab). Since wave 14 a `GET /worlds/<slug>`
+  for a world with no file answers 404, except `default` and the `project-<id>` world of a Place still in the registry. Until then the server built and
+  saved a new world for any address, listing stored scans with their locations, and answered a request that carried no token.
 - **SenseNova folders** are found through the scan's jobs in its worlds. The folder of a job that has aged out of a world's job history is
   not found by a single-scan delete; "clear all scans" removes the whole `.sensenova/` folder.
 - No button in the editor or the scanner calls `DELETE /scans/:filename` today. The only in-app deletion of server data is
   "Delete frames this phone sent". Wiring "Delete from server" into the scan list is a UI task (Decision: where).
 - The phone's own copy (the history drawer, "Clear session") is separate: its confirm already says copies on the server stay.
+- **What a PhysAg3D run sent off the server** (section 7): the frame and the prompt the owner's agent service received, and what the
+  GPU host received and made. No deletion here reaches them. Nor does one stop a PhysAg3D worker that outlived the server's time
+  limit for its run (it runs in a session of its own): until it is stopped by hand it can write into its case folder again.
 - Copies a person made are theirs: a downloaded GLB, a shared export, and anything pushed to Companion Memory.
 - Backups of the server's disk are the owner's.
 
@@ -213,13 +220,13 @@ an open question (DX9).
 
 ## 7. Third parties
 
-The camera frames themselves go to your Scan server and to no other host: the server runs LingBot-Map, COLMAP, Brush and the other
-jobs as local tools, and no server module sends a keyframe elsewhere. The app does contact other services, and the brief for this note
-said there are none. That is not so:
+The camera frames themselves go to your Scan server, and by default to no other host: the server runs LingBot-Map, COLMAP, Brush and
+the other jobs as local tools, and no server module sends a keyframe elsewhere unless the owner sets up PhysAg3D (below). The app does
+contact other services, and the brief for this note said there are none. That is not so:
 
 | Service | What it receives | When | Code |
 |---|---|---|---|
-| **OpenStreetMap Nominatim** (`nominatim.openstreetmap.org`) | The phone's latitude and longitude, to six decimal places (about 0.1 m), the page's origin as Referer, and a fixed User-Agent | Each address lookup, once a GPS fix exists. The iOS location prompt says the app "looks up its street address" | `src/geo/geo-tracker.ts` (documented there as F117) |
+| **OpenStreetMap Nominatim** (`nominatim.openstreetmap.org`) | The phone's latitude and longitude, to six decimal places (about 0.1 m), the page's origin as Referer, and a fixed User-Agent | Each address lookup, once a GPS fix exists and this device has answered yes to the one-time card that asks whether to look up the street address (the answer is kept under `companion-scan-geocode-consent`; a no sends nothing, and a different geocoder host is asked again). The iOS location prompt says the app "looks up its street address" | `src/geo/geo-tracker.ts` (documented there as F117) |
 | **Google Fonts** (`fonts.googleapis.com`, `fonts.gstatic.com`) | The device's IP address and user agent, to serve the Manrope typeface | When a page loads, unless offline | `index.html`, `viewer.html` |
 | **CARTO map tiles** (`basemaps.cartocdn.com`) | Which map tiles are requested, so roughly where the map is centred, and the IP address | When the history drawer's map or the editor's map is shown | `src/main.ts`, `src/viewer/geomap.ts` |
 | **Google Play Services for AR (ARCore)**, Android app only | Whatever Google's service collects, under Google's privacy policy | While AR runs | Disclosed in the app's Legal notices (`src/ui/legal-notices.ts`) |
@@ -232,6 +239,25 @@ Optional, and only if the owner turns them on: Companion Account sign-in with th
 reconstruction on the host named by `FDANYONE_HOST`, which receives the person clip; and the model host in `OLLAMA_HOST`, which
 receives each capture photo for detection and defaults to the same machine. Frames sent to a model host the owner
 points at a hosted API would be a 5.1.2(i) disclosure; nothing in the code does so by default.
+
+**PhysAg3D, when the owner sets it up** (`PHYSAG3D_DIR` and `PHYSAG3D_CONFIG`, `server/physag3d/physag3d.ts`,
+`docs/pipelines/physag3d.md`). Nothing goes anywhere until someone with a Place's editor token requests a
+`thing-interactive-asset` job naming one keyframe; the server never queues one by itself. Then that one keyframe goes to:
+
+- **the owner's PhysAg3D controller**: `execute.py` and the agent worker it starts, which the server runs on its own machine as
+  its own user. The worker has a shell there; what stops it reading other files is only its instructions, not the server;
+- **the controller's agent service**: the owner's Codex CLI with the owner's own ChatGPT login, so OpenAI's service under the
+  owner's account and its terms, with the prompt (which names the case folder's path on the server). This is a hosted model
+  receiving a camera frame: a 5.1.2(i) disclosure;
+- **the controller's GPU host**: the generation host the PhysAg3D config names, over SSH, into a folder per run.
+
+How long the copy is kept. On the server, the frame is copied into a case folder (with the images the agent makes from it), and
+that case folder is removed **before** the frame itself whenever the frame goes: `DELETE /sessions/:id`, the retention purge,
+deleting the scan, and clearing all scans (`removeSessionCaseCopies`, `server/physag3d/asset_files.ts`). While a run is using the
+frame, those deletions keep the frame and its copy and say to try again (a phone asks again; the purge takes it on its next pass).
+The asset made from it (a GLB and a delivery report) stays until the scan is deleted, as a splat made from the frames does. Off the
+server, the agent service and the GPU host keep what they received for as long as their own terms and the owner's setup do:
+nothing on the server can delete it, and no deletion here reaches it.
 
 No camera, depth or ARKit data is used for advertising, marketing or data mining (5.1.2(vi)), and none is sold or shared for
 tracking: there is no code that does either.
@@ -264,7 +290,9 @@ the developer hosts):
 `PrivacyInfo.xcprivacy` is drafted (`mobile/ios/App/App/`, in the Xcode project's Resources) with no collected data types and an empty list of required-reason API declarations; the draft's comment lists what the owner must decide (`mobile/README.md`, Not done).
 
 **Google Play Data safety:** the same rows. Data shared with third parties: precise location (Nominatim, to look up an address),
-and the approximate map area (CARTO). Camera frames are not shared. Encryption in transit follows the server's HTTPS (Tailscale
+and the approximate map area (CARTO). Camera frames are not shared, except on a server whose owner has set up PhysAg3D: there a
+frame someone picks for a `thing-interactive-asset` job is shared with the owner's agent service and GPU host (section 7), and the
+answer must say so. Encryption in transit follows the server's HTTPS (Tailscale
 certificates); the app refuses a plain-http Scan server address (`src/ui/server-setting.ts`). Deletion: the routes in section 5;
 there is no account to delete.
 
@@ -280,3 +308,4 @@ there is no account to delete.
 | Counsel's read of the engine licence and of section 7 (D16) | Counsel | Gates every listing |
 | Whether the engine contacts a Niantic service; the OS camera indicator; a `?debug=remote`-free run of the whole scan flow with a network log | Device | A phone and a proxy log |
 | When server registration starts to use camera frames to line scans up, the consent words change and `KEYFRAME_CONSENT_COPY_VERSION` becomes 2 | Engineering | Before WP-15b slice 2 ships |
+| Whether the consent words ("they go only to your Scan server") must name PhysAg3D, which sends a picked frame to the owner's agent service and GPU host when it is set up (sections 3 and 7), and so raise `KEYFRAME_CONSENT_COPY_VERSION` | Owner | Decision, before an owner whose phones stream frames turns PhysAg3D on |

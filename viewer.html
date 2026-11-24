@@ -454,6 +454,18 @@
       }
       .scan-calibration-note[data-tone="warn"] { color: #ffb74d; }
 
+      /* The Advanced queue's line under its select: whether the job runs on the selected scan or the whole Place. */
+      #job-type-hint { margin: 6px 0 8px; }
+      #job-type-hint[data-tone="warn"] { color: #ffb74d; }
+
+      /* The Edit tab's hidden objects, each with Show (src/viewer/viewer.ts, renderHiddenObjects). */
+      .hidden-object-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; padding: 6px 0; border-top: 1px solid rgba(255,255,255,0.06); font-size: 11px; }
+      .hidden-object-row:first-child { border-top: 0; }
+      .hidden-object-name { color: #fff; font-weight: 600; overflow-wrap: anywhere; }
+      .hidden-object-row small { grid-column: 1; color: rgba(255,255,255,0.5); }
+      .hidden-object-row .job-btn { grid-column: 2; grid-row: 1 / span 2; }
+      #hidden-objects-section[hidden], #world-export-section[hidden], #sensenova-files[hidden], #world-export-detail[hidden] { display: none; }
+
       /* Which reference a scan was made against (src/viewer/frame-banner.ts): a chip on the row, a banner, and the Previous reference layer. */
       .frame-banner { margin: 8px 10px; padding: 8px 10px; border: 1px solid rgba(255,183,77,0.35); border-radius: 8px; background: rgba(255,183,77,0.08); color: rgba(255,255,255,0.85); font-size: 11px; line-height: 1.45; }
       .frame-banner[hidden] { display: none; }
@@ -1392,15 +1404,11 @@
           border-bottom: 1px solid rgba(255,255,255,0.07);
         }
 
-        /* Both are pure vertical cost on a phone: #sidebar-header repeats the
-           product name the top toolbar already carries, and the collapse chevron
-           is parked 28 px outside a now-full-width sidebar, where #main-area's
-           `overflow: hidden` clips it — an invisible control paying for a 33 px
-           bar. Dropping them hands that height to the canvas. */
-        #sidebar-header,
-        #sidebar-collapse-btn {
-          display: none;
-        }
+        /* #sidebar-header and #sidebar-collapse-btn are not hidden here. The
+           phone bottom-sheet block further down (the second max-width: 720px
+           rule) shows both, the header as the sheet's title bar and the button
+           inside its top-right corner, and as the later rule it always won: a
+           display: none here only read as if it applied (FN-073). */
 
         .sidebar-tab {
           padding: 9px 4px;
@@ -2436,7 +2444,7 @@
             <summary>Navigate</summary>
             <div class="workspace-menu-panel">
               <span class="workspace-menu-heading">Workspace destinations</span>
-              <a href="/" class="workspace-menu-link"><span>Scan a Place</span><small>Start a camera scan or upload media.</small></a>
+              <a href="/" id="scan-place-link" class="workspace-menu-link"><span>Scan a Place</span><small>Start a camera scan or upload media.</small></a>
               <a href="/webxr.html" id="webxr-link" class="workspace-menu-link"><span>WebXR scanner</span><small>Open the browser-based WebXR scan view.</small></a>
               <div class="workspace-menu-divider" aria-hidden="true"></div>
               <a id="account-chip" href="/authenticate/oidc?redirect=/editor" title="Connect your Companion Intelligence Portal account">Connect account</a>
@@ -2571,6 +2579,12 @@
                 </div>
               </div>
 
+              <div class="edit-section" id="world-export-section" hidden>
+                <div class="edit-section-title">World export</div>
+                <a id="world-export-link" class="job-btn" download style="display:block;text-align:center;text-decoration:none;">Download world GLB</a>
+                <div class="layer-meta" id="world-export-detail" style="margin-top:6px;" hidden></div>
+              </div>
+
               <div class="edit-section" id="register-proposals-section" hidden>
                 <div class="edit-section-title">Alignment checks</div>
                 <div class="layer-meta" style="margin-bottom:8px;">Compares a scan's walls with the Place's other scans. Nothing moves until you press Apply.</div>
@@ -2595,6 +2609,7 @@
                   <option value="export-world">Export world</option>
                   <option value="place-register">Alignment check (proposes a move)</option>
                 </select>
+                <div class="layer-meta" id="job-type-hint" role="status" aria-live="polite"></div>
                 <button class="job-btn" id="btn-queue-job" style="width:100%;">Queue Job</button>
                 <div id="job-list" style="margin-top:8px;">
                   <div class="layer-meta">No jobs queued yet.</div>
@@ -2696,6 +2711,7 @@
                 <input type="text" id="sensenova-query" placeholder="Optional labels, e.g. bed, chair, table"
                   style="width:100%;box-sizing:border-box;margin-bottom:6px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;font-size:11px;padding:7px 8px;outline:none;" />
                 <button class="job-btn" id="btn-sensenova-run" style="width:100%;">Run SenseNova</button>
+                <div id="sensenova-files" class="layer-meta" style="margin-top:6px;overflow-wrap:anywhere;" hidden></div>
                 </div>
               </details>
 
@@ -2789,6 +2805,12 @@
               <div id="edit-save-status" role="status" aria-live="polite" style="font-size:11px;min-height:0;margin:0 0 8px;"></div>
               <div class="no-selection-msg" id="edit-no-selection">
                 Click a scan or object in the viewport to move it, label it, and assign semantic categories.
+              </div>
+
+              <!-- Objects a Hide patch took out of the scene. They cannot be clicked, so this list is the way back. -->
+              <div class="edit-section" id="hidden-objects-section" hidden>
+                <div class="edit-section-title">Hidden objects</div>
+                <div id="hidden-objects-list"></div>
               </div>
 
               <!-- Inspector: shown when an object is selected -->
@@ -2988,70 +3010,7 @@
       </div>
     </div>
 
-    <script>
-      // Keep the left rail focused on navigation. Existing panels move without
-      // recreating their controls, so event bindings and current tool state stay intact.
-      (() => {
-        const host = document.getElementById('details-panel-host');
-        if (!host) return;
-        for (const name of ['world', 'layers', 'edit']) {
-          const panel = document.getElementById(`tab-${name}`);
-          if (!panel) continue;
-          panel.classList.remove('sidebar-panel', 'active');
-          panel.classList.add('details-panel');
-          host.appendChild(panel);
-        }
-
-        const layerInfo = document.getElementById('sidebar-layer-info');
-        const layersPanel = document.getElementById('layers-panel-content');
-        if (layerInfo && layersPanel) {
-          // Put the active scan's read-most-used visual controls beside navigation.
-          const mapQuality = document.getElementById('quality-section');
-          const sceneLayers = layersPanel.querySelector(':scope > details.layer-tool');
-          if (mapQuality) layerInfo.appendChild(mapQuality);
-          if (sceneLayers) layerInfo.appendChild(sceneLayers);
-        }
-      })();
-    </script>
+    <!-- The drawer layout and the collapse buttons are src/viewer/editor-layout.ts, which viewer.ts runs first. -->
     <script type="module" src="/src/viewer/viewer.ts"></script>
-    <script>
-      // The reopen tab sits outside the clipped sidebar, so the drawer always
-      // remains recoverable after being collapsed.
-      const sidebar = document.getElementById('sidebar');
-      const collapseButton = document.getElementById('sidebar-collapse-btn');
-      const reopenTab = document.getElementById('sidebar-reopen-tab');
-      const setSidebarCollapsed = (collapsed) => {
-        if (!sidebar || !collapseButton || !reopenTab) return;
-        sidebar.classList.toggle('collapsed', collapsed);
-        collapseButton.textContent = collapsed ? '▶' : '◀';
-        collapseButton.setAttribute('aria-expanded', String(!collapsed));
-        reopenTab.setAttribute('aria-expanded', String(!collapsed));
-        // Trigger Three.js resize after the width transition completes.
-        setTimeout(() => window.dispatchEvent(new Event('resize')), 250);
-      };
-      collapseButton?.addEventListener('click', () => setSidebarCollapsed(!sidebar?.classList.contains('collapsed')));
-      reopenTab?.addEventListener('click', () => setSidebarCollapsed(false));
-
-      const detailsDrawer = document.getElementById('details-drawer');
-      const detailsCollapseButton = document.getElementById('details-collapse-btn');
-      const detailsReopenTab = document.getElementById('details-reopen-tab');
-      const setDetailsCollapsed = (collapsed) => {
-        if (!detailsDrawer || !detailsCollapseButton || !detailsReopenTab) return;
-        detailsDrawer.classList.toggle('collapsed', collapsed);
-        detailsCollapseButton.textContent = collapsed ? '◀' : '▶';
-        detailsCollapseButton.setAttribute('aria-expanded', String(!collapsed));
-        detailsReopenTab.setAttribute('aria-expanded', String(!collapsed));
-        setTimeout(() => window.dispatchEvent(new Event('resize')), 250);
-      };
-      detailsCollapseButton?.addEventListener('click', () => setDetailsCollapsed(!detailsDrawer?.classList.contains('collapsed')));
-      detailsReopenTab?.addEventListener('click', () => setDetailsCollapsed(false));
-
-      const layerInfo = document.getElementById('sidebar-layer-info');
-      document.querySelectorAll('.sidebar-tab').forEach((button) => {
-        button.addEventListener('click', () => {
-          if (layerInfo) layerInfo.hidden = button.dataset.tab !== 'layers';
-        });
-      });
-    </script>
   </body>
 </html>

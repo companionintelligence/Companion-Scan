@@ -4,8 +4,9 @@ A Scan server installed from the Companion App Store, on a Companion Hub, finds
 three things without anyone typing a URL or a key: the Companion Account it signs
 people in with, the Companion Memory it pushes finished scans to, and the vision
 model it asks to find objects. This page covers where each one comes from and what
-must be true for sign-on to work. The first-run rows, their copy and the settings
-table are in the README's [First-run setup status and settings](../../README.md#first-run-setup-status-and-settings).
+must be true for sign-on to work. The first-run rows and their copy are in the README's
+[First-run setup status and settings](../../README.md#first-run-setup-status-and-settings), and
+the settings table is in [Settings the server reads](../../README.md#settings-the-server-reads).
 
 ## What the Hub provides
 

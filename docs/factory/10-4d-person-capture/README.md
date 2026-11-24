@@ -36,19 +36,19 @@ Probed on the tailnet, 2026-08-24:
 
 | Host | GPU | VRAM per device |
 | --- | --- | --- |
-| `beta-1` | 2× Radeon RX 7900 XTX, ROCm 6.4.0-47, no CUDA | **23.98 GiB** |
-| `beta-red` | RTX 3080 | 10 GiB |
-| `beta-max`, `bench-1`, `core-1`, `beta-ms-a2` | none usable | — |
+| the ROCm host | 2× Radeon RX 7900 XTX, ROCm 6.4.0-47, no CUDA | **23.98 GiB** |
+| the RTX 3080 host | RTX 3080 | 10 GiB |
+| four other hosts | none usable | — |
 | `razer-3` | unreachable (Windows; SSH rejects key auth) | — |
 
-Nothing on the fleet can run it: it needs ~1.8× beta-1's per-device VRAM, diffusion inference
+Nothing on the fleet can run it: it needs ~1.8× the ROCm host's per-device VRAM, diffusion inference
 does not shard across two cards, and the stack is CUDA (FlashAttention-3, GVHMR, ViTPose,
 SMPL-X) against an AMD fleet. Upstream's own TODO lists "Low-memory inference (<32 GB)" as
 **not done**, and even that would not fit in 24 GiB.
 
 `razer-3` could not be probed — it is a Windows host and rejects key-based SSH. It is recorded
 as unmeasured rather than assumed, but it does not change the conclusion: the largest mobile
-GPU shipped in any Razer Blade is 24 GB, which is the same wall `beta-1` hits. **If a host with
+GPU shipped in any Razer Blade is 24 GB, which is the same wall the ROCm host hits. **If a host with
 ≥44 GiB on one CUDA device is added to the tailnet, nothing in this wave needs to change** —
 point `FDANYONE_HOST` at it (ticket 0005) and the skip path becomes the real path.
 

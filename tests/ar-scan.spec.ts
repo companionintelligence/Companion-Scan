@@ -17,9 +17,9 @@ import { test, expect, type Page } from '@playwright/test'
 import { ONBOARDING_KEY } from '../src/shared/storage-keys'
 import { dismissPlacePicker } from './support/start-scan'
 
-// 5173 here is just the last-resort default (matches VITE_PORT's own default in
-// main.ts/vite.config.ts). Set VITE_URL to point at a differently-ported instance.
-const BASE_URL = process.env['VITE_URL'] ?? 'https://liambook.capybara-ulmer.ts.net:5173'
+// A neutral last-resort default: localhost on VITE_PORT's own default (vite.config.ts). Set VITE_URL to the
+// Vite server the specs should drive, as playwright.config.ts's projects do.
+const BASE_URL = process.env['VITE_URL'] ?? 'https://localhost:5173'
 
 test.beforeEach(async ({ context }) => {
   await context.addInitScript((key) => {
@@ -56,7 +56,8 @@ test.describe('App loads', () => {
     await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
     await expect(page.locator('#start-title')).toHaveText('Spatial Memory')
     await expect(page.locator('#start-ar-btn')).toBeVisible()
-    await expect(page.locator('#start-ar-btn')).toContainText('Scan a room')
+    // The method's title, as renderCaptureChoice() writes it for the default subject (a room).
+    await expect(page.locator('#start-ar-btn')).toContainText('Walk the room')
   })
 
   test('status bar is visible and initialising', async ({ page }) => {
@@ -287,9 +288,10 @@ test.describe('3D Viewer page', () => {
     await expect(scanList).toBeVisible()
   })
 
-  test('viewer back link points to root', async ({ page }) => {
+  test('the editor links back to the scanner', async ({ page }) => {
     await page.goto(`${BASE_URL}/viewer.html`, { waitUntil: 'domcontentloaded' })
-    const link = await page.locator('#back-link').getAttribute('href')
+    // #back-link is gone; the workspace menu's "Scan a Place" row is the way back now (viewer.html).
+    const link = await page.locator('a.workspace-menu-link', { hasText: 'Scan a Place' }).getAttribute('href')
     expect(link).toBe('/')
   })
 
@@ -624,7 +626,14 @@ test.describe('Viewer new controls', () => {
     await page.waitForTimeout(1500)
   })
 
-  test('live feed button is present in viewer toolbar', async ({ page }) => {
+  /** The live feed is experimental: #btn-livefeed ships hidden unless the build sets VITE_ENABLE_WEBRTC_LIVE=true. */
+  async function liveFeedOn(page: Page): Promise<boolean> {
+    return page.locator('#btn-livefeed').isVisible()
+  }
+
+  test('live feed button is in the toolbar, and shown only when live view is built in', async ({ page }) => {
+    await expect(page.locator('#btn-livefeed')).toHaveCount(1)
+    test.skip(!(await liveFeedOn(page)), 'live view is off in this build (VITE_ENABLE_WEBRTC_LIVE)')
     await expect(page.locator('#btn-livefeed')).toBeVisible()
   })
 
@@ -632,11 +641,14 @@ test.describe('Viewer new controls', () => {
     await expect(page.locator('#btn-toggle-bounds')).toBeVisible()
   })
 
-  test('geomap button is present', async ({ page }) => {
-    await expect(page.locator('#btn-geomap')).toBeVisible()
+  test('the GIS map toggle is in the Views menu', async ({ page }) => {
+    // #btn-geomap is gone: the map is a row of the Views menu now (#view-toggle-map).
+    await page.locator('#view-menu > summary').click()
+    await expect(page.locator('#view-toggle-map')).toBeVisible()
   })
 
   test('clicking live feed button shows live feed panel', async ({ page }) => {
+    test.skip(!(await liveFeedOn(page)), 'live view is off in this build (VITE_ENABLE_WEBRTC_LIVE)')
     // Panel should not be visible initially
     const initialDisplay = await page.locator('#livefeed-panel').evaluate(
       (el) => window.getComputedStyle(el).display
@@ -650,8 +662,9 @@ test.describe('Viewer new controls', () => {
     expect(afterDisplay).not.toBe('none')
   })
 
-  test('clicking geomap opens a usable map drawer', async ({ page }) => {
-    await page.locator('#btn-geomap').click()
+  test('turning on the GIS map opens a usable map drawer', async ({ page }) => {
+    await page.locator('#view-menu > summary').click()
+    await page.locator('#view-toggle-map').check()
     await expect(page.locator('#geomap-drawer')).toBeVisible()
     await expect(page.locator('.leaflet-container')).toBeVisible({ timeout: 5000 })
     const hasPinsOrEmptyState = await page.evaluate(() => {
@@ -696,7 +709,8 @@ test.describe('Scan review edit export flow', () => {
     await expect(page.locator('#panel-export-glb-btn')).toBeVisible()
     await expect(page.locator('#panel-export-summary-btn')).toBeVisible()
     await expect(page.locator('#panel-clear-session-btn')).toBeVisible()
-    await expect(page.locator('#panel-stream-btn')).toBeVisible()
+    // The live-stream button is removed unless live view is built in (VITE_ENABLE_WEBRTC_LIVE), like the editor's.
+    if (await page.locator('#panel-stream-btn').count() > 0) await expect(page.locator('#panel-stream-btn')).toBeVisible()
   })
 
   test('autosave status is visible before scanning', async ({ page }) => {

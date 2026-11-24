@@ -27,6 +27,7 @@
  */
 import { apiBase, apiCredentials, apiUrl } from '../shared/api-base.ts'
 import { BASEMAP_CONSENT_KEY } from '../shared/storage-keys.ts'
+import { browserConsentStorage, readConsent, writeConsent, type ConsentAnswer, type ConsentStorage } from './consent.ts'
 import {
   attributionHtml,
   basemapStatusText,
@@ -63,36 +64,20 @@ const CHECK_TIMEOUT_MS = 8_000
 const CHECK_MAX_BYTES = 1 << 20
 
 // ── The per-device answer ─────────────────────────────────────────────────────
+//
+// The answer's shape and its storage are ./consent.ts's, which the reverse geocoder's question uses too, under its own
+// key. They are exported from here as well, under the names this module has always given them.
 
-/** What the answer needs of localStorage. */
-export interface ConsentStorage {
-  getItem(key: string): string | null
-  setItem(key: string, value: string): void
-}
+export type { ConsentAnswer, ConsentStorage }
 
-/** A device's answer to "show map tiles from this host?". */
-export interface ConsentAnswer {
-  host: string
-  allowed: boolean
-}
-
-/** The saved answer, or null when there is none, it is unreadable, or storage is blocked. */
+/** The saved answer to "show map tiles from this host?", or null when there is none, it is unreadable, or storage is blocked. */
 export function readAnswer(storage: ConsentStorage | null): ConsentAnswer | null {
-  try {
-    const raw = storage?.getItem(BASEMAP_CONSENT_KEY)
-    if (!raw) return null
-    const saved = JSON.parse(raw) as { host?: unknown; allowed?: unknown } | null
-    return typeof saved?.host === 'string' && typeof saved.allowed === 'boolean' ? { host: saved.host, allowed: saved.allowed } : null
-  } catch {
-    return null
-  }
+  return readConsent(storage, BASEMAP_CONSENT_KEY)
 }
 
 /** Saves the answer. Blocked storage (a private window) loses it: the page keeps it until it closes. */
 export function writeAnswer(storage: ConsentStorage | null, answer: ConsentAnswer): void {
-  try {
-    storage?.setItem(BASEMAP_CONSENT_KEY, JSON.stringify(answer))
-  } catch { /* blocked or full */ }
+  writeConsent(storage, BASEMAP_CONSENT_KEY, answer)
 }
 
 // ── What the page supplies ────────────────────────────────────────────────────
@@ -144,13 +129,7 @@ export async function fetchTileSample(url: string): Promise<TileSample | null> {
   }
 }
 
-function browserStorage(): ConsentStorage | null {
-  try {
-    return globalThis.localStorage ?? null
-  } catch {
-    return null
-  }
-}
+const browserStorage = browserConsentStorage
 
 function defaultDeps(): BasemapDeps {
   return {

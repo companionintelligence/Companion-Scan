@@ -17,7 +17,7 @@
 import * as THREE from 'three'
 // Explicit extensions: the Node unit tests load this file directly, and Node's
 // ESM resolver does not add `.ts` the way Vite does. types.ts does the same.
-import { ANCHOR_RADIUS_M } from './anchor-marker.ts'
+import { ANCHOR_RADIUS_M, ringVertices } from './anchor-marker.ts'
 import type { OriginDecalPlan } from './geo.ts'
 
 /** Which decal this is. Both are drawn in the same language; only emphasis and name differ. */
@@ -81,16 +81,8 @@ export function buildOriginDecal(plan: OriginDecalPlan, emphasis: OriginDecalEmp
   const compassDim = plan.northYawDeg == null ? NO_COMPASS_OPACITY : 1
   const ringOpacity = scale * compassDim
 
-  const ringVertices: number[] = []
-  for (let i = 0; i < RING_SEGMENTS; i++) {
-    const a0 = (i / RING_SEGMENTS) * Math.PI * 2
-    const a1 = ((i + 1) / RING_SEGMENTS) * Math.PI * 2
-    ringVertices.push(
-      Math.cos(a0) * ANCHOR_RADIUS_M, 0, Math.sin(a0) * ANCHOR_RADIUS_M,
-      Math.cos(a1) * ANCHOR_RADIUS_M, 0, Math.sin(a1) * ANCHOR_RADIUS_M,
-    )
-  }
-  group.add(lineSegments(ringVertices, RING_COLOR, ringOpacity, 'origin ring'))
+  // The anchor decal's own ring arithmetic (./anchor-marker.ts), at the decal's segment count (FN-086).
+  group.add(lineSegments(ringVertices(ANCHOR_RADIUS_M, RING_SEGMENTS), RING_COLOR, ringOpacity, 'origin ring'))
 
   const R = ANCHOR_RADIUS_M
   group.add(lineSegments(

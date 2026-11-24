@@ -69,7 +69,7 @@
  */
 
 import type { ScanCalibration, SplatAlignManifest } from '../../src/world/types.ts'
-import { isServerSessionId } from '../../src/shared/session-id.ts'
+import { isValidSessionDir } from '../run_with_deadline.ts'
 import {
   type DistanceMeasurement,
   readSolveGravity,
@@ -801,11 +801,8 @@ export function transpose4(m: number[]): number[] {
   return out
 }
 
-/** Shares `SESSION_ID_RE` with the other drivers rather than re-deriving it. */
-export function isValidSessionDir(sessionDir: string): boolean {
-  const base = sessionDir.split('/').filter(Boolean).pop() ?? ''
-  return isServerSessionId(base)
-}
+/** The shared session-dir check (server/run_with_deadline.ts), re-exported under the name this module always had. */
+export { isValidSessionDir }
 
 /**
  * `<base>.splat-align.manifest.json` beside the splat when there is one (the

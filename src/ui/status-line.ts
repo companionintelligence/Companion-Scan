@@ -16,9 +16,10 @@
  * STATUS_HOLD_MS, and an ordinary write during that window is dropped rather
  * than queued — a stale tick has nothing worth saying later.
  *
- * Hold state is keyed on the element, not on a writer, because both writers
- * (`AROverlay` and main.ts's `setupStatusOverlay()` shim) target the same node
- * and `setupStatusOverlay()` returns a fresh object per call.
+ * Hold state is keyed on the element, not on a writer, because every writer
+ * targets the same node: main.ts's `setupStatusOverlay()` shim, which returns a
+ * fresh object per call, and src/pwa.ts's queue notices. Nothing writes
+ * `#status-text.textContent` directly (FN-010); a direct write would skip the hold.
  */
 
 /** How long a sticky message owns the status line, in ms. */

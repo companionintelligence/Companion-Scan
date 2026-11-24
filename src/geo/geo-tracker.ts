@@ -7,7 +7,8 @@
  *   - Samples DeviceOrientationEvent for the compass bearing, from magnetic north: where the back camera
  *     points on Android, the platform's own heading on iOS (see ./compass-heading.ts)
  *   - Caches the most-recent fix in memory and in sessionStorage
- *   - Reverse-geocodes via Nominatim (OSM) — no API key required
+ *   - Reverse-geocodes via Nominatim (OSM) — no API key required — once this
+ *     device has said yes to it (./geocode-consent.ts): no answer, no request
  *   - Exposes `snapshot()` for all consumers to grab the current geo context
  *
  * Usage:
@@ -26,6 +27,7 @@ import {
   type PairedCompass,
 } from './compass-heading.ts'
 import type { Quat } from '../world/types.ts'
+import { GEOCODER_HOST, pageGeocodeConsent, type GeocodeConsent } from './geocode-consent.ts'
 
 export interface GeoFix {
   /** WGS-84 latitude */
@@ -75,10 +77,14 @@ export interface AddressComponents {
  * geocoder, a third party and not the Scan server. The request also sets Accept-Language and
  * User-Agent ('ci-spatial/1.0') headers (see _geocode), and by default the browser sends the page's
  * origin as Referer. No account, token or Scan cookie goes with it. The four-decimal lookup
- * cell is never sent. Still open, each needing a product decision: a disclosure the user sees (no
- * copy exists yet), and a coarser request in place of six decimal places. The provider is unchanged.
+ * cell is never sent.
+ *
+ * Nothing is sent until this device has said yes (wave 14, F-08): the first lookup asks once, with a
+ * card that names the host and what goes to it (./geocode-consent.ts), and a no is kept and never
+ * asked again. Still open, for a product decision: a coarser request in place of six decimal places.
+ * The provider is unchanged.
  */
-const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/reverse'
+const NOMINATIM_URL = `https://${GEOCODER_HOST}/reverse`
 const SESSION_KEY   = GEO_FIX_SESSION_KEY
 /** After a failed lookup a cell waits 5 s, then 10 s, 20 s and so on, up to five minutes. */
 const LOOKUP_RETRY_BASE_MS = 5_000
@@ -119,6 +125,14 @@ export class GeoTracker {
   private _sample: CompassSample | null = null
   private _watchId: number | null = null
   private _orientationBound = false
+  /** The orientation handler while it is attached to the window, so `stop()` can take it off again (FN-050). */
+  private _orientationHandler: EventListener | null = null
+  /** Whether this device lets the lookups go to the geocoder at all (./geocode-consent.ts). */
+  private readonly _geocodeConsent: GeocodeConsent
+  /** The answer given on this page: storage that cannot keep it (a private window) must not mean asking again. */
+  private _geocodeAnswer: boolean | null = null
+  /** The question while it is on screen, so the fixes that arrive meanwhile wait for one answer. */
+  private _geocodeAsking: Promise<boolean> | null = null
   /** Address fields per cell, from lookups that answered. */
   private _geocodeCache = new Map<string, AddressFields>()
   /** Cells with a lookup on the wire. A cell never has two at once. */
@@ -127,8 +141,13 @@ export class GeoTracker {
   private _lookupFailures = new Map<string, { count: number, retryAt: number }>()
   private _onUpdate: ((fix: GeoFix) => void) | null = null
 
-  constructor(options: { compassRule?: CompassRule } = {}) {
+  /**
+   * `geocodeConsent` is what the address lookups ask first: by default this page's (localStorage for the answer, a card
+   * on the document for the question). No answer means no request.
+   */
+  constructor(options: { compassRule?: CompassRule; geocodeConsent?: GeocodeConsent } = {}) {
     this._compassRule = options.compassRule ?? 'attitude'
+    this._geocodeConsent = options.geocodeConsent ?? pageGeocodeConsent()
   }
 
   /** Callback invoked whenever the fix updates (position, bearing, or address) */
@@ -253,12 +272,20 @@ export class GeoTracker {
     })
   }
 
-  /** Stop watching GPS and orientation */
+  /** Stop watching GPS and orientation. A later `start()` listens again. */
   stop(): void {
     if (this._watchId !== null) {
       navigator.geolocation.clearWatch(this._watchId)
       this._watchId = null
     }
+    // The orientation listeners go too (FN-050): they used to stay on the window after a stop, reading the sensor for
+    // nobody, and a second start() could not add them again.
+    if (this._orientationHandler) {
+      window.removeEventListener('deviceorientationabsolute', this._orientationHandler)
+      window.removeEventListener('deviceorientation', this._orientationHandler)
+      this._orientationHandler = null
+    }
+    this._orientationBound = false
   }
 
   /**
@@ -310,8 +337,31 @@ export class GeoTracker {
       }
     }
 
-    window.addEventListener('deviceorientationabsolute', handler as EventListener, { passive: true })
-    window.addEventListener('deviceorientation', handler as EventListener, { passive: true })
+    this._orientationHandler = handler as EventListener
+    window.addEventListener('deviceorientationabsolute', this._orientationHandler, { passive: true })
+    window.addEventListener('deviceorientation', this._orientationHandler, { passive: true })
+  }
+
+  /** Whether lookups may go to the geocoder, as far as is known now: this device's saved answer, else this page's. Null: not asked. */
+  private _knownGeocodeAnswer(): boolean | null {
+    const saved = this._geocodeConsent.answer(GEOCODER_HOST)
+    return saved !== null ? saved : this._geocodeAnswer
+  }
+
+  /**
+   * Asks the person whether lookups may go to the geocoder, once: every fix that arrives while the question is up waits
+   * for the same answer. A question that fails is a no for this page.
+   */
+  private _askGeocode(): Promise<boolean> {
+    this._geocodeAsking ??= Promise.resolve()
+      .then(() => this._geocodeConsent.ask(GEOCODER_HOST))
+      .then((yes) => yes === true, () => false)
+      .then((yes) => {
+        this._geocodeAnswer = yes
+        this._geocodeAsking = null
+        return yes
+      })
+    return this._geocodeAsking
   }
 
   private async _geocode(fix: GeoFix): Promise<void> {
@@ -325,6 +375,15 @@ export class GeoTracker {
     if (this._lookupsInFlight.has(key)) return
     const failed = this._lookupFailures.get(key)
     if (failed && performance.now() < failed.retryAt) return
+    // Nothing goes to the geocoder without this device's yes (F-08). A no ends here, every time, without a question. A
+    // known yes goes straight on, with no await before the request, so a second fix in the cell sees it in flight. Not
+    // asked yet: ask, and look again once there is an answer, when the cache or another fix may already have this cell.
+    const allowed = this._knownGeocodeAnswer()
+    if (allowed === null) {
+      if (await this._askGeocode()) return this._geocode(fix)
+      return
+    }
+    if (!allowed) return
 
     this._lookupsInFlight.add(key)
     try {

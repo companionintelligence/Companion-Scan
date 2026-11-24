@@ -13,6 +13,7 @@ import {
   createStateNonce,
   registerPortalAuth,
   DESKTOP_RETURN_URL,
+  QUEST_RETURN_URL,
   safeRelativePath,
   SHELL_RETURN_URL,
   shellReturnFor,
@@ -426,10 +427,11 @@ Deno.test('desktop: initiate marks the desktop app, and a phone or web initiate 
   assertEquals(refused.status, 400, 'the desktop app needs a PKCE challenge too')
 })
 
-Deno.test('shellReturnFor: only shell=1 and shell=desktop start a shell sign-in, each to its own fixed scheme', () => {
+Deno.test('shellReturnFor: only shell=1, shell=desktop and shell=quest start a shell sign-in, each to its own fixed scheme', () => {
   assertEquals(shellReturnFor('1'), SHELL_RETURN_URL)
   assertEquals(shellReturnFor('desktop'), DESKTOP_RETURN_URL)
-  for (const other of [undefined, '', '0', 'true', 'Desktop', 'https://evil.example', 'computer.ci.scan.desktop://auth']) {
+  assertEquals(shellReturnFor('quest'), QUEST_RETURN_URL)
+  for (const other of [undefined, '', '0', 'true', 'Desktop', 'Quest', 'https://evil.example', 'computer.ci.scan.desktop://auth']) {
     assertEquals(shellReturnFor(other), null, String(other))
   }
 })

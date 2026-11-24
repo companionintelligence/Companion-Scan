@@ -215,8 +215,10 @@ export async function runLfmDriver(
   }
 
   const generatedText = decodeIds(idToVocabStr, generatedIds)
-  console.log('[engine] Generated:', generatedText.slice(0, 200))
-  return parseDetections(generatedText)
+  const detections = parseDetections(generatedText)
+  // Counts only, as the ollama path in server/inference.ts logs: the reply describes what is in a private room (F-07).
+  console.log(`[engine] ONNX inference finished: ${detections.length} detection(s) from ${generatedIds.length} generated token(s)`)
+  return detections
 }
 
 function decodeIds(idToVocabStr: Map<number, string>, ids: number[]): string {

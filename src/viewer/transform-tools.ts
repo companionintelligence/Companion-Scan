@@ -19,6 +19,8 @@
  * (ADR 0005 rule 5: adopted, not measured).
  */
 import { composeYUpTransform, identityMatrix, transformPoint } from '../world/geo.ts'
+import { mat4Close, multiplyMat4 } from '../world/mat4.ts'
+import { wrapDeg } from '../capture/pose-delta.ts'
 import { invertAffine, sessionAnchorPositions } from '../world/anchor-placement.ts'
 import {
   checkPlacementMatrix,
@@ -52,17 +54,9 @@ const ORIGIN: Vec3 = { x: 0, y: 0, z: 0 }
 
 // ─── Matrix pieces ───────────────────────────────────────────────────────────
 
-/** `a · b`: the map that applies `b` first. */
+/** `a · b`: the map that applies `b` first. The one column-major product (../world/mat4.ts). */
 export function multiply(a: readonly number[], b: readonly number[]): Matrix16 {
-  const out = new Array<number>(16).fill(0)
-  for (let column = 0; column < 4; column++) {
-    for (let row = 0; row < 4; row++) {
-      let sum = 0
-      for (let k = 0; k < 4; k++) sum += a[k * 4 + row]! * b[column * 4 + k]!
-      out[column * 4 + row] = sum
-    }
-  }
-  return out
+  return multiplyMat4(a, b)
 }
 
 /**
@@ -151,10 +145,9 @@ export function holdScale(matrix: readonly number[], scale: number): Matrix16 {
   return out
 }
 
-/** Degrees folded into (-180, 180]. */
+/** Degrees folded into (-180, 180]: the capture side's `wrapDeg` (src/capture/pose-delta.ts), under this file's name (FN-086). */
 export function wrapDegrees(deg: number): number {
-  const wrapped = ((deg + 180) % 360 + 360) % 360 - 180
-  return wrapped === -180 ? 180 : wrapped
+  return wrapDeg(deg)
 }
 
 /** Which way the scan's +Z axis points about the vertical, in degrees: `atan2(x, z)`, as the compass uses. */
@@ -445,13 +438,12 @@ export function centroidOf(positions: ArrayLike<number>, maxSamples = MAX_CENTRO
 
 // ─── Unsaved moves ───────────────────────────────────────────────────────────
 
-/** Whether two matrices are the same placement to within `eps` on every entry (a nanometre by default, adopted, not measured: ADR 0005 rule 5). */
+/**
+ * Whether two matrices are the same placement to within `eps` on every entry (a nanometre by default, adopted, not
+ * measured: ADR 0005 rule 5). The one entry-wise comparison (../world/mat4.ts), which the server's `matricesAgree` reads too.
+ */
 export function matricesClose(a: readonly number[], b: readonly number[], eps = 1e-9): boolean {
-  if (a.length !== 16 || b.length !== 16) return false
-  for (let i = 0; i < 16; i++) {
-    if (!(Math.abs(a[i]! - b[i]!) <= eps)) return false
-  }
-  return true
+  return mat4Close(a, b, eps)
 }
 
 /**

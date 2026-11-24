@@ -10,6 +10,13 @@ import test, { type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { GeoTracker, type GeoFix } from '../../../src/geo/geo-tracker.ts'
 
+/**
+ * This device has said yes to the address lookup (src/geo/geocode-consent.ts). Since wave 14 (F-08) nothing goes to the
+ * geocoder without one; what a lookup does once allowed is what this file tests, and
+ * tests/unit/node/wp-capture-core-geo-privacy.test.ts tests the asking.
+ */
+const LOOKUPS_ALLOWED = { answer: (): boolean => true, ask: async (): Promise<boolean> => true }
+
 interface FakePosition {
   coords: { latitude: number, longitude: number, accuracy: number, altitude: number | null }
   timestamp: number
@@ -63,7 +70,7 @@ test('a return to a cell answered before is stored with its address, so a reload
     getItem: () => null,
     setItem: (_key: string, value: string) => { writes.push(value) },
   })
-  const geo = new GeoTracker() as unknown as Tracker
+  const geo = new GeoTracker({ geocodeConsent: LOOKUPS_ALLOWED }) as unknown as Tracker
 
   await geo._geocode(geo._applyPosition(at(ROOM_A)))
   await geo._geocode(geo._applyPosition(at(ROOM_B)))

@@ -31,9 +31,9 @@ struct GeoPlace {
 }
 
 /// The iOS geo view: ARKit-CoreLocation's `SceneLocationView` (SceneKit) full screen, with one label per Place at
-/// its pin. It is a viewer, not a capture path (ADR 0012). It runs the library's own ARKit session while it is
+/// its pin. It is a viewer, not a capture path (ADR 0014). It runs the library's own ARKit session while it is
 /// shown, so `ScanARPlugin.openGeoView` opens it only when no scan session is running, and the scanner's own view,
-/// configuration and saved world maps are never touched (docs/factory/13-ar-runtime-targets/0006-ios-geo-view.md).
+/// configuration and saved world maps are never touched (docs/factory/15-ar-runtime-targets/0006-ios-geo-view.md).
 final class GeoViewController: UIViewController {
     private let places: [GeoPlace]
     private let onClose: () -> Void

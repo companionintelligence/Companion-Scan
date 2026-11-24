@@ -38,7 +38,7 @@ be prevented unless `test-box.mjs` is in scope. Confirmed by reading
 - Do not change the default — `5173` stays; behavior with no env vars set is
   byte-identical (share links, QR URLs, test base URLs all unchanged).
 - Do not touch the Deno API port (`PORT`, default 8000) — already a single env var.
-- Do not remove the hardcoded `liambook.capybara-ulmer.ts.net` *hostname* fallback in
+- Do not remove the hardcoded developer-machine *hostname* fallback in
   `main.ts:1461` or the tests — hostname policy is 0002's settled territory
   (resolution order + last-resort fallback). Only the port number moves to the
   constant. (Switching tests to resolve the hostname dynamically already works via

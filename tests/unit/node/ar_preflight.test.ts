@@ -188,7 +188,7 @@ test('no camera frame past the window is "not this time", NOT "never"', () => {
   // — engine ready, camera track acquired, aspect diagnostic reading
   // `frame: "unreported"` — was read as proof the device could never scan. It is
   // not: the same device later reached trackingStatus NORMAL with a pose 2.37 s
-  // after start. The failure is intermittent, about two starts in eight, and
+  // after start. The failure is intermittent (six of eight starts stalled, two succeeded), and
   // correlates with the orientation getUserMedia returns rather than with the
   // hardware. A five-second sample cannot support a permanent claim.
   const v = firstFrameVerdict({ sawCameraFrame: false, sawPose: false, elapsedMs: 6_000 })

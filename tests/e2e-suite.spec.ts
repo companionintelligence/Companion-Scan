@@ -47,7 +47,7 @@ function legacyDetection(d: LegacyDetectionFixture): WorldDetection {
 
 // 5173 here is just the last-resort default (matches VITE_PORT's own default in
 // main.ts/vite.config.ts). Set VITE_URL to point at a differently-ported instance.
-const BASE = process.env['VITE_URL'] ?? 'https://liambook.capybara-ulmer.ts.net:5173'
+const BASE = process.env['VITE_URL'] ?? 'https://localhost:5173'
 
 test.beforeEach(async ({ context }) => {
   await context.addInitScript((key) => {
@@ -988,12 +988,11 @@ test.describe('Tier 2: Boundary & Corner Cases', () => {
       // _buildDrawer() sets display:none and only open() flips it to flex, so the
       // container is present-but-hidden until opened.
       geoMap.open()
+      // A ProjectLocationEntry: the pin builder reads name and projectId (src/viewer/geomap.ts), which the
+      // scan-location shape this used to pass did not have (FN-089). Placeholder coordinates.
       await geoMap.updatePins([
-        {
-          filename: 'a.glb', lat: 51.5, lng: -0.09, bearing: null, address: null,
-          capturedAt: null, pointCount: null, detectionCount: null, scanName: 'a',
-        },
-      ])
+        { projectId: 'proj-a', name: 'Place A', lat: 10, lng: 10, address: null, capturedAt: null, scanCount: 1 },
+      ], null)
       return document.querySelectorAll('.leaflet-container').length
     })
 
@@ -1088,7 +1087,9 @@ test.describe('Tier 3: Cross-Feature Combinations', () => {
     expect(match.lng).toBe(lng)
 
     await page.goto(`${BASE}/viewer.html`, { waitUntil: 'domcontentloaded' })
-    await page.locator('#btn-geomap').click()
+    // The map is the Views menu's GIS map toggle (#view-toggle-map); #btn-geomap is gone (FN-054, FN-089).
+    await page.click('#view-menu > summary')
+    await page.check('#view-toggle-map')
     const geomapDrawer = page.locator('#geomap-drawer')
     await expect(geomapDrawer).toHaveClass(/geomap-open/)
   })

@@ -153,6 +153,8 @@ import type { Pose } from './provider'
 import type { AnchorLossKind, AnchorMovement } from './anchors'
 import type { GroundEstimate } from '../scene/pointcloud'
 import type { FrameClosureRecord } from './closure'
+import { yawTwistDeg } from '../shared/pose-math.ts'
+import { REASON_RELOCALIZING, isUnstableTrackingReason } from './tracking-reasons.ts'
 
 // ── Adopted constants ───────────────────────────────────────────────────────
 
@@ -435,7 +437,7 @@ export interface FrameDiscontinuity {
   degradedMs?: number
   /** How long the page or session was hidden, for 'resumed', when the provider saw both ends. */
   hiddenMs?: number
-  /** The runtime's tracking reason, when it gave one (8th Wall documents INITIALIZING and UNSPECIFIED; see DEGRADED_REASONS). */
+  /** The runtime's tracking reason, when it gave one (8th Wall documents INITIALIZING and UNSPECIFIED; see ./tracking-reasons.ts). */
   reason?: string
   /**
    * For 'reset': the runtime's own description of the move, the new origin in the old
@@ -560,26 +562,10 @@ export interface AnchorDiagnostics {
 export type TrackingClass = 'good' | 'degraded' | 'absent' | 'unknown'
 
 /**
- * The reason that names a relocalization. The only reason that is a discontinuity by itself.
- * Not in 8th Wall's documented set (see DEGRADED_REASONS): it is acted on in case the engine reports it.
+ * The reason that names a relocalization. The only reason that is a discontinuity by itself. Declared in
+ * ./tracking-reasons.ts with the rest of the unstable reasons, and exported from here, where the native codec reads it.
  */
-export const REASON_RELOCALIZING = 'RELOCALIZING'
-
-/**
- * The reasons that make a frame degraded when they come beside a status that reads NORMAL.
- * What 8th Wall documents for `trackingReason` is INITIALIZING and UNSPECIFIED, and for
- * `trackingStatus` LIMITED and NORMAL (https://8thwall.org/docs/api/engine/xrcontroller/pipelinemodule).
- * RELOCALIZING, TOO_MUCH_MOTION and NOT_ENOUGH_TEXTURE are not in that documentation. They are
- * listed so that an engine which reports them is treated as unsure of its poses, not because one is
- * known to. DX4 logs every status and reason transition on a phone, and that log is what keeps
- * or removes each name. INITIALIZING is a reason here, and the native shell's status word.
- */
-const DEGRADED_REASONS: ReadonlySet<string> = new Set([
-  'INITIALIZING',
-  REASON_RELOCALIZING,
-  'TOO_MUCH_MOTION',
-  'NOT_ENOUGH_TEXTURE',
-])
+export { REASON_RELOCALIZING }
 
 export function classifyTracking(
   status: string | null | undefined,
@@ -587,7 +573,8 @@ export function classifyTracking(
 ): TrackingClass {
   if (status === 'NOT_AVAILABLE') return 'absent'
   if (status === 'LIMITED' || status === 'INITIALIZING') return 'degraded'
-  if (reason && DEGRADED_REASONS.has(reason)) return 'degraded'
+  // The one set of unsure reasons (./tracking-reasons.ts), which the calibration tap's check reads too.
+  if (isUnstableTrackingReason(reason)) return 'degraded'
   if (status === 'NORMAL') return 'good'
   return 'unknown'
 }
@@ -610,29 +597,17 @@ function usablePose(pose: Pose | null | undefined): pose is Pose {
 }
 
 /**
- * The turn between two orientations about the world's vertical axis, in degrees, signed:
- * positive when the turn is counter-clockwise seen from above (a rotation about +Y), from
- * -180 to 180.
+ * The turn between two orientations about the world's vertical axis, in degrees, signed (counter-clockwise from above
+ * positive, -180 to 180), and `NaN` when either orientation is not a rotation. It lives in src/shared/pose-math.ts beside
+ * the anchors' reading of the same twist, which reads a zero quaternion as no turn instead (wave 14, F-40), and is
+ * exported from here under the name it always had.
  *
- * Both are camera orientations in the session frame, which is gravity-aligned, so a frame
- * that was redefined turns the world about the vertical and this is the heading change.
- * It is the twist of the relative rotation about +Y, not its full angle: a quick tilt of
- * the phone changes the full angle and does not change the heading, and a tilt is what a
- * person does when tapping. `NaN` when either orientation is not a rotation.
+ * Both are camera orientations in the session frame, which is gravity-aligned, so a frame that was redefined turns the
+ * world about the vertical and this is the heading change. It is the twist of the relative rotation about +Y, not its
+ * full angle: a quick tilt of the phone changes the full angle and does not change the heading, and a tilt is what a
+ * person does when tapping.
  */
-export function yawTwistDeg(a: Quat, b: Quat): number {
-  const na = Math.hypot(a.x, a.y, a.z, a.w)
-  const nb = Math.hypot(b.x, b.y, b.z, b.w)
-  if (!(na > 0) || !(nb > 0)) return Number.NaN
-  const ax = a.x / na, ay = a.y / na, az = a.z / na, aw = a.w / na
-  const bx = b.x / nb, by = b.y / nb, bz = b.z / nb, bw = b.w / nb
-  // The rotation that takes a to b, expressed in the world frame: b * conjugate(a).
-  let w = bw * aw + bx * ax + by * ay + bz * az
-  let y = aw * by - bw * ay + az * bx - ax * bz
-  // A rotation and its negation are the same rotation; take the short way round.
-  if (w < 0) { w = -w; y = -y }
-  return 2 * Math.atan2(y, w) * (180 / Math.PI)
-}
+export { yawTwistDeg }
 
 /** The size of {@link yawTwistDeg}, 0 to 180. */
 export function yawDeltaDeg(a: Quat, b: Quat): number {

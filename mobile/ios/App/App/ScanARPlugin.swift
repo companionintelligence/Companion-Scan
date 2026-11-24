@@ -1,7 +1,7 @@
 import ARKit
 import Capacitor
 import Foundation
-import SceneKit
+import RealityKit
 import UIKit
 import simd
 
@@ -10,8 +10,9 @@ import simd
 /// src/ar/native-bridge.ts.
 ///
 /// What it does:
-///   - Runs an ARKit world-tracking session and shows the camera in an ARSCNView placed beneath the
-///     web view, which is made transparent while the session runs.
+///   - Runs an ARKit world-tracking session and shows the camera in a RealityKit ARView placed beneath the
+///     web view, which is made transparent while the session runs. The view only draws the camera feed: it
+///     does not configure the session, which the plugin runs itself.
 ///   - Fits the whole camera image inside the web view ("contain"), so the overlay the scanner draws
 ///     covers exactly the camera's frame. The rect comes back from start() in CSS points.
 ///   - Streams pose and projection (pose events), feature points, and a grid of hit samples, and
@@ -27,6 +28,22 @@ import simd
 ///
 /// ARKit world space is in metres, gravity-aligned and Y-up. Its yaw is arbitrary, so heading still
 /// comes from the editor's calibration.
+///
+/// Poses are display-oriented. `ARCamera.transform` is "constant with respect to device orientation": its x-axis
+/// lies along the long axis of the phone, which is a quarter turn from this portrait app's image. So pose events
+/// and captureFrame() send the inverse of `viewMatrix(for: .portrait)`, whose +Y is the top of the portrait JPEG,
+/// the same orientation as `projectionMatrix(for: .portrait, …)`. The Android plugin sends ARCore's
+/// getDisplayOrientedPose() for the same reason.
+///
+/// Camera permission: ARKit asks for the camera itself, with NSCameraUsageDescription, the first time the session
+/// runs. A refusal arrives as session(_:didFailWithError:) and goes to the web side as the `error` event, which the
+/// page reads as a refused camera (src/ar/native.ts, onNativeError). There is no permission step in start().
+///
+/// Resume: ARKit resumes an interrupted session by itself (sessionInterruptionEnded). Left to its default, it then
+/// "spends a few seconds trying to relocalize before restarting your session", and a restart is a new coordinate
+/// frame (ARSessionObserver, sessionShouldAttemptRelocalization). A named Place's session asks ARKit to keep
+/// relocalizing into the session's own map instead, so the scan stays in the Place's frame; any other session
+/// restarts at once, which the page reads as a new epoch either way.
 ///
 /// The mobile-build workflow compiles this file when it is run by hand (workflow_dispatch). It is not a push or
 /// pull request check. ARKit behaviour (tracking, interruptions, relocalization, depth, autosave) runs only on a
@@ -57,7 +74,7 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
     private let farM: CGFloat = 100
 
     private let ciContext = CIContext()
-    private var arView: ARSCNView?
+    private var arView: ARView?
     /// The camera rect in the web view's coordinate space, in points.
     private var cameraRect: CGRect = .zero
     private var hitGridSize = 20
@@ -101,7 +118,7 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
     // MARK: - Geo view
 
     /// Opens the geo view: ARKit-CoreLocation's SceneLocationView on SceneKit, full screen, with one label per Place
-    /// at its pin (GeoViewController.swift). A viewer, not a capture path (ADR 0012). It runs its own ARKit session,
+    /// at its pin (GeoViewController.swift). A viewer, not a capture path (ADR 0014). It runs its own ARKit session,
     /// so it is refused while this plugin's scan session runs: ARKit runs one session at a time. The scanner's view,
     /// configuration and saved world maps are never touched.
     @objc func openGeoView(_ call: CAPPluginCall) {
@@ -209,9 +226,14 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
             let webBounds = CGRect(origin: .zero, size: webView.bounds.size)
             let rect = self.containedRect(in: webBounds, aspect: aspect)
 
-            let view = ARSCNView(frame: rect.offsetBy(dx: webView.frame.minX, dy: webView.frame.minY))
+            // automaticallyConfigureSession is off, so the view runs no configuration of its own: the session runs the one
+            // built above.
+            let view = ARView(
+                frame: rect.offsetBy(dx: webView.frame.minX, dy: webView.frame.minY),
+                cameraMode: .ar,
+                automaticallyConfigureSession: false
+            )
             view.autoresizingMask = []
-            view.automaticallyUpdatesLighting = false
             view.session.delegate = self
             container.insertSubview(view, belowSubview: webView)
 
@@ -307,7 +329,7 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
                 "width": width,
                 "height": height,
                 "jpegBase64": jpeg.base64EncodedString(),
-                "transform": self.matrixArray(frame.camera.transform),
+                "transform": self.matrixArray(self.displayOrientedTransform(of: frame.camera)),
                 "projection": self.matrixArray(self.projection(for: frame.camera)),
             ]
             if wantDepth, let depth = frame.sceneDepth, let depthPayload = self.portraitDepth(from: depth.depthMap) {
@@ -504,13 +526,27 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
         notifyListeners("tracking", data: ["state": "notAvailable"])
     }
 
+    /// ARKit resumes by itself: "it continues tracking from its last known state". The next pose event carries the
+    /// tracking state, as after any other change, so nothing is sent from here.
+    public func sessionInterruptionEnded(_ session: ARSession) {
+        print("[ScanAR] interruption ended; \(autosaveName != nil ? "relocalizing into the Place's map" : "the session restarts")")
+    }
+
+    /// True for a named Place: ARKit keeps relocalizing into the session's map, which began as the Place's saved map, so
+    /// the scan stays in the Place's coordinates. Apple: if the person does not go back, "the app stays in relocalizing
+    /// state indefinitely", and stopping and starting the scan again starts from the saved map. False for any other
+    /// session: "the session restarts immediately" in a new frame, rather than after ARKit's default few seconds.
+    public func sessionShouldAttemptRelocalization(_ session: ARSession) -> Bool {
+        return autosaveName != nil
+    }
+
     public func session(_ session: ARSession, didUpdate frame: ARFrame) {
         let now = frame.timestamp
         if now - lastPoseAt >= poseInterval {
             lastPoseAt = now
             notifyListeners("pose", data: [
                 "timestamp": now,
-                "transform": matrixArray(frame.camera.transform),
+                "transform": matrixArray(displayOrientedTransform(of: frame.camera)),
                 "projection": matrixArray(projection(for: frame.camera)),
                 "tracking": ScanARPlugin.describe(frame.camera.trackingState),
             ])
@@ -553,6 +589,13 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
     private func projection(for camera: ARCamera) -> simd_float4x4 {
         let size = cameraRect.size
         return camera.projectionMatrix(for: .portrait, viewportSize: size, zNear: nearM, zFar: farM)
+    }
+
+    /// The camera-to-world transform in the portrait display's orientation, the one the projection and the JPEG are in:
+    /// the inverse of the portrait view matrix. `camera.transform` is the sensor's, a quarter turn about the view axis
+    /// from it. Same position, so a distance can still read `camera.transform`.
+    private func displayOrientedTransform(of camera: ARCamera) -> simd_float4x4 {
+        return simd_inverse(camera.viewMatrix(for: .portrait))
     }
 
     /// Column-major, so the web side can read it straight into a three.js matrix.
@@ -612,11 +655,11 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
     }
 
     /// A raycast from a normalised point of the camera rect. Estimated planes answer where no plane is
-    /// detected yet, which is what the overlay needs to place a point on a surface.
-    private func sample(atNormalized x: CGFloat, _ y: CGFloat, in view: ARSCNView, from camera: ARCamera) -> [String: Any] {
+    /// detected yet, which is what the overlay needs to place a point on a surface. The view casts the ray
+    /// from its camera through the point, and its session answers the query.
+    private func sample(atNormalized x: CGFloat, _ y: CGFloat, in view: ARView, from camera: ARCamera) -> [String: Any] {
         let point = CGPoint(x: view.bounds.width * x, y: view.bounds.height * y)
-        guard let query = view.raycastQuery(from: point, allowing: .estimatedPlane, alignment: .any),
-              let hit = view.session.raycast(query).first else {
+        guard let hit = view.raycast(from: point, allowing: .estimatedPlane, alignment: .any).first else {
             return ["hit": false]
         }
         let column = hit.worldTransform.columns.3
@@ -631,7 +674,7 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
         ]
     }
 
-    private func hitGrid(in view: ARSCNView, from camera: ARCamera, timestamp: TimeInterval) -> [String: Any] {
+    private func hitGrid(in view: ARView, from camera: ARCamera, timestamp: TimeInterval) -> [String: Any] {
         let cols = hitGridSize
         let rows = hitGridSize
         var samples: [[String: Any]] = []

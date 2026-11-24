@@ -15,9 +15,10 @@
  *                                 index 'byProject' on 'projectId'
  *   objectStore 'pendingFrame'    keyPath: 'projectId'       (v3)
  *
- * The database name is on CLAUDE.md's protected-identifier list: renaming it
- * orphans every existing user's Places. Adding a store behind a version bump
- * is additive and safe; renaming is not.
+ * The database name is frozen (`PROJECTS_DB_NAME`, src/shared/storage-keys.ts):
+ * renaming it orphans every existing user's Places. CLAUDE.md's "Do not rename"
+ * table listed only the scan store's name, and wave 14 adds this one (F-49).
+ * Adding a store behind a version bump is additive and safe; renaming is not.
  *
  * ## Two kinds of record about a Place's frame
  *
@@ -49,6 +50,7 @@ export type {
 import type { Floor, Project, ProjectSpatialFrame, Room, ScanEntry } from '../world/types'
 import type { FrameReplaces } from '../world/frame-replacement.ts'
 import { placeFrameRevision } from '../world/spatial-frame.ts'
+import { PROJECTS_DB_NAME } from '../shared/storage-keys.ts'
 
 /**
  * A reference photo's bytes, held locally so the aid works offline and on the
@@ -150,7 +152,8 @@ export interface PendingFrameRecord {
 
 // ── DB constants ───────────────────────────────────────────────────────────────
 
-const DB_NAME = 'ci-xr-projects'
+/** 'ci-xr-projects', declared once in the registry with what renaming it would do (src/shared/storage-keys.ts, FN-044). */
+const DB_NAME = PROJECTS_DB_NAME
 /**
  * v2 added the `referencePhotos` store (wave 09 ticket 0007), the first upgrade this
  * database had. v3 adds `pendingFrame`. The database holds the Place records themselves

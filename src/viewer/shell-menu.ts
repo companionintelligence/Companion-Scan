@@ -8,7 +8,8 @@
  * Companion Hub, say) is set here or on the scanner's first-run screen, and kept on
  * the device by src/shared/api-base.ts.
  */
-import { apiBase, isNativeShell } from '../shared/api-base.ts'
+import { apiBase, isDesktopShell, isNativeShell } from '../shared/api-base.ts'
+import { relabelScanEntryForDesktop } from './desktop-nav.ts'
 import { beginShellSignIn, initShellSignIn } from '../shared/shell-sign-in.ts'
 import { openLegalNotices } from '../ui/legal-notices.ts'
 import { openServerDialog } from '../ui/server-setting.ts'
@@ -100,6 +101,8 @@ export function mountShellMenu(doc: Document = document): void {
   // The shells' WebViews have no WebXR, so the WebXR scanner would only explain that it cannot
   // start. Removed rather than hidden: the menu's links are display: grid, which beats `hidden`.
   doc.getElementById('webxr-link')?.remove()
+  // A computer cannot walk a room, so in the desktop app the scanner entry says what it can do there (FN-019).
+  if (isDesktopShell()) relabelScanEntryForDesktop(doc)
   const panel = doc.querySelector('#workspace-menu .workspace-menu-panel')
   if (panel) {
     const divider = panel.querySelector('.workspace-menu-divider')

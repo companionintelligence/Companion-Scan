@@ -2,7 +2,7 @@
 
 > **Type:** Frontend + schema (additive)
 > **Wave:** 12-origin-calibration-v1
-> **Branch:** `liam/web-origin-calibration-v1-449f78`
+> **Branch:** `<user>/web-origin-calibration-v1-449f78`
 > **Commit style:** `feat(calibration): summary`
 > **Design:** this ticket is the spec. Builds on 09-ground-anchor-calibration 0002 (frame schema), 0004 (two-point flow) and 0007 (reference photos), and on ADR 0005.
 > **Dependencies:** 09-ground-anchor-calibration 0002, 0003, 0004, 0007. None outstanding in code.

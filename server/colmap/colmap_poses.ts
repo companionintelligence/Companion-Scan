@@ -35,9 +35,16 @@
  * below and reads models with the readers below, so a COLMAP option that changes its spelling is fixed in one place;
  * this driver is exactly what it was: one session is one shared camera, flat images and the files above.
  */
-import { isServerSessionId } from '../../src/shared/session-id.ts'
-import { isRunnable } from '../exec_probe.ts'
-import { budgetFromEnv, runWithDeadline } from '../run_with_deadline.ts'
+import { locateTool, readEnv, runnerToolLookup } from '../exec_probe.ts'
+import {
+  budgetFromEnv,
+  intFromEnv,
+  isValidSessionDir,
+  KILL_GRACE_MS,
+  numFromEnv,
+  runWithDeadline,
+  writeRunnerManifest,
+} from '../run_with_deadline.ts'
 import type { ColmapCamera } from './colmap_model.ts'
 import {
   parseCamerasBin,
@@ -104,6 +111,11 @@ export interface ColmapPosesRunOptions {
    * same constraint that makes `lingbot_map.ts` import it lazily.
    */
   _buildScanGlb?: typeof import('../lingbot-map/lingbot_map_glb.ts').buildLingBotMapGlb
+  /**
+   * Stops the run when it fires: the job pump passes its job's signal, so a job
+   * it has given up on does not leave its child running (F-27).
+   */
+  signal?: AbortSignal
 }
 
 export type ColmapPosesStatus = 'ok' | 'skipped' | 'error'
@@ -270,15 +282,13 @@ const USE_GPU = '0'
  * micromamba env in docs/pipelines/splat-train.md § Setup, and that env is NOT
  * on PATH unless you activate it — so on the machine that followed our own
  * instructions, `which colmap` fails while COLMAP 3.13.0 (with CUDA) sits at
- * the path below. Reporting "not found" there is a false negative that reads
- * like a missing tool. This mirrors splat_train.ts's DEFAULT_BRUSH_BIN, which
- * points at `~/brush/target/release/brush-cli` for exactly the same reason —
- * one convention, not a new one (ADR 0001): the documented install path is a
- * fallback, never an override. COLMAP_BIN still wins over everything.
+ * that path. Reporting "not found" there is a false negative that reads like a
+ * missing tool. The list is the shared table's (runnerToolLookups,
+ * server/exec_probe.ts), the one every runner and GET /capabilities resolve
+ * through: the documented install path is a fallback, never an override, and
+ * COLMAP_BIN still wins over everything.
  */
-const FALLBACK_COLMAP_BINS = [
-  `${Deno.env.get('HOME') ?? '~'}/.local/micromamba/envs/colmap/bin/colmap`,
-]
+const FALLBACK_COLMAP_BINS = runnerToolLookup('colmap').fallbacks
 
 /** How the PATH probe for `colmap -h` ended. `not-tried` when the binary was named explicitly. */
 export type ColmapProbe = 'not-tried' | 'found' | 'missing' | 'timed-out'
@@ -291,23 +301,33 @@ const PATH_PROBE_MS = 30_000
  * ended. A skip needs that: a probe that timed out does not show COLMAP is
  * missing. `probeMs` exists for tests.
  *
- * An explicit binary (opts.colmapBin / COLMAP_BIN) is taken at its word and
- * only probed; the bare default `colmap` means "find one", so it tries PATH
- * and then the documented install paths above.
+ * Resolution is the shared resolver's (`locateTool`, server/exec_probe.ts), so
+ * this and GET /capabilities find the same binary. An explicit binary
+ * (opts.colmapBin / COLMAP_BIN) is taken at its word and only probed; the bare
+ * default `colmap` means "find one": PATH, then the documented install paths.
+ * COLMAP adds one step: a PATH hit must also answer `colmap -h` within
+ * `probeMs`, because a binary on PATH that hangs is not one to hand a solve to.
+ * The returned bin is the absolute path the resolver found.
  */
 export async function locateColmapBin(
   colmapBin: string,
   probeMs: number = PATH_PROBE_MS,
 ): Promise<{ bin: string | null; pathProbe: ColmapProbe }> {
+  const lookup = runnerToolLookup('colmap')
   if (colmapBin !== 'colmap') {
-    return { bin: (await isRunnable(colmapBin)) ? colmapBin : null, pathProbe: 'not-tried' }
+    const named = await locateTool(lookup, { explicit: colmapBin })
+    return { bin: named.found ? named.path ?? colmapBin : null, pathProbe: 'not-tried' }
   }
-  const pathProbe = await which('colmap', probeMs)
-  if (pathProbe === 'found') return { bin: 'colmap', pathProbe }
-  for (const candidate of FALLBACK_COLMAP_BINS) {
-    if (await isRunnable(candidate)) return { bin: candidate, pathProbe }
-  }
-  return { bin: null, pathProbe }
+  let pathProbe: ColmapProbe = 'missing'
+  const found = await locateTool(lookup, {
+    // `colmap` is the unset default here: COLMAP_BIN was read by resolveParams already.
+    env: (name) => (name === 'COLMAP_BIN' ? undefined : readEnv(name)),
+    acceptPathHit: async (hit) => {
+      pathProbe = await answersHelp(hit, probeMs)
+      return pathProbe === 'found'
+    },
+  })
+  return { bin: found.found ? found.path ?? null : null, pathProbe }
 }
 
 /** `locateColmapBin`, reduced to the binary path (or null). */
@@ -334,7 +354,7 @@ export function colmapNotFoundSkip(
     skippedReason: colmapBin === 'colmap'
       ? `COLMAP binary not found on PATH or at ${FALLBACK_COLMAP_BINS.join(', ')}`
       : `COLMAP binary not found: ${colmapBin}`,
-    remediation: 'Install COLMAP (`brew install colmap` / `apt install colmap`) or set COLMAP_BIN.',
+    remediation: runnerToolLookup('colmap').remediation,
   }
 }
 
@@ -713,11 +733,8 @@ export async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string>
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-/** Shares `SESSION_ID_RE` with the other drivers rather than re-deriving it. */
-export function isValidSessionDir(sessionDir: string): boolean {
-  const base = sessionDir.split('/').filter(Boolean).pop() ?? ''
-  return isServerSessionId(base)
-}
+/** The shared session-dir check (server/run_with_deadline.ts), re-exported under the name this module always had. */
+export { isValidSessionDir }
 
 /**
  * Two hours per COLMAP step. Each of the four steps (feature extraction,
@@ -730,11 +747,14 @@ const DEFAULT_COLMAP_TIMEOUT_MS = 2 * 60 * 60 * 1000
 export async function defaultSpawn(
   bin: string,
   args: string[],
+  signal?: AbortSignal,
 ): Promise<{ code: number; stderr: string; timeoutReason: string | null }> {
   const out = await runWithDeadline(
     bin,
     { args, stdout: 'piped', stderr: 'piped' },
     budgetFromEnv('COLMAP_TIMEOUT_MS', DEFAULT_COLMAP_TIMEOUT_MS),
+    KILL_GRACE_MS,
+    signal,
   )
   return { code: out.code, stderr: new TextDecoder().decode(out.stderr).slice(-4000), timeoutReason: out.timeoutReason }
 }
@@ -988,7 +1008,7 @@ export async function runColmapPoses(opts: ColmapPosesRunOptions): Promise<Colma
   }
   base.frameCount = linked
 
-  const spawn = opts._spawn ?? defaultSpawn
+  const spawn = opts._spawn ?? ((bin: string, args: string[]) => defaultSpawn(bin, args, opts.signal))
   const db = `${work}/db.db`
   const logs: string[] = []
 
@@ -1246,10 +1266,10 @@ export async function bestOf(grownRoot: string, fallbackDir: string): Promise<st
 }
 
 /**
- * `colmap` resolved via PATH rather than an absolute path. A probe that ran out
- * of time is `timed-out`, not `missing`: the binary may be there and slow.
+ * Whether a COLMAP found on PATH answers `-h`. A probe that ran out of time is
+ * `timed-out`, not `missing`: the binary may be there and slow.
  */
-async function which(bin: string, probeMs: number): Promise<ColmapProbe> {
+async function answersHelp(bin: string, probeMs: number): Promise<ColmapProbe> {
   try {
     // A probe, not a stage: it runs before every solve, so a hung binary here
     // would stall the job before any budget above applies.
@@ -1270,29 +1290,7 @@ async function finish(
   extra: Partial<ColmapPosesResult> = {},
 ): Promise<ColmapPosesResult> {
   const withTiming: ColmapPosesManifestWithQuality = { ...manifest, timing: { elapsedMs: Date.now() - started } }
-  try {
-    await Deno.writeTextFile(manifestPath, JSON.stringify(withTiming, null, 2))
-  } catch {
-    // A session dir that vanished mid-run shouldn't mask the real result.
-  }
+  // A session dir that vanished mid-run shouldn't mask the real result: the write is best effort.
+  await writeRunnerManifest(manifestPath, withTiming, 'colmap-poses')
   return { status: withTiming.status, manifest: withTiming, log, exitCode, ...extra }
-}
-
-function intFromEnv(name: string, fallback: number): number {
-  const raw = Deno.env.get(name)
-  if (!raw) return fallback
-  const n = Number.parseInt(raw, 10)
-  return Number.isFinite(n) && n > 0 ? n : fallback
-}
-
-/**
- * Like `intFromEnv`, but fractional and admitting zero — the thresholds need
- * 0.6, and `COLMAP_MIN_POINTS3D=0` is the documented way to disable that gate.
- * `intFromEnv`'s `n > 0` would silently turn both of those into the default.
- */
-function numFromEnv(name: string, fallback: number): number {
-  const raw = Deno.env.get(name)
-  if (!raw) return fallback
-  const n = Number.parseFloat(raw)
-  return Number.isFinite(n) && n >= 0 ? n : fallback
 }

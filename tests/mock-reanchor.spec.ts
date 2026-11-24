@@ -30,7 +30,8 @@
  * Run: npx playwright test --project=chromium-mock mock-reanchor
  */
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
-import { ONBOARDING_KEY } from '../src/shared/storage-keys'
+import { GEOCODE_CONSENT_KEY, ONBOARDING_KEY } from '../src/shared/storage-keys'
+import { GEOCODER_HOST } from '../src/geo/geocode-consent'
 
 const CALIB = '#project-calibration'
 const BANNER = '#reanchor-banner'
@@ -45,6 +46,11 @@ test.beforeEach(async ({ context }) => {
   await context.addInitScript((key) => {
     window.localStorage.setItem(key, '1')
   }, ONBOARDING_KEY)
+  // The page asks once before any position goes to the reverse geocoder (src/geo/geocode-consent.ts), and the fix set
+  // below would put that question on screen. This device has answered no: the card stays down, nothing is looked up.
+  await context.addInitScript(([key, answer]) => {
+    window.localStorage.setItem(key, answer)
+  }, [GEOCODE_CONSENT_KEY, JSON.stringify({ host: GEOCODER_HOST, allowed: false })] as const)
   await context.grantPermissions(['geolocation'])
   await context.setGeolocation({ latitude: LAT, longitude: LNG })
 })

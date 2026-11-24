@@ -60,7 +60,7 @@ jobs:
             deno-${{ runner.os }}-
 
       - name: "Install npm: dependencies (nodeModulesDir)"
-        run: deno install
+        run: ONNXRUNTIME_NODE_INSTALL_CUDA=skip deno install
 
       - name: Type-check server entrypoint
         run: deno task check
@@ -99,7 +99,7 @@ jobs:
             deno-${{ runner.os }}-
 
       - name: "Install npm: dependencies (nodeModulesDir)"
-        run: deno install
+        run: ONNXRUNTIME_NODE_INSTALL_CUDA=skip deno install
 
       - name: Fetch base branch for the diff
         run: git fetch origin ${{ github.event.pull_request.base.ref || 'main' }}
@@ -111,3 +111,9 @@ jobs:
 
       - name: Mock-engine pipeline regression (no model, no GPU)
         run: npm run gate:mock
+
+# Both `deno install` steps set ONNXRUNTIME_NODE_INSTALL_CUDA=skip, as mobile-build.yml, desktop-build.yml and
+# native-release.yml do: onnxruntime-node's install script downloads a CUDA build from the onnxruntime GitHub
+# release page on Linux x64, that file (v1.21.0) now answers 404, and the failed download fails the install.
+# No job here runs a model, so none needs the CUDA execution provider. It is set on the step's command line,
+# not as a job env block, so the step lines CLAUDE.md cites (62-63 and 101-102) stay where they are.

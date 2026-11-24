@@ -29,7 +29,6 @@ import { collectBurst } from './hit-burst.ts'
 import type { TrackingStatus } from './tracking-quality'
 import {
   FrameEpochTracker,
-  MAX_CAPTURE_POSE_AGE_MS,
   TRACKING_LOST_MESSAGE,
   type FrameDiscontinuity,
   type FrameDiscontinuityListener,
@@ -40,6 +39,17 @@ import { DEFAULT_GRID_SIZE, DEFAULT_INTERVAL_MS as SCAN_INTERVAL_MS } from './sc
 import { imagePointToViewportPoint, type ImageHitTestContract, type ViewSize } from '../spatial/resolver.ts'
 import { ANCHORS_FEATURE, createWebXRAnchors, type AnchorCapability, type WebXRAnchors } from './anchors.ts'
 import { forwardAnchorEvents } from './anchor-epochs.ts'
+import { projectionAspect, projectionFovYDeg } from '../shared/pose-math.ts'
+import { VIDEO_UNSEEN, frozenForMs, lookAtVideo, type VideoLiveness } from '../capture/video-liveness.ts'
+import {
+  HiddenSpell,
+  capturePoseTooOld,
+  failCaptures,
+  queueCapture,
+  settleCaptures,
+  withPoseAge,
+  type PendingCapture,
+} from './provider-plumbing.ts'
 
 /**
  * Probe grid subscribed against the viewer space, N x N. Imported rather than
@@ -72,6 +82,16 @@ const HIT_TEST_TIMEOUT_MS = 1_000
 const VIDEO_STALL_THRESHOLD_MS = 500
 
 /**
+ * The tracking status a viewer pose says: none is `'NOT_AVAILABLE'`, an emulated one (`XRPose.emulatedPosition`, the
+ * spec's way of answering after a tracking loss with the last known position) `'LIMITED'`, any other `'NORMAL'`.
+ * `trackingStatus()` and the hit-test burst's frames both read a pose this way (FN-036), so a calibration burst cannot
+ * pass through poses the scanner treats as degraded.
+ */
+export function statusOfViewerPose(viewerPose: XRViewerPose | null | undefined): TrackingStatus {
+  return !viewerPose ? 'NOT_AVAILABLE' : viewerPose.emulatedPosition ? 'LIMITED' : 'NORMAL'
+}
+
+/**
  * One scanner interval of grid samples at the highest refresh rate we expect —
  * 0.75 s x 120 fps x 36 probes = 3240 — derived rather than hard-coded so it
  * tracks the scanner's cadence and the grid size. Sizing it from a 60 fps
@@ -94,11 +114,8 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
   private videoEl: HTMLVideoElement | null = null
   private offscreen: OffscreenCanvas | null = null
   private offCtx: OffscreenCanvasRenderingContext2D | null = null
-  private captureQueue: Array<{
-    resolve: (frame: RawFrame) => void
-    reject: (error: Error) => void
-    timeout: ReturnType<typeof setTimeout>
-  }> = []
+  /** Waiting `captureFrame()` calls (./provider-plumbing.ts). Normally one. */
+  private captureQueue: PendingCapture[] = []
   private latestPose: Pose = {
     position: { x: 0, y: 0, z: 0 },
     rotation: { x: 0, y: 0, z: 0, w: 1 },
@@ -122,10 +139,8 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
   private _gridAttempts = 0
   /** First subscription error seen, kept so the failure warning can name a cause. */
   private _gridError: unknown = null
-  /** `videoEl.currentTime` as of the last frame it was observed to change. */
-  private _videoLastCurrentTime = -1
-  /** rAF timestamp (ms) `currentTime` was first seen frozen at, or null while it's advancing. */
-  private _videoStalledSinceMs: number | null = null
+  /** What the looks at `videoEl.currentTime` have seen (src/capture/video-liveness.ts), on the rAF clock (ms). */
+  private _videoLiveness: VideoLiveness = VIDEO_UNSEEN
   /** Guards against overlapping re-acquire attempts while one is already in flight. */
   private _recoveringStream = false
   /** The session's runtime anchors; null until a session opens, when the browser did not grant them, and after stop(). */
@@ -147,10 +162,11 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
   private _poseAtMs: number | null = null
   /** The frame time (ms) of the last XR frame seen, whatever it carried. Null before the first. */
   private _frameMs: number | null = null
-  /** Whether the session was last seen `hidden`, so a return to view can be told from a first look. */
-  private _sessionHidden = false
-  /** When the session was last seen `hidden`, on the page clock (ms), so a return can say how long it was away. */
-  private _hiddenAtMs: number | null = null
+  /**
+   * Whether the session was last seen `hidden`, and since when on the page clock, so a return to view can be told from a
+   * first look and can say how long it was away (./provider-plumbing.ts).
+   */
+  private _sessionVisibility = new HiddenSpell()
   /** Removes the listeners `_watchOrigin` added. */
   private _unwatch: Array<() => void> = []
 
@@ -299,12 +315,7 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
       // delivering samples, so tracking whether it has moved since the last
       // tick is a direct, cheap signal of whether the feed is still alive.
       if (self.videoEl && self.videoEl.readyState >= 2) {
-        if (self.videoEl.currentTime !== self._videoLastCurrentTime) {
-          self._videoLastCurrentTime = self.videoEl.currentTime
-          self._videoStalledSinceMs = null
-        } else if (self._videoStalledSinceMs === null) {
-          self._videoStalledSinceMs = time
-        }
+        self._videoLiveness = lookAtVideo(self._videoLiveness, self.videoEl.currentTime, time)
       }
 
       // Update pose. Until the reference space exists there is no pose to read.
@@ -323,10 +334,11 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
           rotation: { x: q.x, y: q.y, z: q.z, w: q.w },
         }
         if (viewerPose.views.length > 0) {
+          // Both or neither (src/shared/pose-math.ts): the probe grid is aimed with the pair.
           const proj = viewerPose.views[0].projectionMatrix
-          const fovY = 2 * Math.atan(1 / proj[5]) * (180 / Math.PI)
-          const aspect = proj[5] / proj[0]
-          if (Number.isFinite(fovY) && fovY > 0 && Number.isFinite(aspect) && aspect > 0) {
+          const fovY = projectionFovYDeg(proj)
+          const aspect = projectionAspect(proj)
+          if (fovY > 0 && aspect > 0) {
             self._fovY = fovY
             self._aspect = aspect
             // Only now is it safe to aim the probe grid — see the guard below.
@@ -372,16 +384,12 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
       // A tracked viewer pose that has not existed for a while leaves latestPose old, and a
       // capture stamped with it is placed where the camera no longer is. Refuse it, plainly.
       if (self.captureQueue.length > 0 && self._poseTooOldForCapture(time)) {
-        for (const pending of self.captureQueue.splice(0)) {
-          clearTimeout(pending.timeout)
-          pending.reject(new Error(TRACKING_LOST_MESSAGE))
-        }
+        failCaptures(self.captureQueue, TRACKING_LOST_MESSAGE)
       }
 
       // Resolve pending captureFrame() calls
       if (self.captureQueue.length > 0 && self.videoEl && self.videoEl.readyState >= 2) {
-        const stalled = self._videoStalledSinceMs !== null &&
-          time - self._videoStalledSinceMs >= VIDEO_STALL_THRESHOLD_MS
+        const stalled = frozenForMs(self._videoLiveness, time) >= VIDEO_STALL_THRESHOLD_MS
         if (stalled) {
           // readyState still says HAVE_CURRENT_DATA, but currentTime has been
           // frozen past the margin above — the frame drawImage() would produce
@@ -389,11 +397,7 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
           // it rather than re-encode it again: a rejected capture never
           // reaches the store (main.ts only persists after capture.capture()
           // resolves), so nothing downstream can mistake it for a real one.
-          const queue = self.captureQueue.splice(0)
-          queue.forEach((pending) => {
-            clearTimeout(pending.timeout)
-            pending.reject(new Error('Camera stream stalled — restart the scan'))
-          })
+          failCaptures(self.captureQueue, 'Camera stream stalled — restart the scan')
           // Best-effort recovery in the background — see attemptStreamRecovery().
           // If it succeeds, the next capture attempt just works; if it fails
           // or the platform can't safely re-acquire, the rejection above
@@ -418,19 +422,11 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
               timestamp: time,
               epoch: self._epochs.epoch,
             }
-            const queue = self.captureQueue.splice(0)
-            queue.forEach((pending) => {
-              clearTimeout(pending.timeout)
-              pending.resolve(frame_)
-            })
+            settleCaptures(self.captureQueue, frame_)
           } else {
             // No 2-D context to draw into. Fail the waiting captures now, rather than
             // throw out of the frame loop.
-            const queue = self.captureQueue.splice(0)
-            queue.forEach((pending) => {
-              clearTimeout(pending.timeout)
-              pending.reject(new Error('Camera frame unavailable — restart the scan'))
-            })
+            failCaptures(self.captureQueue, 'Camera frame unavailable — restart the scan')
           }
         }
       }
@@ -473,10 +469,7 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
     this.renderer?.setAnimationLoop(null)
     // No frame loop runs after teardown, so a capture still waiting would only
     // sit until its timer fired. Fail it now.
-    for (const pending of this.captureQueue.splice(0)) {
-      clearTimeout(pending.timeout)
-      pending.reject(new Error('AR session ended — restart the scan'))
-    }
+    failCaptures(this.captureQueue, 'AR session ended — restart the scan')
     for (const source of this.hitTestSources) source.cancel()
     this.anchorTracker?.dispose()
     this.anchorTracker = null
@@ -502,8 +495,7 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
     this._gridError = null
     this._hitWrite = 0
     this._hitCount = 0
-    this._videoLastCurrentTime = -1
-    this._videoStalledSinceMs = null
+    this._videoLiveness = VIDEO_UNSEEN
     this._recoveringStream = false
     for (const unwatch of this._unwatch.splice(0)) unwatch()
     // A later start() is a new session and a new map: the next pose starts a new epoch.
@@ -511,8 +503,7 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
     this._xrStatus = 'UNKNOWN'
     this._poseAtMs = null
     this._frameMs = null
-    this._sessionHidden = false
-    this._hiddenAtMs = null
+    this._sessionVisibility.reset()
     this.videoStream = null
     this.viewerSpace = null
     this.renderer = null
@@ -584,8 +575,7 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
 
       // Give the fresh stream a clean liveness baseline rather than judging
       // it against currentTime readings from the stream it replaced.
-      this._videoLastCurrentTime = -1
-      this._videoStalledSinceMs = null
+      this._videoLiveness = VIDEO_UNSEEN
       console.info('[webxr] camera stream re-acquired after a detected stall')
     } catch (e) {
       console.warn(
@@ -598,27 +588,13 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
   }
 
   captureFrame(timeoutMs = 4000): Promise<RawFrame> {
-    if (this.captureQueue.length > 0) {
-      return Promise.reject(new Error('Capture already pending'))
-    }
     // With no session there is no frame loop, so no frame can arrive. Fail now
-    // rather than after the timeout, which main.ts sets to 8 s.
-    if (!this.session) {
+    // rather than after the timeout, which main.ts sets to 8 s. A capture that is
+    // already waiting is still what a second call is told about first.
+    if (this.captureQueue.length === 0 && !this.session) {
       return Promise.reject(new Error('No AR session. Start the scan first.'))
     }
-
-    return new Promise((resolve, reject) => {
-      const pending = {
-        resolve,
-        reject,
-        timeout: setTimeout(() => {
-          const idx = this.captureQueue.indexOf(pending)
-          if (idx >= 0) this.captureQueue.splice(idx, 1)
-          reject(new Error('Timed out waiting for camera frame'))
-        }, timeoutMs),
-      }
-      this.captureQueue.push(pending)
-    })
+    return queueCapture(this.captureQueue, timeoutMs)
   }
 
   /**
@@ -813,10 +789,7 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
   getTrackingDiagnostics(): TrackingDiagnostics {
     // How old the tracked pose a capture would carry is, as of the last frame: 0 while the
     // runtime tracks, growing while it answers with emulated poses or none.
-    const poseAgeMs = this._poseAtMs !== null && this._frameMs !== null
-      ? Math.max(0, this._frameMs - this._poseAtMs)
-      : undefined
-    return { ...this._epochs.diagnostics(), ...(poseAgeMs !== undefined ? { poseAgeMs } : {}) }
+    return withPoseAge(this._epochs.diagnostics(), this._poseAtMs, this._frameMs)
   }
 
   getFrameEpoch(): number {
@@ -832,7 +805,7 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
    * frame's hit-test samples are taken.
    */
   private _observeViewerPose(viewerPose: XRViewerPose | null | undefined, tMs: number): void {
-    const status: TrackingStatus = !viewerPose ? 'NOT_AVAILABLE' : viewerPose.emulatedPosition ? 'LIMITED' : 'NORMAL'
+    const status = statusOfViewerPose(viewerPose)
     // Logged on every change, so a device run (?debug=remote relays the console) can count how
     // often a runtime answers with no pose, or with an emulated one, and how long for.
     if (status !== this._xrStatus) console.log('[webxr] trackingStatus:', status)
@@ -858,7 +831,7 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
    * pose (none at all, or only emulated ones) for longer than the bound.
    */
   private _poseTooOldForCapture(tMs: number): boolean {
-    return this._poseAtMs !== null && tMs - this._poseAtMs > MAX_CAPTURE_POSE_AGE_MS
+    return capturePoseTooOld(this._poseAtMs, tMs)
   }
 
   /**
@@ -908,22 +881,16 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
 
     const onVisibility = (): void => {
       if (this.session !== session) return
-      if (session.visibilityState === 'hidden') {
-        if (!this._sessionHidden) this._hiddenAtMs = performance.now()
-        this._sessionHidden = true
-      } else if (this._sessionHidden) {
-        this._sessionHidden = false
-        const away = this._hiddenAtMs === null ? undefined : performance.now() - this._hiddenAtMs
-        this._hiddenAtMs = null
+      const back = this._sessionVisibility.note(session.visibilityState === 'hidden', performance.now())
+      if (back) {
         // No frame came while it was hidden, so an anchor that was away before it was is not given up for that time.
         this.anchorTracker?.noteResumed()
-        const shift = this._epochs.noteResume(performance.now(), away)
+        const shift = this._epochs.noteResume(performance.now(), back.awayMs)
         if (shift) this._noteFrameShift(shift)
         this._epochs.flush()
       }
     }
-    this._sessionHidden = session.visibilityState === 'hidden'
-    this._hiddenAtMs = this._sessionHidden ? performance.now() : null
+    this._sessionVisibility.begin(session.visibilityState === 'hidden', performance.now())
     session.addEventListener('visibilitychange', onVisibility)
     this._unwatch.push(() => session.removeEventListener('visibilitychange', onVisibility))
   }
@@ -1065,7 +1032,8 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
       }
       const onXrFrame = (time: number, frame: XRFrame): void => {
         if (run.done || !source) return
-        const camera = frame.getViewerPose(space)?.transform
+        const viewerPose = frame.getViewerPose(space)
+        const camera = viewerPose?.transform
         const at = frame.getHitTestResults(source)[0]?.getPose(space)?.transform
         run.frame({
           hit: camera && at
@@ -1081,7 +1049,10 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
               rotation: { x: camera.orientation.x, y: camera.orientation.y, z: camera.orientation.z, w: camera.orientation.w },
             }
             : undefined,
-          status: camera ? 'UNKNOWN' : 'NOT_AVAILABLE',
+          // The status trackingStatus() gives the same viewer pose (FN-036): an emulated pose, the last known one
+          // given again after a loss, is LIMITED here as it is there, so a burst over one is refused as the scanner
+          // would treat it.
+          status: statusOfViewerPose(viewerPose),
         }, time)
         if (!run.done) next()
       }

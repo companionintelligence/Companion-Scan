@@ -22,11 +22,17 @@
  */
 
 import { resolve } from '@std/path'
-import { buildBrushDataset } from './splat_train_dataset.ts'
-import { isRunnable } from '../exec_probe.ts'
-import { budgetFromEnv, runWithDeadline } from '../run_with_deadline.ts'
-import { runColmapPoses } from '../colmap/colmap_poses.ts'
-import { isServerSessionId } from '../../src/shared/session-id.ts'
+import { locateTool, runnerToolLookup, toolSkip } from '../exec_probe.ts'
+import {
+  budgetFromEnv,
+  finishRun,
+  intFromEnv,
+  isValidSessionDir,
+  KILL_GRACE_MS,
+  runWithDeadline,
+  writeRunnerManifest,
+} from '../run_with_deadline.ts'
+import { buildDatasetWithAutoPoses } from './auto_poses.ts'
 // The manifest type lives in src/world/manifests.ts, not here — see that
 // file's header (it's the canonical, Deno-API-free home so the browser
 // viewer can type-import it without dragging this file's `Deno.*` calls into
@@ -136,6 +142,11 @@ export interface SplatTrainRunOptions {
   ) => Promise<{ code: number; stderr: string; timeoutReason?: string | null }>
   /** Provenance forwarded into the manifest. */
   provenance?: { sessionId: string; scanId?: string }
+  /**
+   * Stops the run when it fires: the job pump passes its job's signal, so a job
+   * it has given up on does not leave its child running (F-27).
+   */
+  signal?: AbortSignal
 }
 
 export type SplatTrainStatus = 'ok' | 'skipped' | 'error'
@@ -160,20 +171,19 @@ export interface SplatTrainResult {
   exitCode: number
 }
 
-const DEFAULT_BRUSH_BIN = `${Deno.env.get('HOME') ?? '~'}/brush/target/release/brush-cli`
+/** The documented install path: the shared table's fallback (runnerToolLookups, server/exec_probe.ts). */
+const DEFAULT_BRUSH_BIN = runnerToolLookup('brush').fallbacks[0]
+
+/** The shared session-dir check (server/run_with_deadline.ts), re-exported under the name this module always had. */
+export { isValidSessionDir }
 
 /**
- * Delegates to the shared `SESSION_ID_RE` (`src/shared/session-id.ts`) rather
- * than a local copy — see lingbot_map.ts's `isValidSessionDir` doc comment
- * for why this file used to carry its own, stale one.
+ * Every knob, `opts ?? env ?? default`. `brushBin` is the binary
+ * `runSplatTrain` resolved (option, BRUSH_BIN, PATH, then the documented path);
+ * without it this names the candidate without probing, as it always did.
  */
-export function isValidSessionDir(sessionDir: string): boolean {
-  const base = sessionDir.split('/').filter(Boolean).pop() ?? ''
-  return isServerSessionId(base)
-}
-
-export function resolveParams(opts: SplatTrainRunOptions) {
-  const brushBin = opts.brushBin ?? Deno.env.get('BRUSH_BIN') ?? DEFAULT_BRUSH_BIN
+export function resolveParams(opts: SplatTrainRunOptions, resolvedBrushBin?: string) {
+  const brushBin = resolvedBrushBin ?? opts.brushBin ?? Deno.env.get('BRUSH_BIN') ?? DEFAULT_BRUSH_BIN
   const device = opts.device ?? Deno.env.get('BRUSH_DEVICE') ?? ''
   const trainIters = opts.trainIters ?? intFromEnv('BRUSH_TRAIN_ITERS', 15000)
   const shDegree = opts.shDegree ?? intFromEnv('BRUSH_SH_DEGREE', 2)
@@ -207,7 +217,10 @@ export function buildBrushArgs(
 }
 
 export async function runSplatTrain(opts: SplatTrainRunOptions): Promise<SplatTrainResult> {
-  const params = resolveParams(opts)
+  // One resolver for the job and GET /capabilities: option or BRUSH_BIN, then PATH, then the documented path.
+  const brushLookup = runnerToolLookup('brush')
+  const brushLocation = await locateTool(brushLookup, { explicit: opts.brushBin })
+  const params = resolveParams(opts, brushLocation.path)
   const manifestPath = opts.manifestPath ?? opts.outputPlyPath.replace(/\.splat\.ply$/, '') + '.splat-train.manifest.json'
   const started = Date.now()
 
@@ -240,73 +253,24 @@ export async function runSplatTrain(opts: SplatTrainRunOptions): Promise<SplatTr
 
   // 1. Guard: the Brush binary must exist and be executable before we do the
   //    (potentially large) dataset conversion. A missing binary is a *skip*,
-  //    not an error — the server keeps running and the UI shows a remediation.
-  const brushOk = await isRunnable(params.brushBin)
-  if (!brushOk) {
+  //    not an error — the server keeps running and the UI shows a remediation,
+  //    the same one GET /capabilities prints (it names the build command).
+  if (!brushLocation.found) {
     return _finish(manifestPath, {
       ...baseManifest,
       status: 'skipped',
-      skippedReason: `Brush binary not found or not executable: ${params.brushBin}`,
-      // Name the command, the way colmap_poses.ts's skip does — "build Brush"
-      // alone sends the reader to a repo they then have to guess the build
-      // invocation for, and `--bin brush-cli` (the obvious guess) fails on this
-      // workspace: it needs `-p`, see docs/pipelines/splat-train.md — Setup.
-      remediation:
-        'Build Brush (`git clone https://github.com/ArthurBrussee/brush ~/brush && ' +
-        'cd ~/brush && cargo build --release -p brush-cli`) or set BRUSH_BIN to an existing brush-cli. ' +
-        'Needs a Vulkan/Metal-capable GPU; see docs/pipelines/splat-train.md — Setup.',
+      ...toolSkip(brushLookup, brushLocation, 'Brush binary'),
     }, 0, `brush binary missing: ${params.brushBin}`)
   }
 
-  // 2. Convert the session → Nerfstudio dataset.
-  //
-  // A pose-less session is recoverable, not terminal: COLMAP can solve the
-  // poses on CPU. Auto-chaining it here is what makes `splat-train` a
-  // pipeline rather than a stage that requires a human to notice the
-  // dependency and queue it by hand — which is exactly how every
-  // photo-ingest session ended up stuck at "no camera poses". Opt out with
-  // SPLAT_TRAIN_AUTO_POSES=0 (or `autoSolvePoses: false`) when a caller
-  // wants the failure surfaced instead of repaired.
-  let dataset
-  const autoSolve = opts.autoSolvePoses ?? Deno.env.get('SPLAT_TRAIN_AUTO_POSES') !== '0'
-  try {
-    dataset = await buildBrushDataset({ sessionDir })
-  } catch (e0) {
-    const msg0 = e0 instanceof Error ? e0.message : String(e0)
-    if (autoSolve && /no camera poses/.test(msg0)) {
-      const solved = await runColmapPoses({ sessionDir })
-      if (solved.status !== 'ok') {
-        // Surface COLMAP's own diagnosis — it distinguishes "not installed"
-        // from "this capture has no parallax", and those need different fixes.
-        const reason = solved.manifest.skippedReason ?? solved.manifest.error ?? 'pose solve failed'
-        return _finish(manifestPath, {
-          ...baseManifest,
-          status: solved.status === 'skipped' ? 'skipped' : 'error',
-          ...(solved.status === 'skipped' ? { skippedReason: reason } : { error: reason }),
-          remediation: solved.manifest.remediation,
-        }, solved.status === 'skipped' ? 0 : 2, solved.log)
-      }
-    }
-    try {
-      dataset = await buildBrushDataset({ sessionDir })
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      // "no keyframes" is a graceful skip; any other conversion failure is an error.
-      if (/no keyframes|no usable keyframes/.test(msg)) {
-        return _finish(manifestPath, {
-          ...baseManifest,
-          status: 'skipped',
-          skippedReason: msg,
-          remediation: 'Stream keyframes for this scan before training a splat.',
-        }, 0, msg)
-      }
-      return _finish(manifestPath, {
-        ...baseManifest,
-        status: 'error',
-        error: `dataset build failed: ${msg}`,
-      }, 2, msg)
-    }
+  // 2. Convert the session → Nerfstudio dataset. A pose-less session is solved
+  //    with COLMAP first unless SPLAT_TRAIN_AUTO_POSES=0 (auto_poses.ts, shared
+  //    with spirula_train.ts, says why).
+  const built = await buildDatasetWithAutoPoses({ sessionDir }, opts.autoSolvePoses, { signal: opts.signal })
+  if (!built.ok) {
+    return _finish(manifestPath, { ...baseManifest, ...built.failure.manifest }, built.failure.exitCode, built.failure.log)
   }
+  const dataset = built.dataset
   baseManifest.frameCount = dataset.frameCount
 
   // 3. Spawn Brush headless with the GPU pin.
@@ -334,7 +298,7 @@ export async function runSplatTrain(opts: SplatTrainRunOptions): Promise<SplatTr
   try {
     spawnResult = opts._spawn
       ? await opts._spawn(params.brushBin, args, env)
-      : await defaultSpawn(params.brushBin, args, env)
+      : await defaultSpawn(params.brushBin, args, env, opts.signal)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return _finish(manifestPath, {
@@ -548,36 +512,28 @@ async function defaultSpawn(
   bin: string,
   args: string[],
   extraEnv: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<{ code: number; stderr: string; timeoutReason: string | null }> {
   const output = await runWithDeadline(
     bin,
     { args, env: extraEnv, stdout: 'piped', stderr: 'piped' },
     budgetFromEnv('BRUSH_TIMEOUT_MS', DEFAULT_BRUSH_TIMEOUT_MS),
+    KILL_GRACE_MS,
+    signal,
   )
   const stderr = new TextDecoder().decode(output.stderr).trim()
   return { code: output.code, stderr, timeoutReason: output.timeoutReason }
 }
 
 async function writeManifest(path: string, manifest: SplatTrainManifestWithQuality): Promise<void> {
-  try {
-    await Deno.writeTextFile(path, JSON.stringify(manifest, null, 2))
-  } catch (e) {
-    console.warn('[splat-train] failed to write manifest:', e)
-  }
+  await writeRunnerManifest(path, manifest, 'splat-train')
 }
 
-async function _finish(
+function _finish(
   manifestPath: string,
   manifest: SplatTrainManifestWithQuality,
   exitCode: number,
   log: string,
 ): Promise<SplatTrainResult> {
-  await writeManifest(manifestPath, manifest)
-  return { status: manifest.status, manifest, log, exitCode }
-}
-
-function intFromEnv(name: string, fallback: number): number {
-  const raw = Deno.env.get(name)
-  const n = raw ? Number(raw) : NaN
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
+  return finishRun(manifestPath, manifest, exitCode, log, 'splat-train')
 }

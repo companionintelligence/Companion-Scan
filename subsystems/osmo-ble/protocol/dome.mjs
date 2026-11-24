@@ -268,6 +268,178 @@ export function planDomePans({ centerDeg, spanDeg = DEFAULT_PAN_SPAN_DEG, stepDe
 }
 
 /* ------------------------------------------------------------------------------------------
+ * The front-ends' defaults, the grid order, and the checks every route makes on a target.
+ * ---------------------------------------------------------------------------------------- */
+
+/**
+ * The scanner web app's keyframe threshold. It emits a keyframe only once the camera has rotated at
+ * least this far (`minRotationDeg` in the DEFAULTS of src/capture/keyframes.ts).
+ *
+ * This is a deliberate parallel copy, not an import. keyframes.ts is TypeScript inside the Vite app,
+ * and this module runs unmodified in Node and in a page served by a different server. vite.config.ts
+ * and server/main.ts each hold resolveHostname the same way. dome.test.mjs reads keyframes.ts and
+ * fails if the two disagree. (The page used to keep its own copy, with a comment saying nothing
+ * would fail loudly.)
+ *
+ * Why a planner cares: a movement-only sweep whose step is finer than this drives the gimbal
+ * through positions that emit no keyframe at all, and the run still reports every one "converged".
+ */
+export const SCANNER_MIN_ROTATION_DEG = 20;
+
+/**
+ * The pan step the front-ends default to: the CLI's --pan-step, the page's Dome preset (7 columns
+ * over 150 degrees), and plan_scan_grid's 7 columns.
+ *
+ * It is 25, not planDomePans' own default of 15. 15 is under SCANNER_MIN_ROTATION_DEG, and the CLI's
+ * --movement-only help told the operator to step at least 20 while defaulting to 15. planDomePans
+ * keeps 15 as its parameter default because dome.test.mjs pins the plan that was actually run with it.
+ */
+export const DOME_PAN_STEP_DEG = 25;
+
+/**
+ * Tilt's measured travel. It converges down to about -40 but jams near +16, the same overheating
+ * failure as a pan stop. One pair of numbers for every route that checks a tilt (grid-capture and
+ * move-to) and for the MCP schemas, which used to allow -60..60.
+ */
+export const TILT_MIN_DEG = -45;
+export const TILT_MAX_DEG = 16;
+
+/** Whether a tilt is a finite number inside the measured travel. */
+export function isTiltReachable(tiltDeg) {
+  return typeof tiltDeg === 'number' && Number.isFinite(tiltDeg) && tiltDeg >= TILT_MIN_DEG && tiltDeg <= TILT_MAX_DEG;
+}
+
+/**
+ * Serpentine ordering. Each row is traversed opposite to the one before it, so the gimbal never has
+ * to swing back across the full pan range between rows. Measured on a real run, the first position
+ * of row 2 converged in 3 ticks against 7-26 for the rest, precisely because it starts where row 1
+ * ended.
+ *
+ * This is the one grid order. It used to live in server/android-capture.mjs, which still re-exports
+ * it, and plan_scan_grid built its own copy beside it.
+ */
+export function planGrid({ pans, tilts }) {
+  const grid = [];
+  tilts.forEach((tilt, row) => {
+    const order = row % 2 === 0 ? pans : [...pans].reverse();
+    for (const pan of order) grid.push({ pan, tilt });
+  });
+  return grid;
+}
+
+/**
+ * Rebuild an arc value from the `panArc` a backend status reports (arcPayload in server/backend.mjs).
+ *
+ * A client uses this to plan and check against the arc the backend will actually use, measured or
+ * fallback, rather than against the constants. The page used to check against the constants while
+ * the backend refused against its measured arc. Anything missing or malformed gives DEFAULT_PAN_ARC,
+ * which is what the backend uses when it has measured nothing.
+ *
+ * The status payload rounds the ends to 0.1 degrees, so a column within 0.05 degrees of an end can
+ * be judged differently here and in the backend. The backend still has the final word, and its
+ * refusal names the arc.
+ */
+export function arcFromPayload(panArc) {
+  if (!panArc || typeof panArc !== 'object') return DEFAULT_PAN_ARC;
+  const startDeg = Number(panArc.startDeg);
+  const endDeg = Number(panArc.endDeg);
+  if (!Number.isFinite(startDeg) || !Number.isFinite(endDeg)) return DEFAULT_PAN_ARC;
+  const measured = panArc.source === 'measured';
+  return makeArc({
+    startDeg,
+    endDeg,
+    source: measured ? 'measured' : 'default',
+    measuredAt: measured && Number.isFinite(panArc.measuredAt) ? panArc.measuredAt : null,
+    note: measured ? null : DEFAULT_PAN_ARC.note,
+  });
+}
+
+/**
+ * Why one closed-loop move to (panDeg, tiltDeg) must not be attempted, or null when it may go.
+ *
+ * The grid already refuses columns past a stop. A move-to used not to check its target at all.
+ * MCP gimbal_move_to, gimbal_sweep and gimbal_recenter could all drive into a stop; recenter aimed
+ * at pan 0, which is inside the fallback arc's dead zone. A move into a stop does not error. The
+ * gimbal twitches against it while the controller holds a speed, the condition that cooked an OM6.
+ *
+ * Judged against the arc the backend is using. When that is the fallback, the refusal says so: the
+ * fallback was measured at another tripod position, so the target may be reachable from here, and
+ * the fix is to measure, not to move blind.
+ *
+ * This is only for moves an outside caller asks for. The arc probe drives into the stops on purpose,
+ * and the grid plans inside the arc itself. Neither goes through this.
+ */
+export function moveTargetProblem({ panDeg, tiltDeg, arc: arcIn = DEFAULT_PAN_ARC } = {}) {
+  const arc = asArc(arcIn);
+  if (typeof panDeg !== 'number' || !Number.isFinite(panDeg)) {
+    return {
+      error: `pan ${JSON.stringify(panDeg)} is not a finite number of degrees.`,
+      remediation: 'Send yawDeg as a number, -180 to 180.',
+    };
+  }
+  if (typeof tiltDeg !== 'number' || !Number.isFinite(tiltDeg)) {
+    return {
+      error: `tilt ${JSON.stringify(tiltDeg)} is not a finite number of degrees.`,
+      remediation: `Send pitchDeg as a number, ${TILT_MIN_DEG} to ${TILT_MAX_DEG}.`,
+    };
+  }
+  if (!isTiltReachable(tiltDeg)) {
+    return {
+      error: `tilt ${tiltDeg}° is outside the measured travel (${TILT_MIN_DEG}°..+${TILT_MAX_DEG}°). Driving into the tilt stop jams it.`,
+      remediation: 'Keep tilt within about -40°..+10°.',
+    };
+  }
+  if (!isPanReachable(panDeg, arc)) {
+    const [bad] = unreachablePans([panDeg], arc);
+    return {
+      error: `pan ${panDeg}° is ${bad.intoDeadZoneDeg}° past a stop of the reachable arc in use: ${describeArc(arc)}.`,
+      remediation: arc.source === 'measured'
+        ? `Pick a pan inside that arc. Its centre is ${arc.centerDeg}°.`
+        : 'That arc is the built-in fallback, measured at another tripod position, so the target may be '
+          + 'reachable from here. Measure the arc from here first (POST /api/arc-probe, CLI arc-probe, MCP '
+          + 'probe_pan_arc), then move. The joystick still works.',
+    };
+  }
+  return null;
+}
+
+/**
+ * The pans a sweep from `startDeg` to `endDeg` visits, stepping along the reachable arc.
+ *
+ * gimbal_sweep used to interpolate numerically, so 96 -> -114 walked through 0, straight across the
+ * dead zone. Its schema could not even name 171, the fallback arc's own centre. Walking in arc
+ * coordinates goes the way the gimbal can turn (96 -> 180 -> -114). The step count and the last
+ * step are as before: floor(span / step) + 1 positions, and the last lands exactly on `endDeg`.
+ *
+ * Returns `{ pans }`, or `{ error }`. An end outside the arc is refused here, before the first move,
+ * rather than found half way through.
+ */
+export function planSweepAlongArc({ startDeg, endDeg, stepDeg = 15, maxSteps = 60, arc: arcIn = DEFAULT_PAN_ARC } = {}) {
+  const arc = asArc(arcIn);
+  if (![startDeg, endDeg].every((v) => typeof v === 'number' && Number.isFinite(v))) {
+    return { error: 'startYawDeg and endYawDeg must both be finite numbers of degrees.' };
+  }
+  const bad = unreachablePans([startDeg, endDeg], arc);
+  if (bad.length) {
+    return {
+      error: `${bad.map((b) => `${b.pan}°`).join(' and ')} ${bad.length === 1 ? 'is' : 'are'} outside the reachable arc in use: ${describeArc(arc)}.`,
+    };
+  }
+  const from = toArcDeg(startDeg, arc);
+  const to = toArcDeg(endDeg, arc);
+  const step = Math.max(1, Math.abs(Number(stepDeg) || 15));
+  const span = to - from;
+  const direction = span >= 0 ? 1 : -1;
+  const count = Math.floor(Math.abs(span) / step) + 1;
+  if (count > maxSteps) {
+    return { error: `Sweep would take ${count} steps (max ${maxSteps}). Narrow the range or increase stepDeg.` };
+  }
+  const pans = Array.from({ length: count }, (_, i) => (i === count - 1 ? to : from + direction * step * i))
+    .map((a) => Math.round(fromArcDeg(a) * 10) / 10);
+  return { pans };
+}
+
+/* ------------------------------------------------------------------------------------------
  * Measuring the arc where the tripod is actually standing.
  * ---------------------------------------------------------------------------------------- */
 
@@ -584,7 +756,9 @@ function headroomAheadDeg(panDeg, targetDeg, arc) {
 
 /**
  * Margin below which a jam at that pose is "against the stop the plan already knew about"
- * rather than "the arc moved". One dome column step (15 degrees) minus a tolerance's worth.
+ * rather than "the arc moved". The original 15-degree dome column step, minus a tolerance's worth.
+ * (The front-ends now default to a 25-degree step, DOME_PAN_STEP_DEG; this margin is about the move
+ * tolerance, not the column spacing, so it did not change with it.)
  */
 export const JAM_INTERIOR_MARGIN_DEG = 12;
 

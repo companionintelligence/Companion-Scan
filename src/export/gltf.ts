@@ -41,37 +41,9 @@ import type { GeoFix } from '../geo/geo-tracker'
 import type { ScanQualitySummary } from '../world/types'
 import type { FrameEpochsSidecar } from '../ar/frame-epoch'
 import { apiUrl } from '../shared/api-base.ts'
+// One colour per label, shared with the scanner's lists and the mock CV palette (F-44).
+import { labelDisplayHex } from '../shared/cv-palette.ts'
 import { calibrationFrameIdOf } from '../world/frame-replacement.ts'
-
-// Per-category colour palette (used for detection boxes and semantic view)
-const LABEL_COLORS: Record<string, number> = {
-  chair:    0x4fc3f7,
-  table:    0x81c784,
-  sofa:     0xff8a65,
-  couch:    0xff8a65,
-  bed:      0xce93d8,
-  desk:     0xa5d6a7,
-  monitor:  0x80cbc4,
-  tv:       0x80cbc4,
-  door:     0xffcc80,
-  window:   0x80deea,
-  shelf:    0xc5e1a5,
-  bookcase: 0xc5e1a5,
-  lamp:     0xfff176,
-  plant:    0x66bb6a,
-  wall:     0x78909c,
-  floor:    0x546e7a,
-  ceiling:  0x90a4ae,
-  default:  0xb0bec5,
-}
-
-function labelColor(label: string): number {
-  const lower = label.toLowerCase()
-  for (const [key, color] of Object.entries(LABEL_COLORS)) {
-    if (lower.includes(key)) return color
-  }
-  return LABEL_COLORS.default
-}
 
 /** Infer a broad semantic class from the VLM label string */
 function inferClass(label: string): string {
@@ -341,7 +313,7 @@ export async function exportToGLB(data: ExportData, options: ExportOptions = {})
 
       const boxGeo = new THREE.BoxGeometry(bw, bh, bd)
       const boxMat = new THREE.MeshStandardMaterial({
-        color: labelColor(det.label),
+        color: labelDisplayHex(det.label),
         transparent: true,
         opacity: 0.30,
         roughness: 0.9,
@@ -363,7 +335,7 @@ export async function exportToGLB(data: ExportData, options: ExportOptions = {})
       mesh.name = objectId
 
       mesh.add(new THREE.Mesh(boxGeo.clone(),
-        new THREE.MeshBasicMaterial({ color: labelColor(det.label), wireframe: true, transparent: true, opacity: 0.8 })))
+        new THREE.MeshBasicMaterial({ color: labelDisplayHex(det.label), wireframe: true, transparent: true, opacity: 0.8 })))
 
       mesh.userData = {
         objectId:           objectId,

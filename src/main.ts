@@ -13,7 +13,7 @@
 import { createEighthWallProvider } from './ar/eighthwall'
 import { createNativeARProvider, NativeARProvider } from './ar/native'
 import { probeNativeAR } from './ar/native-bridge'
-import { buildForcedRuntime, chooseNativeRuntime, settleNativeProbe } from './ar/runtime-select'
+import { buildForcedRuntime, chooseNativeRuntime, runtimeSwitchHref, settleNativeProbe } from './ar/runtime-select'
 import { createWebXRProvider, WebXRProvider, isImmersiveARSupported } from './ar/webxr'
 import { ScanFrameEpochLog } from './ar/frame-epoch'
 import { ReanchorFlow, autosplitRequested } from './ar/reanchor-flow'
@@ -87,6 +87,7 @@ import {
 import { newPlaceTypeOptionsHtml } from './project/new-place-type.ts'
 import type { AreaKind, PlaceArea, PlaceType } from './world/types'
 import { AROverlay } from './ui/overlay'
+import { startFrameLoop } from './ui/frame-loop.ts'
 import { writeStatus, type StatusPriority } from './ui/status-line'
 import { SidePanel, type ExportOutcome } from './ui/panel'
 import { SessionHistory } from './ui/history'
@@ -96,6 +97,7 @@ import { initShellSignIn } from './shared/shell-sign-in'
 import { apiUrl, editorPath, isDesktopShell, isNativeShell, SCAN_SERVER_CHANGE_EVENT, shellSessionToken, withSessionToken } from './shared/api-base.ts'
 import { exportToGLB } from './export/gltf'
 import { isServerSessionId } from './shared/session-id.ts'
+import { newClientId, newTakeId } from './shared/take-id.ts'
 import { acquireScannerRole } from './shared/scanner-lock.ts'
 import { captureCountFor, highestCaptureIndex, isSameCapture, isSameRecord } from './shared/capture-index.ts'
 import { exportSessionSummary } from './export/summary'
@@ -105,9 +107,13 @@ import { bearingConventionFromSearch, compassSpinTerms, distanceM, formatCompass
 import type { RtcBroadcaster } from './rtc/broadcaster'
 import { WEBRTC_LIVE_ENABLED } from './rtc/feature'
 import { registerPWA } from './pwa'
+import { installPageUploadQueue } from './page-upload-queue.ts'
+import { showQueueNotice } from './ui/queue-notice.ts'
+import { isQueuedOffline } from './shared/offline-queue.ts'
 import { installRemoteLog } from './debug/remote-log'
 import { iconLabel } from './ui/icons'
 import { installKeyboardAvoidance } from './ui/keyboard'
+import { appShell, motionDenialNotice } from './ui/platform-advice.ts'
 import { ONBOARDING_KEY, PLACE_SELECTION_SESSION_KEY } from './shared/storage-keys'
 import { hasDebugFlag } from './shared/debug-flags'
 import { formatPoseDelta, poseDelta } from './capture/pose-delta'
@@ -330,6 +336,11 @@ async function main() {
   // and mountTripodCapture()).
   const scannerRole = await acquireScannerRole(navigator)
   const readOnlyScanner = scannerRole === 'readOnly'
+  // Another scanner page on this origin holds the writer lock, so this page writes nothing. Capture,
+  // stream and person are disabled with this notice as their reason. The place picker is not opened,
+  // because scan, upload and tripod all start there, and a manual export is not run, because it uploads.
+  // Defined with the role, so the start screen can say it before anything else is wired (F-17).
+  const READ_ONLY_NOTICE = 'Scanner is open in another tab. Close it, or reload this page, to capture here.'
   const searchParams = new URLSearchParams(location.search)
   // Onboarding is skipped under mocks (so scan-flow tests don't stall on it) and
   // when explicitly disabled with ?onboarding=0. ?onboarding=1 forces it on even
@@ -354,6 +365,11 @@ async function main() {
   // the focused field back on screen (src/ui/keyboard.ts).
   installKeyboardAvoidance()
 
+  // A read-only page refuses every start-screen tap, and the status line it used to say why in is
+  // painted under #start-screen. So the start screen says it, from the start (F-17). Every refused
+  // tap later says it again, through showReadOnlyNotice().
+  if (readOnlyScanner) showStartScreenNotice(READ_ONLY_NOTICE)
+
   // Walkthrough-video upload — a server-side path that needs no AR runtime or
   // secure context, so wire it before the isSecureContext bail-out below.
   wireContentUpload(readOnlyScanner)
@@ -368,17 +384,36 @@ async function main() {
   // choosing the wrong path costs the most.
   mountCaptureIntent()
 
+  // The desktop app is the editor and viewer, and it never captures. Say so now, on the screen the person
+  // is looking at, rather than seconds later once the runtime checks below have failed, or never, on a
+  // page that returns before them (FN-019). The Start button is left unavailable, and the cards that need
+  // no live capture are what the start screen recommends (setStartButtonState).
+  const desktopApp = isDesktopShell()
+  if (desktopApp) showArHelp(DESKTOP_NO_LIVE_CAPTURE)
+
+  // First-run onboarding, the help button that reopens it, and the return from a shell sign-in. Wired
+  // here, before anything below can return (F-14): in a phone app the onboarding holds the Server row
+  // and the Legal notices, and they matter most on the devices where the boot gives up.
+  wireOnboarding(skipOnboarding)
+
   // Camera, WebXR, and IndexedDB all need a secure context; fail fast with
   // actionable guidance instead of a cascade of cryptic permission errors.
   if (!window.isSecureContext) {
     console.warn(`[main] Secure context (HTTPS) required. To test locally: tailscale cert ${location.hostname}`)
-    const statusEl = document.getElementById('status-text')
-    if (statusEl) statusEl.textContent = `✕ Needs a secure link\n• Ask for the https:// link`
-    setStartButtonState('unavailable', 'Needs a secure (HTTPS) link')
+    // The desktop app keeps its own line: no https:// link would make it capture.
+    if (!desktopApp) {
+      setupStatusOverlay().setStatus(`✕ Needs a secure link\n• Ask for the https:// link`, 'sticky')
+      setStartButtonState('unavailable', 'Needs a secure (HTTPS) link')
+    }
     return
   }
 
   registerPWA({ flushQueue: !readOnlyScanner })
+  // A native shell has no service worker, and its server is on another origin, which a worker could not
+  // see anyway. The page runs the worker's queue itself there, in the same contract and database (F-15,
+  // src/page-upload-queue.ts). A read-only tab queues what it is asked to send, and leaves the sending of
+  // the queue to the writer tab, as registerPWA() does.
+  if (isNativeShell()) installPageUploadQueue({ flush: !readOnlyScanner, notify: showQueueNotice })
 
   const canvas = document.getElementById('camerafeed') as HTMLCanvasElement
   const overlay = setupStatusOverlay()
@@ -459,7 +494,8 @@ async function main() {
     overlay.setStatus('Starting AR…')
 
     const permissionChecks = [p1, p2].filter((p): p is Promise<string> => p !== undefined)
-    const denialNotice = 'Enable motion & orientation access in Settings → Safari → Motion & Orientation Access.'
+    // Safari's setting in Safari, and the app's own remedy in the iOS app (FN-009, src/ui/platform-advice.ts).
+    const denialNotice = motionDenialNotice(appShell())
     try {
       const outcomes = await Promise.all(permissionChecks)
       const refused = outcomes.filter((outcome) => outcome !== 'granted')
@@ -499,7 +535,8 @@ async function main() {
   // land: the handler above is live. A tap this early cannot be answered yet
   // (project selection is not ready), so it is remembered and answered at the
   // end of section 1. It used to get only a status line, and was lost.
-  setStartButtonState('ready')
+  // The desktop app's button stays as the top of main() left it: unavailable, saying why (FN-019).
+  if (!desktopApp) setStartButtonState('ready')
 
   // ── 1. Store + scan accumulators ────────────────────────────────────────────
   // The role was settled at the top of main(), before anything was wired (MAIN9-1, MAIN10-1). A
@@ -520,11 +557,12 @@ async function main() {
     if (store.isSuperseded && statusNode?.textContent !== SUPERSEDED_NOTICE) showSuperseded()
   }
   if (statusNode) new MutationObserver(keepSupersededNotice).observe(statusNode, { childList: true, characterData: true, subtree: true })
-  // Another scanner page on this origin holds the writer lock, so this page writes nothing. Capture,
-  // stream and person are disabled with this notice as their reason. The place picker is not opened,
-  // because scan, upload and tripod all start there, and a manual export is not run, because it uploads.
-  const READ_ONLY_NOTICE = 'Scanner is open in another tab. Close it, or reload this page, to capture here.'
-  const showReadOnlyNotice = () => overlay.setStatus(READ_ONLY_NOTICE, 'sticky')
+  // READ_ONLY_NOTICE is defined with the role, at the top of main(). The status line carries it once AR
+  // runs, and the start screen carries it while that screen covers the status line (F-17).
+  const showReadOnlyNotice = () => {
+    overlay.setStatus(READ_ONLY_NOTICE, 'sticky')
+    showStartScreenNotice(READ_ONLY_NOTICE)
+  }
   if (readOnlyScanner) {
     // Put back after every write to the node, as the superseded notice is. Later boot writes (the AR
     // engine load, for one) would otherwise replace a notice that is held for STATUS_HOLD_MS only.
@@ -940,43 +978,53 @@ async function main() {
   if (nativeActive && nativeProbe) {
     provider = createNativeARProvider({ fallback: createWebRuntimeProvider })
     overlay.setStatus(nativeProbe.engine === 'arcore' ? 'ARCore ready' : 'ARKit ready')
-  } else if (xr8Available) {
-    try {
-      provider = await createEighthWallProvider()
-      use8thWall = true
-      overlay.setStatus(nativeChoice.note ?? '8th Wall ready')
-    } catch (e) {
-      console.warn('[main] 8th Wall init failed, falling back to WebXR:', e)
-      provider = await createWebXRProvider()
-    }
   } else {
-    try {
-      provider = await createWebXRProvider()
-      overlay.setStatus(forcedMode === 'webxr' ? '✓ WebXR ready\n• Native AR session' : '✓ WebXR ready')
-    } catch (e) {
-      // A load that failed or stalled is not a device that cannot do AR, so it gets
-      // its own line with the reload hint. Only "not available" means the device. A page
-      // that never loads the engine ('absent': the desktop app, a page forced into WebXR)
-      // has no download to blame, so it falls to the WebXR line or the device line, and
-      // never to a reload hint.
-      const reason = forcedMode === 'webxr'
-        ? 'WebXR is not available here'
-        : xr8Load === 'timeout'
-          ? 'The AR engine did not load in time\n• Reload the page to try again'
-          : xr8Load === 'failed'
-            ? 'The AR engine did not load\n• Reload the page. If it keeps failing, the server may be down'
-            : 'AR not available on this device'
-      overlay.setStatus(reason)
-      // The reason goes on the start screen too, where the reader is looking. The
-      // overlay above sits under it. See showArHelp().
-      showArHelp(reason)
-      // Arms the section-0 gate to report this instead of dead-ending — see
-      // arRuntimeError. Must be set BEFORE the return, because the tap that
-      // needs it may still be sitting behind the open Place picker.
-      arRuntimeError = reason
-      console.error('[main] No AR runtime available:', e)
-      return
+    // The web runtimes, 8th Wall first when its engine loaded, then WebXR. An 8th Wall provider that
+    // fails to start falls back to WebXR, and a WebXR that then fails ends in the same place as a WebXR
+    // that was the only choice: the reason below, on the start screen and in arRuntimeError (F-16).
+    // That fallback used to be outside every catch, so a double failure escaped to main().catch with no
+    // reason in #ar-help, and an open Place picker could still confirm into "Starting AR…".
+    let webRuntime: ARProvider | null = null
+    if (xr8Available) {
+      try {
+        webRuntime = await createEighthWallProvider()
+        use8thWall = true
+        overlay.setStatus(nativeChoice.note ?? '8th Wall ready')
+      } catch (e) {
+        console.warn('[main] 8th Wall init failed, falling back to WebXR:', e)
+      }
     }
+    if (!webRuntime) {
+      try {
+        webRuntime = await createWebXRProvider()
+        overlay.setStatus(forcedMode === 'webxr' ? '✓ WebXR ready\n• Native AR session' : '✓ WebXR ready')
+      } catch (e) {
+        // A load that failed or stalled is not a device that cannot do AR, so it gets
+        // its own line with the reload hint. Only "not available" means the device. A page
+        // that never loads the engine ('absent': the desktop app, a page forced into WebXR)
+        // has no download to blame, so it falls to the WebXR line or the device line, and
+        // never to a reload hint.
+        const reason = forcedMode === 'webxr'
+          ? 'WebXR is not available here'
+          : xr8Load === 'timeout'
+            ? 'The AR engine did not load in time\n• Reload the page to try again'
+            : xr8Load === 'failed'
+              ? 'The AR engine did not load\n• Reload the page. If it keeps failing, the server may be down'
+              : 'AR not available on this device'
+        overlay.setStatus(reason)
+        // The reason goes on the start screen too, where the reader is looking. The
+        // overlay above sits under it. See showArHelp(). The desktop app's start screen already
+        // says why it cannot capture (FN-019), which is more use to its reader than this.
+        if (!desktopApp) showArHelp(reason)
+        // Arms the section-0 gate to report this instead of dead-ending — see
+        // arRuntimeError. Must be set BEFORE the return, because the tap that
+        // needs it may still be sitting behind the open Place picker.
+        arRuntimeError = reason
+        console.error('[main] No AR runtime available:', e)
+        return
+      }
+    }
+    provider = webRuntime
   }
   // Only offer the WebXR toggle when it would actually work — no point
   // sending desktop/unsupported-browser users to a dead-end landing page.
@@ -1021,6 +1069,9 @@ async function main() {
     // an advertised AR session is not a proven one lives in one tested place.
     setCaptureDevice(deviceFromProbe(probeEnv))
   }
+  // The start screen now says what the probe found. Onboarding opens before the probe (F-14), so for that moment the
+  // screen reads every path as unknown; a test that measures the screen waits for this marker to read it settled.
+  document.getElementById('start-screen')?.setAttribute('data-probe', 'settled')
 
   // ── 4. AR Overlay & Capture setup ──────────────────────────────────────────
   keyframes = new KeyframeStreamer(provider, { hold: () => reanchor.recordingHeld, runId: () => store.arRunId })
@@ -1538,6 +1589,11 @@ async function main() {
   // canvas has the HUD composited into it and is unusable as a reconstruction
   // input. The AR session contributes pose only. See src/capture/clip-recorder.ts.
   let clipRecorder: import('./capture/clip-recorder').ClipRecorder | null = null
+  // A person clip is a take (src/shared/take-id.ts): here a take of one, this device. The recorder writes both ids
+  // into the pose track and the upload sends them, so the take routes, take rooms and member sync have a producer
+  // (FN-028, FN-108). The take is new for each recording, and this page's member id is the same for all of them.
+  let clipTake: ClipTake | null = null
+  let clipClientId: string | null = null
 
   const setPersonCaptureUI = (recording: boolean, label: string) => {
     const btn = document.getElementById('person-capture-btn') as HTMLButtonElement | null
@@ -1552,7 +1608,9 @@ async function main() {
   const stopPersonCapture = async () => {
     if (!clipRecorder) return
     const recorder = clipRecorder
+    const take = clipTake
     clipRecorder = null
+    clipTake = null
     const clip = await recorder.stop()
     setPersonCaptureUI(false, '')
     if (!clip) {
@@ -1583,6 +1641,8 @@ async function main() {
       const result = await uploadPersonClip(clip, {
         projectId: selectedProject?.projectId ?? null,
         areaId: selectedAreaId,
+        takeId: take?.takeId ?? null,
+        clientId: take?.clientId ?? null,
         onProgress: pct => overlay.setStatus(`Uploading clip · ${pct}%`),
       })
       const advisory = verdict.advisories[0]
@@ -1615,7 +1675,9 @@ async function main() {
       let started = false
       try {
         const { ClipRecorder } = await import('./capture/clip-recorder')
-        const recorder = new ClipRecorder(provider)
+        const take = mintClipTake(clipClientId)
+        clipClientId = take?.clientId ?? clipClientId
+        const recorder = new ClipRecorder(provider, { takeId: take?.takeId ?? null, clientId: take?.clientId ?? null })
         recorder.onStatus = (status) => {
           if (status.state === 'starting') {
             overlay.setStatus(status.message)
@@ -1626,7 +1688,8 @@ async function main() {
             overlay.setStatus(status.message)
           }
         }
-        // Assigned before the await, so a stop tap can reach it.
+        // Assigned before the await, so a stop tap can reach it, and the stop finds the take with it.
+        clipTake = take
         clipRecorder = recorder
         started = await recorder.start()
       } catch (err) {
@@ -1634,6 +1697,7 @@ async function main() {
       } finally {
         if (!started) clipRecorder = null
         clipStarting = false
+        if (!started) clipTake = null
       }
       if (!started) return
       if (clipStopAsked) {
@@ -1749,75 +1813,9 @@ async function main() {
     }
   })
 
-  // ── 4b. Onboarding overlay — show once on first visit ────────────────────────
-  const ONBOARD_KEY = ONBOARDING_KEY
-
-  // Shell sign-in: the browser sheet hands the app back here. Outside a shell this does nothing.
-  void initShellSignIn((signedIn) => {
-    void renderFtueStatus(document.getElementById('ftue-status'), fetch, signedIn ? undefined : SIGN_IN_FAILED)
-  })
-
-  function runOnboarding(_isReplay = false): Promise<void> {
-    return new Promise<void>((resolve) => {
-      const ob = document.getElementById('onboarding-overlay')
-      if (!ob) { resolve(); return }
-      ob.classList.add('visible')
-      // Setup rows for the second step. Not awaited: the overlay never waits on the
-      // server. A failed read says so in the rows.
-      void renderFtueStatus(document.getElementById('ftue-status'))
-
-      const steps = ob.querySelectorAll<HTMLElement>('.onboard-step')
-      const dots = ob.querySelectorAll<HTMLElement>('.onboard-dot')
-      const nextBtn = document.getElementById('onboard-next-btn') as HTMLButtonElement
-      const skipBtn = document.getElementById('onboard-skip') as HTMLButtonElement
-      let current = 0
-
-      function goToStep(n: number) {
-        steps.forEach((s, i) => s.classList.toggle('active', i === n))
-        dots.forEach((d, i) => d.classList.toggle('active', i === n))
-        nextBtn.textContent = n === steps.length - 1 ? 'Get Started' : 'Next'
-        current = n
-      }
-
-      goToStep(0)
-      // The overlay is modal: move focus into it, so a keyboard or screen-reader
-      // user starts on its button rather than wherever focus was before it opened.
-      nextBtn.focus()
-
-      function cleanupAndFinish() {
-        localStorage.setItem(ONBOARD_KEY, '1')
-        ob!.classList.remove('visible')
-        // Clean up listeners by cloning the buttons to discard dynamic event listeners
-        const newNextBtn = nextBtn.cloneNode(true)
-        const newSkipBtn = skipBtn.cloneNode(true)
-        nextBtn.parentNode?.replaceChild(newNextBtn, nextBtn)
-        skipBtn.parentNode?.replaceChild(newSkipBtn, skipBtn)
-        resolve()
-      }
-
-      nextBtn.addEventListener('click', () => {
-        if (current < steps.length - 1) {
-          goToStep(current + 1)
-        } else {
-          cleanupAndFinish()
-        }
-      })
-      skipBtn.addEventListener('click', cleanupAndFinish)
-    })
-  }
-
-  if (!skipOnboarding && !localStorage.getItem(ONBOARD_KEY)) {
-    await runOnboarding(false)
-  }
-
-  // Show help button during scanning; re-show onboarding on tap
-  const helpBtn = document.getElementById('help-btn')
-  if (helpBtn) {
-    helpBtn.classList.add('visible')
-    helpBtn.addEventListener('click', () => {
-      void runOnboarding(true)
-    })
-  }
+  // ── 4b. Onboarding overlay ───────────────────────────────────────────────────
+  // Wired at the top of main() by wireOnboarding(), with the help button and the shell sign-in return,
+  // so that a page which returns before this point still has them (F-14).
 
   // Details button opens side panel and scrolls to export section
   const finishScanBtn = document.getElementById('finish-scan-btn')
@@ -1889,8 +1887,10 @@ async function main() {
     }
   })
 
-  // Expose test hooks for E2E validation
-  if (typeof (window as any).__playwright_hooks === 'undefined') {
+  // Test hooks for the browser specs (tests/ar-scan.spec.ts). Installed in a dev build, which is what the
+  // specs run against, and under ?mock=, and nowhere else: a production page and a shell bundle do not
+  // carry a way to write into the live scan from the console (F-06, FN-016).
+  if (testHooksAllowed(import.meta.env.DEV, searchParams) && typeof (window as any).__playwright_hooks === 'undefined') {
     (window as any).__playwright_hooks = {
       simulateScanData: () => {
         poseHistory.push({ position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 } })
@@ -1977,6 +1977,10 @@ async function main() {
   // so the live camera behind it is the thing to look at. A spec asserts this
   // (tests/mock-ftue.spec.ts expects #start-screen gone once scanning begins).
   document.getElementById('start-screen')?.remove()
+  // The pins follow the camera on every runtime from here on. The 8th Wall pipeline used to be their only
+  // clock, so a WebXR or native session never showed one (F-13). The overlay leaves a frame to that
+  // pipeline when it has just drawn it, and draws it itself otherwise (src/ui/frame-loop.ts).
+  startFrameLoop(() => arOverlay.frame())
   // AR is live, so keep the screen up. Without this an unattended capture —
   // the gimbal-driven dome scan is the whole reason this exists — dies at the
   // phone's screen timeout: Chrome backgrounds, visibilityState flips to
@@ -2078,6 +2082,70 @@ async function main() {
     }
   })
   console.log('[main] Room scanner started')
+
+  // The live feed is wired before the calibration, which it does not depend on, so a person who stays in the
+  // calibration modal can already share the view (FN-022). The camera-frame auto-start and the probe log stay
+  // after it: the calibration can change the Place the auto-start is decided by, and a probe tap must not be
+  // a point the frame was built from.
+  // ── WebRTC live-feed broadcaster (experimental, opt-in) ──────────────────
+  // The live-feed room is a rendezvous key, and both halves have to name it
+  // the same way or they never meet. The editor uses the world it is viewing
+  // (viewer.ts: `query.get('world') || 'default'`) while this side was
+  // hardcoded to 'default', so opening any share link for a non-default world
+  // left the editor on "Waiting for phone…" forever with no error.
+  //
+  // Not the same thing as where scans land: uploads are parked in the default
+  // world on purpose (ADR 0003, "these have no world association"), which is
+  // why the "View in 3D" links still point there.
+  if (WEBRTC_LIVE_ENABLED) {
+    const { RtcBroadcaster } = await import('./rtc/broadcaster')
+    const liveFeedRoom = searchParams.get('world') || 'default'
+    const broadcaster = new RtcBroadcaster(liveFeedRoom)
+    rtc = broadcaster   // hand it to the pagehide teardown armed above
+    broadcaster.onStatus = ({ state, message }) => {
+      const btn = document.getElementById('rtc-stream-btn') as HTMLButtonElement | null
+      if (btn) {
+        // Only show the badge while actively streaming
+        btn.style.display = state === 'streaming' ? 'flex' : 'none'
+      }
+      if (state === 'error') overlay.setStatus(`✕ Live sharing error\n• ${message}`)
+    }
+    const streamBtn = document.getElementById('rtc-stream-btn') as HTMLButtonElement | null
+    streamBtn?.addEventListener('click', () => {
+      // Clicking the LIVE badge stops the stream
+      broadcaster.stop()
+    })
+
+    // Wire the panel "Start Live Stream" button.
+    panel.streamButton?.addEventListener('click', () => {
+      if (broadcaster.isRunning) {
+        broadcaster.stop()
+        panel.streamButton!.innerHTML = iconLabel('broadcast', 'Start Live Stream', { size: '15px' })
+      } else {
+        void broadcaster.start(canvas)
+        panel.streamButton!.innerHTML = iconLabel('broadcast', 'Stop Stream', { size: '15px' })
+      }
+    })
+
+    // Mirror detection updates to the desktop viewer over the RTC data channel.
+    // Snapshots are small (<= 50 objects), so a throttled full sync is simpler
+    // and more robust than per-mutation deltas.
+    let detSyncTimer: ReturnType<typeof setTimeout> | null = null
+    store.subscribe(() => {
+      if (detSyncTimer) return
+      detSyncTimer = setTimeout(() => {
+        detSyncTimer = null
+        broadcaster.sendJson({
+          t: 'dets',
+          items: [...store.currentRunDetections().values()].map((d) => ({
+            label: d.label,
+            confidence: d.confidence,
+            pos: [d.worldPos.x, d.worldPos.y, d.worldPos.z],
+          })),
+        })
+      }, 1000)
+    })
+  }
 
   overlay.setStatus('Calibrate the project frame…')
 
@@ -2208,6 +2276,7 @@ async function main() {
     }
     return !!calibration
   }
+
   await calibrateScan()
   reanchor.arm()
 
@@ -2231,66 +2300,6 @@ async function main() {
 
   // A scan in a Place streams camera frames by default (D15), but only on a device that has agreed to it.
   cameraFrames.autoStart(selectedProject !== null)
-
-  // ── WebRTC live-feed broadcaster (experimental, opt-in) ──────────────────
-  // The live-feed room is a rendezvous key, and both halves have to name it
-  // the same way or they never meet. The editor uses the world it is viewing
-  // (viewer.ts: `query.get('world') || 'default'`) while this side was
-  // hardcoded to 'default', so opening any share link for a non-default world
-  // left the editor on "Waiting for phone…" forever with no error.
-  //
-  // Not the same thing as where scans land: uploads are parked in the default
-  // world on purpose (ADR 0003, "these have no world association"), which is
-  // why the "View in 3D" links still point there.
-  if (WEBRTC_LIVE_ENABLED) {
-    const { RtcBroadcaster } = await import('./rtc/broadcaster')
-    const liveFeedRoom = searchParams.get('world') || 'default'
-    const broadcaster = new RtcBroadcaster(liveFeedRoom)
-    rtc = broadcaster   // hand it to the pagehide teardown armed above
-    broadcaster.onStatus = ({ state, message }) => {
-      const btn = document.getElementById('rtc-stream-btn') as HTMLButtonElement | null
-      if (btn) {
-        // Only show the badge while actively streaming
-        btn.style.display = state === 'streaming' ? 'flex' : 'none'
-      }
-      if (state === 'error') overlay.setStatus(`✕ Live sharing error\n• ${message}`)
-    }
-    const streamBtn = document.getElementById('rtc-stream-btn') as HTMLButtonElement | null
-    streamBtn?.addEventListener('click', () => {
-      // Clicking the LIVE badge stops the stream
-      broadcaster.stop()
-    })
-
-    // Wire the panel "Start Live Stream" button.
-    panel.streamButton?.addEventListener('click', () => {
-      if (broadcaster.isRunning) {
-        broadcaster.stop()
-        panel.streamButton!.innerHTML = iconLabel('broadcast', 'Start Live Stream', { size: '15px' })
-      } else {
-        void broadcaster.start(canvas)
-        panel.streamButton!.innerHTML = iconLabel('broadcast', 'Stop Stream', { size: '15px' })
-      }
-    })
-
-    // Mirror detection updates to the desktop viewer over the RTC data channel.
-    // Snapshots are small (<= 50 objects), so a throttled full sync is simpler
-    // and more robust than per-mutation deltas.
-    let detSyncTimer: ReturnType<typeof setTimeout> | null = null
-    store.subscribe(() => {
-      if (detSyncTimer) return
-      detSyncTimer = setTimeout(() => {
-        detSyncTimer = null
-        broadcaster.sendJson({
-          t: 'dets',
-          items: [...store.currentRunDetections().values()].map((d) => ({
-            label: d.label,
-            confidence: d.confidence,
-            pos: [d.worldPos.x, d.worldPos.y, d.worldPos.z],
-          })),
-        })
-      }, 1000)
-    })
-  }
 
   overlay.setProgress(null)
 
@@ -2451,12 +2460,38 @@ async function main() {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** The take a person clip is recorded in, and this device's member id in it (src/shared/take-id.ts). */
+interface ClipTake {
+  takeId: string
+  clientId: string
+}
+
+/**
+ * A new take for the next person clip, keeping this page's member id once there is one (FN-028, FN-108). Null
+ * where the browser cannot mint ids (no crypto.randomUUID: iOS before 15.4), and the clip then goes up without a
+ * take, as every clip did before.
+ */
+function mintClipTake(clientId: string | null): ClipTake | null {
+  try {
+    return { takeId: newTakeId(), clientId: clientId ?? newClientId() }
+  } catch (error) {
+    console.warn('[clip] no take ids on this browser; the clip is sent without one:', error)
+    return null
+  }
+}
+
+/** Whether this page may install `window.__playwright_hooks`: a dev build, or a page under `?mock=` (F-06). */
+function testHooksAllowed(devBuild: boolean, search: URLSearchParams): boolean {
+  return devBuild || search.has('mock')
+}
+
 function setupStatusOverlay() {
   return {
     /**
      * Pass `'sticky'` for a message the user must be able to read — see
-     * ./ui/status-line.ts. Shares its hold with `AROverlay.setStatus`, because
-     * both write the same `#status-text` node.
+     * ./ui/status-line.ts. Every writer of `#status-text` goes through here or
+     * through writeStatus() itself (src/pwa.ts, the boot's own failure lines), so
+     * the hold is the same whichever of them writes (FN-010).
      */
     setStatus(text: string, priority: StatusPriority = 'normal') {
       writeStatus(document.getElementById('status-text'), text, priority)
@@ -2508,7 +2543,9 @@ async function resolveInitialProject(projectStore: ProjectStore): Promise<Projec
     store: projectStore,
     list: await fetchPlaceList(),
     queryProject: new URLSearchParams(location.search).get('project'),
-    storedSelection: sessionStorage.getItem(PLACE_SELECTION_SESSION_KEY) || localStorage.getItem(PLACE_SELECTION_SESSION_KEY),
+    // sessionStorage only: every write of the selection goes there (the picker, ?project=), and nothing in the app
+    // writes this key to localStorage, so a localStorage fallback could only read a value some older build left (FN-015).
+    storedSelection: sessionStorage.getItem(PLACE_SELECTION_SESSION_KEY),
     onQueryChoice: (projectId) => sessionStorage.setItem(PLACE_SELECTION_SESSION_KEY, JSON.stringify({ projectId })),
   })
 }
@@ -2585,11 +2622,11 @@ function mountPlacePicker(
   }
 
   const render = async () => {
-    let listFailed = false
-    const listed = await fetchProjects().catch(() => {
-      listFailed = true
-      return []
-    })
+    // The one reader of GET /projects (src/project/frame-sync.ts), as the boot's resolveInitialProject() reads it:
+    // it gives up after a timeout, and a service worker's queued-offline answer is not a list (F-44, FN-014).
+    const list = await fetchPlaceList()
+    const listFailed = !list.ok
+    const listed = list.places
     // A frame this phone calibrated and the server does not hold yet stands for the Place's frame, and its row says so.
     const waiting = await projectStore.listPendingFrames().catch(() => [])
     const unsynced = unsyncedPlaceIds(waiting)
@@ -3048,12 +3085,6 @@ function escapeHtml(value: string): string {
   return el.innerHTML
 }
 
-async function fetchProjects(): Promise<Project[]> {
-  const response = await fetch(apiUrl('/projects'))
-  if (!response.ok) return []
-  return await response.json() as Project[]
-}
-
 /**
  * One-time HUD warning when IndexedDB usage crosses 80 % of the browser quota.
  *
@@ -3157,16 +3188,23 @@ function showArHelp(reason: string): void {
   setStartButtonState('unavailable', headline)
   const nextStep = steps.map((line) => line.replace(/^•\s*/, '')).join(' ')
   const ua = navigator.userAgent
-  const isIOS = /iPhone|iPad|iPod/i.test(ua)
+  // The app the page runs in picks the advice. The user agent only says which browser a page is in, and in the
+  // phone apps it named a browser to switch to, which is no remedy for an app that runs its own AR (FN-009).
+  const app = appShell()
+  const isIOS = app === null && /iPhone|iPad|iPod/i.test(ua)
   // The desktop app is the editor and viewer and never captures. Its origin (tauri://localhost) is no address a phone
   // can open, so it must not be offered as one: the browser line below is for a page someone reached by URL.
-  const plain = isDesktopShell()
+  const plain = app === 'desktop'
     ? 'The desktop app cannot capture. Scan on a phone.'
-    : isIOS
-      ? 'To capture live in Safari, use the main scanner, or install HelloXR.'
-      : /Android/i.test(ua)
-        ? 'Live capture needs Chrome with Play Services for AR.'
-        : `To capture live, open this on a phone: ${location.origin}`
+    : app === 'ios'
+      ? 'Live capture needs an iPhone or iPad that supports ARKit.'
+      : app === 'android'
+        ? 'Live capture needs Google Play Services for AR on this phone.'
+        : isIOS
+          ? 'To capture live in Safari, use the main scanner, or install HelloXR.'
+          : /Android/i.test(ua)
+            ? 'Live capture needs Chrome with Play Services for AR.'
+            : `To capture live, open this on a phone: ${location.origin}`
 
   const el = document.getElementById('ar-help')
   if (!el) {
@@ -3188,6 +3226,107 @@ function showArHelp(reason: string): void {
     el.textContent = plain
   }
   el.hidden = false
+}
+
+/**
+ * The desktop app's reason, as showArHelp() takes it: one line, the Start button's label. It has no
+ * next step, so #ar-help gets showArHelp()'s desktop line, which says to scan on a phone (FN-019).
+ */
+const DESKTOP_NO_LIVE_CAPTURE = 'Live capture needs a phone'
+
+/**
+ * Say something on the start screen, in the line under the cards (F-17).
+ *
+ * `#status-text` is painted under `#start-screen` (z-index 10 against 20), so a notice written only
+ * there is not seen while the start screen stands. This is the line the upload and tripod paths
+ * report on. A read-only page, the caller, uploads nothing, so the line is free there. Once AR is
+ * running the start screen is gone, and the status line is the place again.
+ */
+function showStartScreenNotice(text: string): void {
+  if (!document.getElementById('start-screen')) return
+  const line = document.getElementById('upload-video-progress')
+  if (line) line.textContent = text
+}
+
+/**
+ * First-run onboarding, the help button that reopens it, and the return from a shell sign-in.
+ *
+ * Called near the top of main(), before the boot can return on an insecure page or when no AR
+ * runtime can be made (F-14). In a phone app the overlay's second step holds the Server row and the
+ * Legal notices (src/ui/ftue-status.ts), and a sign-in started there comes back through
+ * initShellSignIn(). All three have to work on the devices where the boot gives up, which is where a
+ * wrong server address or a missing sign-in is most likely to be the reason.
+ *
+ * Nothing awaits the overlay. It covers the start screen (z-index 25 over 20) until it is dismissed,
+ * so no tap reaches the cards through it, and the boot carries on behind it.
+ */
+function wireOnboarding(skip: boolean): void {
+  // Shell sign-in: the browser sheet hands the app back here. Outside a shell this does nothing.
+  void initShellSignIn((signedIn) => {
+    void renderFtueStatus(document.getElementById('ftue-status'), fetch, signedIn ? undefined : SIGN_IN_FAILED)
+  })
+
+  if (!skip && !localStorage.getItem(ONBOARDING_KEY)) void runOnboarding()
+
+  // The help button reopens the overlay at any time. It sits above #start-screen (index.html), so
+  // "at any time" includes a start screen the boot has given up on.
+  const helpBtn = document.getElementById('help-btn')
+  if (helpBtn) {
+    helpBtn.classList.add('visible')
+    helpBtn.addEventListener('click', () => {
+      void runOnboarding()
+    })
+  }
+}
+
+/** Show the onboarding overlay from its first step. Resolves when it is finished or skipped. */
+function runOnboarding(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const ob = document.getElementById('onboarding-overlay')
+    if (!ob) { resolve(); return }
+    ob.classList.add('visible')
+    // Setup rows for the second step. Not awaited: the overlay never waits on the
+    // server. A failed read says so in the rows.
+    void renderFtueStatus(document.getElementById('ftue-status'))
+
+    const steps = ob.querySelectorAll<HTMLElement>('.onboard-step')
+    const dots = ob.querySelectorAll<HTMLElement>('.onboard-dot')
+    const nextBtn = document.getElementById('onboard-next-btn') as HTMLButtonElement
+    const skipBtn = document.getElementById('onboard-skip') as HTMLButtonElement
+    let current = 0
+
+    function goToStep(n: number) {
+      steps.forEach((s, i) => s.classList.toggle('active', i === n))
+      dots.forEach((d, i) => d.classList.toggle('active', i === n))
+      nextBtn.textContent = n === steps.length - 1 ? 'Get Started' : 'Next'
+      current = n
+    }
+
+    goToStep(0)
+    // The overlay is modal: move focus into it, so a keyboard or screen-reader
+    // user starts on its button rather than wherever focus was before it opened.
+    nextBtn.focus()
+
+    function cleanupAndFinish() {
+      localStorage.setItem(ONBOARDING_KEY, '1')
+      ob!.classList.remove('visible')
+      // Clean up listeners by cloning the buttons to discard dynamic event listeners
+      const newNextBtn = nextBtn.cloneNode(true)
+      const newSkipBtn = skipBtn.cloneNode(true)
+      nextBtn.parentNode?.replaceChild(newNextBtn, nextBtn)
+      skipBtn.parentNode?.replaceChild(newSkipBtn, skipBtn)
+      resolve()
+    }
+
+    nextBtn.addEventListener('click', () => {
+      if (current < steps.length - 1) {
+        goToStep(current + 1)
+      } else {
+        cleanupAndFinish()
+      }
+    })
+    skipBtn.addEventListener('click', cleanupAndFinish)
+  })
 }
 
 /**
@@ -4744,13 +4883,14 @@ function updateXrModeLink(use8thWall: boolean, webxrSupported: boolean): void {
       return
     }
     link.style.display = ''
-    link.href = '/?ar=webxr'
+    // The page's other query parameters go with it (FN-013).
+    link.href = runtimeSwitchHref(location.search, 'webxr')
     link.title = 'Switch to WebXR scanner'
     link.setAttribute('aria-label', 'Switch to WebXR scanner')
     link.classList.remove('active')
   } else {
     link.style.display = ''
-    link.href = '/'
+    link.href = runtimeSwitchHref(location.search, 'default')
     link.title = 'WebXR mode active — switch back to 8th Wall scanner'
     link.setAttribute('aria-label', 'Switch to 8th Wall scanner')
     link.classList.add('active')
@@ -4758,6 +4898,8 @@ function updateXrModeLink(use8thWall: boolean, webxrSupported: boolean): void {
 }
 
 let _inferDialogTimer: ReturnType<typeof setTimeout> | null = null
+/** #infer-dialog-title as index.html ships it: the title of a capture's result. */
+const INFER_DIALOG_TITLE = 'Latest scan'
 
 function showInferDialog(dets: Array<{ label: string; description: string; confidence: number; worldPos: { x: number; y: number; z: number } }>): void {
   const dialog = document.getElementById('infer-dialog')
@@ -4781,6 +4923,11 @@ function showInferDialog(dets: Array<{ label: string; description: string; confi
   }
 
   if (dets.length === 0) return
+
+  // showProcessingResult() titles this dialog after a server action. A capture result is the
+  // dialog's own content, so it gets the markup's own title back (FN-012).
+  const title = document.getElementById('infer-dialog-title')
+  if (title) title.textContent = INFER_DIALOG_TITLE
 
   // `label` and `description` come straight from the inference engine. A real VLM
   // (ollama/onnx) can emit angle brackets or stray markup, so they are set as text
@@ -4864,6 +5011,12 @@ async function requestServerProcessing(action: string, store: DetectionStore, fi
         sessionId: isServerSessionId(store.sessionId) ? store.sessionId : undefined,
       }),
     })
+    // A service worker that took the request offline answers 202 with no result in it. Reading that as a
+    // result said "Done" over an undefined action (FN-011). The request is held and runs once back online.
+    if (isQueuedOffline(resp)) {
+      overlay.setStatus('Offline — processing request held\n• It runs when you are back online', 'sticky')
+      return
+    }
     if (!resp.ok) throw new Error(`/process-scan returned ${resp.status}`)
     const result = await resp.json() as { action: string; result: string }
     overlay.setStatus(`✓ Done\n• ${result.action}`)
@@ -4894,8 +5047,8 @@ function showProcessingResult(result: { action: string; result: string }): void 
 
 main().catch((e: unknown) => {
   console.error('[main]', e)
-  const el = document.getElementById('status-text')
-  if (el) el.textContent = `Error: ${e instanceof Error ? e.message : String(e)}`
+  // Through the status line's own writer, so the hold applies to it as to every other write (FN-010).
+  setupStatusOverlay().setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`, 'sticky')
   // Boot died. If it got as far as section 0 the button is enabled but its
   // handler leads nowhere; if it died before that it is still pulsing
   // "Preparing…" for a boot that will never finish. Either way, say so.
@@ -4918,7 +5071,8 @@ function updateGeoIndicator(fix: GeoFix): void {
     // Kept in the DOM and up to date either way — armed, it is a live readout;
     // unarmed, it costs no height. See the #geo-coords rule in index.html for
     // why the height matters.
-    coords.classList.toggle('debug-armed', new URLSearchParams(location.search).get('debug') === 'geo')
+    // A ?debug= token like any other, so ?debug=geo,pose arms both (FN-007, src/shared/debug-flags.ts).
+    coords.classList.toggle('debug-armed', hasDebugFlag('geo'))
   }
 
   if (needle && fix.bearing !== null) {

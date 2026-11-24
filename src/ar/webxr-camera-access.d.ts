@@ -1,9 +1,13 @@
 /**
  * Ambient types for the WebXR "raw camera access" module feature
- * (https://immersive-web.github.io/raw-camera-access/), used by
- * src/ar/webxr.ts to read capture-button frames off the same camera session
- * ARCore already claims for tracking (see that file's header comment for
- * why).
+ * (https://immersive-web.github.io/raw-camera-access/), for reading
+ * capture-button frames off the same camera session ARCore already claims for
+ * tracking. src/ar/webxr.ts does not take that path: it never asks for
+ * 'camera-access' (its optionalFeatures are dom-overlay, local-floor and
+ * anchors) and reads capture frames from a companion getUserMedia() stream,
+ * because raw camera access is too sparsely supported to rely on (see that
+ * file's header). Nothing in src reads these declarations today (FN-043); they
+ * are kept for that path, and are a deletion candidate if it is not taken.
  *
  * @types/webxr@0.5.24 (pinned in package.json) declares `XRWebGLBinding`
  * (for layers) and its depth-sensing extension, but not this module: no

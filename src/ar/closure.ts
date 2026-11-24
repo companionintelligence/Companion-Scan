@@ -60,6 +60,7 @@
 import { ACCURACY_TARGET_M, SIGMA0_M, WORKING_RADIUS_M } from '../world/frame-fit.ts'
 import { transformPoint } from '../world/geo.ts'
 import { wrapDeg } from '../capture/pose-delta.ts'
+import { pathLengthM } from '../shared/pose-math.ts'
 import type { Vec3 } from '../world/types.ts'
 import type { TapSource } from './tap-sampling.ts'
 
@@ -200,6 +201,9 @@ export function measureClosure(input: ClosureInput): ClosureResult {
  * The turn about the vertical, in degrees, that carries `from` onto `to` best in the least-squares sense, both taken
  * about their centres, with the sign of `twoPointHeadingDeg` (positive turns +Z toward +X). Null when either set has
  * no extent on the floor (every point on one spot), which leaves no direction to turn.
+ *
+ * Not shared with the fit heading in src/world/frame-fit.ts, which looks like it (FN-038): that one accumulates the
+ * cross term with the opposite sign, and its pass also gathers the mirrored sums its verdict needs.
  */
 function bestTurnDeg(from: readonly Vec3[], to: readonly Vec3[]): number | null {
   const n = from.length
@@ -266,23 +270,10 @@ export function judgeClosure(closure: ClosureMeasurement): ClosureJudgement {
 // ── The path walked ─────────────────────────────────────────────────────────
 
 /**
- * How far the camera walked through `poses`, in metres, from index `fromIndex` on: the sum of the straight-line
- * distances between consecutive positions. A pose whose position is not a finite number is skipped and the walk goes
- * on from the last good one, so one bad sample neither adds nothing nor adds a jump. An index outside the list reads
- * as the nearest end, so a trail that was emptied after the index was taken measures what it holds now.
+ * How far the camera walked through `poses`, in metres, from index `fromIndex` on. It lives in src/shared/pose-math.ts,
+ * where the session summary's path length reads it too (wave 14, FN-038), and is exported from here under its name.
  */
-export function pathLengthM(poses: ReadonlyArray<{ position: Vec3 }>, fromIndex = 0): number {
-  const start = Math.min(Math.max(Number.isFinite(fromIndex) ? Math.floor(fromIndex) : 0, 0), poses.length)
-  let length = 0
-  let last: Vec3 | null = null
-  for (let i = start; i < poses.length; i++) {
-    const position = poses[i]!.position
-    if (!finitePoint(position)) continue
-    if (last) length += Math.hypot(position.x - last.x, position.y - last.y, position.z - last.z)
-    last = position
-  }
-  return length
-}
+export { pathLengthM }
 
 // ── The record ──────────────────────────────────────────────────────────────
 

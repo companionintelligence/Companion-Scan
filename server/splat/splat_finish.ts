@@ -14,9 +14,10 @@
  *                          through Spark's standard PLY path.
  *
  * The driver never hard-crashes the server:
- *   - a missing input splat or a missing splat-transform CLI yields a `skipped`
- *     result with a remediation hint (exactly like splat_train handles a
- *     missing Brush binary),
+ *   - a missing input splat, a missing splat-transform CLI or a missing node
+ *     yields a `skipped` result with a remediation hint (exactly like
+ *     splat_train handles a missing Brush binary). node and the CLI resolve
+ *     through the same table GET /capabilities reports (server/exec_probe.ts),
  *   - a CLI crash or a run that produced no output yields an `error` result.
  *
  * splat-transform facts baked in (confirmed via the real CLI v2.7.1 on this box):
@@ -29,10 +30,9 @@
  *   the Ollama/torch GPUs on this box. Writing .compressed.ply needs no GPU.
  */
 
-import { fromFileUrl } from '@std/path'
-import { REPO_ROOT } from '../repo-root.ts'
+import { isNotFoundSpawnError, locateTool, runnerToolLookup, toolSkip } from '../exec_probe.ts'
 import { countPlyVertices } from './splat_train.ts'
-import { budgetFromEnv, runWithDeadline } from '../run_with_deadline.ts'
+import { budgetFromEnv, finishRun, intFromEnv, KILL_GRACE_MS, runWithDeadline, writeRunnerManifest } from '../run_with_deadline.ts'
 // The manifest types live in src/world/manifests.ts, not here — see that
 // file's header (it's the canonical, Deno-API-free home so the browser
 // viewer can type-import it without dragging this file's `Deno.*` calls into
@@ -41,11 +41,12 @@ import { budgetFromEnv, runWithDeadline } from '../run_with_deadline.ts'
 import type { SplatFinishManifest, SplatFinishSizes } from '../../src/world/types.ts'
 export type { SplatFinishManifest, SplatFinishSizes }
 
-// fromFileUrl, not `.pathname`: the latter yields "/C:/…" on Windows, which
-// Deno.Command resolves against the drive root and fails to find.
-const DEFAULT_CLI_PATH = fromFileUrl(
-  new URL('./node_modules/@playcanvas/splat-transform/bin/cli.mjs', REPO_ROOT),
-)
+/**
+ * The devDependency's own CLI in this checkout's node_modules: the shared
+ * table's fallback (runnerToolLookups, server/exec_probe.ts), which resolves it
+ * against the repo root with fromFileUrl so a Windows path is not "/C:/…".
+ */
+const DEFAULT_CLI_PATH = runnerToolLookup('splat-transform-cli').fallbacks[0]
 
 export interface SplatFinishRunOptions {
   /** Absolute path to the scan's trained splat (<SCANS>/<base>.splat.ply). */
@@ -64,6 +65,12 @@ export interface SplatFinishRunOptions {
   gpu?: string
   /** SH-compression k-means iterations. Env SPLAT_FINISH_SH_ITERS, then 10. */
   iterations?: number
+  /**
+   * For testing: whether `bin` is a node that can be run. Defaults to the
+   * shared resolver, so a `_spawn` test does not depend on the host's node.
+   * Ignored unless `_spawn` is set too.
+   */
+  _nodeFound?: (bin: string) => Promise<boolean>
   /** For testing: skip the real spawn and treat these results as the CLI run. */
   _spawn?: (
     bin: string,
@@ -72,6 +79,11 @@ export interface SplatFinishRunOptions {
   ) => Promise<{ code: number; stderr: string; timeoutReason?: string | null }>
   /** Provenance forwarded into the manifest. */
   provenance?: { sessionId?: string; scanId?: string }
+  /**
+   * Stops the run when it fires: the job pump passes its job's signal, so a job
+   * it has given up on does not leave its child running (F-27).
+   */
+  signal?: AbortSignal
 }
 
 export type SplatFinishStatus = 'ok' | 'skipped' | 'error'
@@ -153,14 +165,33 @@ export async function runSplatFinish(opts: SplatFinishRunOptions): Promise<Splat
   }
 
   // 2. Guard: the splat-transform CLI must exist (it is an npm devDependency).
+  const cliLookup = runnerToolLookup('splat-transform-cli')
   if (!(await exists(params.cliPath))) {
     return _finish(manifestPath, {
       ...baseManifest,
       status: 'skipped',
       skippedReason: `splat-transform CLI not found: ${params.cliPath}`,
-      remediation: 'npm install (or set SPLAT_TRANSFORM_CLI to a @playcanvas/splat-transform bin/cli.mjs).',
+      remediation: cliLookup.remediation,
     }, 0, `splat-transform cli missing: ${params.cliPath}`)
   }
+
+  // 3. Guard: node must be runnable. A missing node is a missing tool, the
+  //    same skip as a missing CLI, not a spawn error. SPLAT_FINISH_NODE (or
+  //    the option) is taken at its word; a bare name is looked up on PATH.
+  const nodeLookup = runnerToolLookup('splat-finish-node')
+  const nodeLocation = opts._spawn && opts._nodeFound
+    ? { found: await opts._nodeFound(params.nodeBin), path: params.nodeBin, searched: [params.nodeBin] }
+    : opts._spawn
+    ? { found: true, path: params.nodeBin, searched: [params.nodeBin] }
+    : await locateTool(nodeLookup, { explicit: params.nodeBin })
+  if (!nodeLocation.found) {
+    return _finish(manifestPath, {
+      ...baseManifest,
+      status: 'skipped',
+      ...toolSkip(nodeLookup, nodeLocation, 'node for splat-transform'),
+    }, 0, `splat-finish node missing: ${params.nodeBin}`)
+  }
+  const nodeBin = nodeLocation.path ?? params.nodeBin
 
   // Input stats for the manifest ratios.
   const inputBytes = inputInfo.size
@@ -173,15 +204,23 @@ export async function runSplatFinish(opts: SplatFinishRunOptions): Promise<Splat
   }
   baseManifest.gaussianCount = gaussianCount
 
-  // 3. Leg 1: PLY → SOG bundle.
+  // 4. Leg 1: PLY → SOG bundle.
   const sogArgs = buildSogArgs(params.cliPath, opts.splatPlyPath, opts.outputSogPath, params)
   let sogRun: { code: number; stderr: string; timeoutReason?: string | null }
   try {
     sogRun = opts._spawn
-      ? await opts._spawn(params.nodeBin, sogArgs, {})
-      : await defaultSpawn(params.nodeBin, sogArgs, {})
+      ? await opts._spawn(nodeBin, sogArgs, {})
+      : await defaultSpawn(nodeBin, sogArgs, {}, opts.signal)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
+    // node vanished between the probe and the spawn: still a missing tool.
+    if (isNotFoundSpawnError(e)) {
+      return _finish(manifestPath, {
+        ...baseManifest,
+        status: 'skipped',
+        ...toolSkip(nodeLookup, { found: false, path: nodeBin, searched: [nodeBin] }, 'node for splat-transform'),
+      }, 0, msg)
+    }
     return _finish(manifestPath, {
       ...baseManifest,
       status: 'error',
@@ -199,13 +238,13 @@ export async function runSplatFinish(opts: SplatFinishRunOptions): Promise<Splat
     }, sogRun.code, sogRun.stderr)
   }
 
-  // 4. Leg 2: PLY → compressed PLY.
+  // 5. Leg 2: PLY → compressed PLY.
   const compressedArgs = buildCompressedArgs(params.cliPath, opts.splatPlyPath, opts.outputCompressedPlyPath)
   let compressedRun: { code: number; stderr: string; timeoutReason?: string | null }
   try {
     compressedRun = opts._spawn
-      ? await opts._spawn(params.nodeBin, compressedArgs, {})
-      : await defaultSpawn(params.nodeBin, compressedArgs, {})
+      ? await opts._spawn(nodeBin, compressedArgs, {})
+      : await defaultSpawn(nodeBin, compressedArgs, {}, opts.signal)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return _finish(manifestPath, {
@@ -225,7 +264,7 @@ export async function runSplatFinish(opts: SplatFinishRunOptions): Promise<Splat
     }, compressedRun.code, compressedRun.stderr)
   }
 
-  // 5. Verify + size the outputs. A zero-exit run with no artifact is an error.
+  // 6. Verify + size the outputs. A zero-exit run with no artifact is an error.
   const sogInfo = await statQuietly(opts.outputSogPath)
   const compressedInfo = await statQuietly(opts.outputCompressedPlyPath)
   if (!sogInfo?.isFile || !compressedInfo?.isFile) {
@@ -300,36 +339,28 @@ async function defaultSpawn(
   bin: string,
   args: string[],
   extraEnv: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<{ code: number; stderr: string; timeoutReason: string | null }> {
   const output = await runWithDeadline(
     bin,
     { args, env: extraEnv, stdout: 'piped', stderr: 'piped' },
     budgetFromEnv('SPLAT_FINISH_TIMEOUT_MS', DEFAULT_FINISH_TIMEOUT_MS),
+    KILL_GRACE_MS,
+    signal,
   )
   const stderr = new TextDecoder().decode(output.stderr).trim()
   return { code: output.code, stderr, timeoutReason: output.timeoutReason }
 }
 
 async function writeManifest(path: string, manifest: SplatFinishManifest): Promise<void> {
-  try {
-    await Deno.writeTextFile(path, JSON.stringify(manifest, null, 2))
-  } catch (e) {
-    console.warn('[splat-finish] failed to write manifest:', e)
-  }
+  await writeRunnerManifest(path, manifest, 'splat-finish')
 }
 
-async function _finish(
+function _finish(
   manifestPath: string,
   manifest: SplatFinishManifest,
   exitCode: number,
   log: string,
 ): Promise<SplatFinishResult> {
-  await writeManifest(manifestPath, manifest)
-  return { status: manifest.status, manifest, log, exitCode }
-}
-
-function intFromEnv(name: string, fallback: number): number {
-  const raw = Deno.env.get(name)
-  const n = raw ? Number(raw) : NaN
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
+  return finishRun(manifestPath, manifest, exitCode, log, 'splat-finish')
 }

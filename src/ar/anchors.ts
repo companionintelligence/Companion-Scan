@@ -132,7 +132,8 @@
  *   anchors are an offset matrix kept in localStorage. "Anchors granted" therefore means "the API exists", never "the room
  *   is pinned".
  */
-import { wrapDeg, type PoseLike } from '../capture/pose-delta.ts'
+import type { PoseLike } from '../capture/pose-delta.ts'
+import { rotationAngleDeg, yawAboutVerticalDeg } from '../shared/pose-math.ts'
 import { RUNTIME_ANCHOR_STORE_KEY } from '../shared/storage-keys.ts'
 
 /** The feature descriptor the Anchors Module introduces, as requestSession() takes it. */
@@ -351,8 +352,6 @@ export interface AnchorOptions {
 
 // --- pose helpers ------------------------------------------------------------------------------------------------
 
-const RAD_TO_DEG = 180 / Math.PI
-
 function copyPose(pose: PoseLike): PoseLike {
   return {
     position: { x: pose.position.x, y: pose.position.y, z: pose.position.z },
@@ -370,39 +369,12 @@ function isUsablePose(pose: PoseLike | null | undefined): pose is PoseLike {
 }
 
 /**
- * The rotation that takes `from` to `to`: to times the conjugate of from, in the Hamilton convention. Not normalised, which
- * the two callers do not need: they take ratios of its parts.
+ * The full turn and the turn about the vertical between two orientations, from src/shared/pose-math.ts (wave 14, F-40),
+ * where the frame tracker's twist (`yawTwistDeg`) and the camera heading (`cameraHeadingDeg`) sit beside them. Both read
+ * a zero quaternion as no turn and never answer NaN for finite input, the rule an anchor's movement report needs. They
+ * are exported from here as well, under the names this module has always exported them by.
  */
-function relativeRotation(from: PoseLike['rotation'], to: PoseLike['rotation']): PoseLike['rotation'] {
-  return {
-    x: -to.w * from.x + to.x * from.w - to.y * from.z + to.z * from.y,
-    y: -to.w * from.y + to.x * from.z + to.y * from.w - to.z * from.x,
-    z: -to.w * from.z - to.x * from.y + to.y * from.x + to.z * from.w,
-    w: to.w * from.w + to.x * from.x + to.y * from.y + to.z * from.z,
-  }
-}
-
-/**
- * The angle, in degrees, of the turn that takes rotation `a` to rotation `b`: 0 to 180, whichever way it goes, and the
- * same for q and -q. Two equal rotations give 0 to within rounding (under 1e-13 degrees). Taken as an arctangent of the
- * relative rotation's parts, so a quaternion that is a rounding error off unit length cannot give NaN (an arccosine of
- * 1.0000000000000002 would).
- */
-export function rotationAngleDeg(a: PoseLike['rotation'], b: PoseLike['rotation']): number {
-  const r = relativeRotation(a, b)
-  return 2 * Math.atan2(Math.hypot(r.x, r.y, r.z), Math.abs(r.w)) * RAD_TO_DEG
-}
-
-/**
- * The turn about world +Y that is part of the turn from `a` to `b`, degrees in (-180, 180], counter-clockwise from above
- * positive. This is the twist of the relative rotation about the vertical axis. Differencing two headings extracted from
- * the poses instead (src/capture/pose-delta.ts) is right for a camera but not for an anchor whose own +Y lies flat, such
- * as one made on a wall: it jumps by about 90 degrees for a one degree tilt.
- */
-export function yawAboutVerticalDeg(a: PoseLike['rotation'], b: PoseLike['rotation']): number {
-  const r = relativeRotation(a, b)
-  return wrapDeg(2 * Math.atan2(r.y, r.w) * RAD_TO_DEG)
-}
+export { rotationAngleDeg, yawAboutVerticalDeg }
 
 function movementBetween(from: PoseLike, to: PoseLike): AnchorMovement {
   return {

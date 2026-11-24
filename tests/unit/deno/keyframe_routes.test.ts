@@ -8,7 +8,8 @@
  * clearing all scans clears the sessions, and that the `keyframe-purge` job runs at boot and on request, obeys
  * `KEYFRAME_RETENTION_DAYS` and `payload.dryRun`, and logs counts and nothing else.
  *
- * It also holds what a deletion must not leave behind or race with: LingBot-Map's and SenseNova's output, a scan deleted
+ * It also holds what a deletion must not leave behind or race with: LingBot-Map's and SenseNova's output, an interactive
+ * asset's folder with the copy of a frame in its case folder (and that job's skip on a server without PhysAg3D), a scan deleted
  * while a job runs on it, a name that is not a name, a Place whose photos or world cannot be removed, the world export
  * built from a deleted scan, and the frames a walk streamed after its last export.
  *
@@ -22,6 +23,7 @@ import { fromFileUrl } from 'jsr:@std/path@^1.0.0'
 import { REPO_ROOT } from '../../../server/repo-root.ts'
 import type { WorldJob } from '../../../src/world/types.ts'
 import { safeSlug } from '../../../server/scan_id.ts'
+import { writeCaseSource } from '../../../server/physag3d/asset_files.ts'
 import { cannotRemoveFromReadOnlyFolder } from './read_only_folders.ts'
 
 /** Root can write anywhere, so a test that makes its failure with permissions is ignored there, not passed. */
@@ -218,6 +220,17 @@ async function exists(path: string): Promise<boolean> {
 
 async function jobs(server: RunningServer): Promise<WorldJob[]> {
   return (await server.request('GET', '/worlds/default/jobs')).json<WorldJob[]>()
+}
+
+/**
+ * The default world's editor token, as `?token=…`. On an install without strict world auth a request with no token may
+ * queue most jobs, but not one that deletes or sends data off the box: a real keyframe-purge or a thing-interactive-asset
+ * needs an editor token or a Companion session (wave 14, F-04).
+ */
+async function asEditor(server: RunningServer): Promise<string> {
+  assertEquals((await server.request('GET', '/worlds/default')).status, 200)
+  const world = JSON.parse(await Deno.readTextFile(`${server.dirs.root}/worlds/default.json`)) as { members: Array<{ role: string; token: string }> }
+  return `?token=${encodeURIComponent(world.members.find((member) => member.role === 'editor')!.token)}`
 }
 
 /** Waits for a keyframe-purge job that is not one of `known` to reach a terminal state. */
@@ -520,6 +533,40 @@ Deno.test('with KEYFRAME_RETENTION_DAYS set, a purge runs at boot: old streamed 
   }
 })
 
+Deno.test('a copy of a frame in a PhysAg3D case folder goes when its session is purged or deleted, and the asset made from it stays', async () => {
+  const oldCase = 'room.interactive/job-1700000000001-0a1b2c3d'
+  const recentCase = 'room.interactive/job-1700000000002-0a1b2c3d'
+  const server = await startServer({
+    env: { KEYFRAME_RETENTION_DAYS: '30' },
+    seed: async (dirs) => {
+      await seedSession(dirs, OLD, 90)
+      await seedSession(dirs, RECENT, 3)
+      for (const [path, sessionId] of [[oldCase, OLD], [recentCase, RECENT]]) {
+        const [folder, id] = path.split('/') as [string, string]
+        await Deno.mkdir(`${dirs.scans}/${path}/input`, { recursive: true })
+        await Deno.writeTextFile(`${dirs.scans}/${path}/input/source.jpg`, 'a copy of a camera frame')
+        await Deno.writeFile(`${dirs.scans}/${path}.glb`, glb())
+        await writeCaseSource(`${dirs.scans}/${folder}`, id, { sessionId, keyframe: 'kf-00000.jpg' })
+      }
+    },
+  })
+  try {
+    const job = await purgeJob(server)
+    assertStringIncludes(job.result ?? '', 'deleted 1 of 2', `${job.error}\n${server.log()}`)
+    assertFalse(await exists(`${server.dirs.scans}/${oldCase}`), 'the purge took the copy with the frames')
+    assert(await exists(`${server.dirs.scans}/${oldCase}.glb`), 'and left the asset made from them')
+    assert(await exists(`${server.dirs.scans}/${recentCase}/input/source.jpg`), 'a session inside the period keeps its copy')
+
+    const removed = await server.request('DELETE', `/sessions/${RECENT}`)
+    assertEquals(removed.status, 200, removed.text)
+    assertFalse(await exists(`${server.dirs.sessions}/${RECENT}`))
+    assertFalse(await exists(`${server.dirs.scans}/${recentCase}`), 'deleting the frames took the copy too')
+    assert(await exists(`${server.dirs.scans}/${recentCase}.glb`))
+  } finally {
+    await server.stop()
+  }
+})
+
 Deno.test('a request is a dry run unless it says dryRun:false, and only the server\'s own period removes anything', async () => {
   const server = await startServer({ env: { KEYFRAME_RETENTION_DAYS: '30' } })
   try {
@@ -551,8 +598,11 @@ Deno.test('a request is a dry run unless it says dryRun:false, and only the serv
       assert(await exists(`${server.dirs.sessions}/${RECENT}`))
     }
 
-    // Only the boolean false is a real pass, and it takes the server's thirty days whatever else it carries.
-    const real = await server.request('POST', '/worlds/default/jobs', { type: 'keyframe-purge', payload: { dryRun: false, retentionDays: 1, days: 1 } })
+    // Only the boolean false is a real pass, and it takes the server's thirty days whatever else it carries. It deletes, so it
+    // needs an editor token: without one it is refused before anything is queued.
+    const unsigned = await server.request('POST', '/worlds/default/jobs', { type: 'keyframe-purge', payload: { dryRun: false } })
+    assertEquals(unsigned.status, 401, unsigned.text)
+    const real = await server.request('POST', `/worlds/default/jobs${await asEditor(server)}`, { type: 'keyframe-purge', payload: { dryRun: false, retentionDays: 1, days: 1 } })
     assertEquals(real.status, 202, real.text)
     const realJob = await purgeJob(server, known)
     assertStringIncludes(realJob.result ?? '', 'deleted 1 of 2')
@@ -580,7 +630,7 @@ Deno.test('a dry run can name a period to preview before the setting is turned o
     assert(await exists(`${server.dirs.sessions}/${OLD}`), 'a preview removed nothing')
 
     // The same request as a real pass has no period to use: the setting is off, so it removes nothing either.
-    const real = await server.request('POST', '/worlds/default/jobs', { type: 'keyframe-purge', payload: { dryRun: false, days: 30 } })
+    const real = await server.request('POST', `/worlds/default/jobs${await asEditor(server)}`, { type: 'keyframe-purge', payload: { dryRun: false, days: 30 } })
     assertEquals(real.status, 202, real.text)
     const realJob = await purgeJob(server, [job.jobId])
     assertStringIncludes(realJob.result ?? '', 'Retention is off')
@@ -600,6 +650,8 @@ Deno.test('the purge is queued in the default world only', async () => {
   try {
     const known = [(await purgeJob(server)).jobId]
     const place = (await server.request('POST', '/projects', { name: 'Elsewhere' })).json<{ projectId: string }>().projectId
+    // A world that is not a Place's has to exist first: a request for a world that has no file is a 404 (F-03).
+    assertEquals((await server.request('POST', '/worlds', { shareSlug: 'some-other-world' })).status, 201)
     for (const slug of [`project-${place}`, 'some-other-world']) {
       const refused = await server.request('POST', `/worlds/${slug}/jobs`, { type: 'keyframe-purge', payload: { dryRun: false } })
       assertEquals(refused.status, 400, `${slug}: ${refused.text}`)
@@ -766,6 +818,61 @@ Deno.test('a scan\'s LingBot-Map point cloud and its SenseNova output go with it
     assertEquals((await server.request('DELETE', '/scans?confirm=delete-all')).status, 200)
     assertFalse(await exists(`${server.dirs.scans}/${otherBase}.lingbot.glb`))
     assertFalse(await exists(`${server.dirs.scans}/.sensenova`))
+  } finally {
+    await server.stop()
+  }
+})
+
+Deno.test('thing-interactive-asset on a server without PhysAg3D: skipped with a hint, a bad request fails with its rule, and its folder serves two names and goes with the scan', async () => {
+  const server = await startServer()
+  try {
+    const scan = await uploadScan(server, 'cabinet')
+    const sessionId = await streamSession(server, scan.filename)
+    const world = (await server.request('GET', '/worlds/default')).json<{ scans: Array<{ filename: string; scanId: string; sessionId: string | null }> }>()
+    const row = world.scans.find((item) => item.filename === scan.filename)!
+    assertEquals(row.sessionId, sessionId)
+
+    // No PHYSAG3D_* reaches this server (startServer passes an allowlist), which is every stock install. The job sends a
+    // keyframe off the box when PhysAg3D is set up, so it needs an editor token even here (F-04).
+    const editor = await asEditor(server)
+    assertEquals((await server.request('POST', '/worlds/default/jobs', { type: 'thing-interactive-asset', scanId: row.scanId, payload: { keyframe: 'kf-00000.jpg' } })).status, 401)
+    const queued = await server.request('POST', `/worlds/default/jobs${editor}`, {
+      type: 'thing-interactive-asset',
+      scanId: row.scanId,
+      payload: { keyframe: 'kf-00000.jpg' },
+    })
+    assertEquals(queued.status, 202, queued.text)
+    const skipped = await untilWorldJobSettled(server, queued.json<{ jobId: string }>().jobId)
+    assertEquals(skipped.status, 'completed')
+    assertEquals(skipped.workerId, 'physag3d')
+    assertStringIncludes(skipped.result ?? '', 'Interactive asset skipped: PHYSAG3D_DIR is not set')
+    assertEquals(skipped.artifacts?.map((artifact) => artifact.type), ['interactive-asset-skip'])
+
+    const malformed = await server.request('POST', `/worlds/default/jobs${editor}`, { type: 'thing-interactive-asset', scanId: row.scanId, payload: {} })
+    const failed = await untilWorldJobSettled(server, malformed.json<{ jobId: string }>().jobId)
+    assertEquals(failed.status, 'failed')
+    assertStringIncludes(failed.error ?? '', 'payload.keyframe')
+
+    // The asset folder, as a delivered job leaves it: two landed files and a case folder holding a copy of the frame.
+    const folder = `${scan.filename.replace(/\.glb$/, '')}.interactive`
+    const id = 'job-1700000000000-0a1b2c3d'
+    await Deno.mkdir(`${server.dirs.scans}/${folder}/${id}/input`, { recursive: true })
+    await Deno.writeFile(`${server.dirs.scans}/${folder}/${id}.glb`, glb())
+    await Deno.writeTextFile(`${server.dirs.scans}/${folder}/${id}.delivery.json`, '{"outcome":"complete"}')
+    await Deno.writeTextFile(`${server.dirs.scans}/${folder}/${id}/input/source.jpg`, 'a copy of a camera frame')
+    await Deno.writeTextFile(`${server.dirs.scans}/${folder}/notes.txt`, 'not a landed file')
+    const at = (name: string) => `/scans/${encodeURIComponent(folder)}/${name}`
+    assertEquals((await server.request('GET', at(`${id}.glb`))).status, 200)
+    assertEquals((await server.request('GET', at(`${id}.delivery.json`))).json(), { outcome: 'complete' })
+    for (const name of ['notes.txt', id, `${id}.json`, `.${id}.glb`]) {
+      assertEquals((await server.request('GET', at(name))).status, 400, `${name} is not one of the two names`)
+    }
+    assert((await server.request('GET', at(`${id}/input/source.jpg`))).status !== 200, 'a case folder is never served')
+    const listed = (await server.request('GET', '/scans')).json<Array<{ filename: string }>>()
+    assertFalse(listed.some((item) => item.filename.includes('.interactive')), 'the landed GLB is not listed as a scan')
+
+    assertEquals((await server.request('DELETE', `/scans/${encodeURIComponent(scan.filename)}`)).status, 200)
+    assertFalse(await exists(`${server.dirs.scans}/${folder}`), 'the assets and the case folder went with the scan')
   } finally {
     await server.stop()
   }

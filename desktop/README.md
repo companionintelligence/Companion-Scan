@@ -40,9 +40,9 @@ app never loads the 8th Wall engine, and its bundle leaves it out.
   (`external_links` in `src-tauri/src/main.rs`). The editor's "Scan a Place" opens the
   start screen, which offers uploads but no live capture. The WebXR scanner entry is
   removed in the app, which has no WebXR.
-- The app has no first-run screen: the window opens the editor, and the scanner page
-  never reaches its onboarding without an AR runtime. Its setup is in the editor's
-  Navigate menu instead: the Scan server (set, test and change it; the editor also asks
+- The app has no first-run screen of its own: the window opens the editor. The scanner
+  page that "Scan a Place" opens wires its onboarding before its AR checks, and says the
+  desktop app cannot capture. The app's setup is in the editor's Navigate menu: the Scan server (set, test and change it; the editor also asks
   for one on launch while none is set), Legal notices (Companion Scan's licence and the
   licences of the third-party software in the app), and the account control that signs in.
 - `npm run dev` serves the app from `vite.http.config.ts` on port 5199, because the
@@ -104,7 +104,7 @@ must be in Applications, or opened once, before the system knows its scheme.
   them as artifacts for 14 days. No AppImage.
 - **Native Release** (`.github/workflows/native-release.yml`, run by hand with a tag)
   builds the same installers with the Android APK and publishes them as a GitHub
-  pre-release; see the README's *Desktop and Android apps*.
+  pre-release; see [Releases](../docs/targets/README.md#releases) in the device-target docs.
 - The installers are unsigned. The macOS app is ad-hoc signed (`signingIdentity "-"`),
   so on Apple silicon macOS offers **Open** from the right-click menu, or **Open Anyway**
   in Privacy & Security, instead of calling the download damaged. Windows SmartScreen

@@ -31,6 +31,7 @@ import type { Person4DManifest } from '../world/types'
 import { disposeSplat, loadSplat, type LoadedSplat } from './splat-viewer'
 import { frameIndexAt, PlaybackClock, windowAround } from './playback-clock'
 import { apiUrl } from '../shared/api-base.ts'
+import { scanArtifactBaseOf } from './splat-layer'
 
 /**
  * Frames kept resident either side of the playhead.
@@ -67,11 +68,18 @@ export interface Splat4DCallbacks {
   onBuffering?: (buffering: boolean) => void
 }
 
-/** Fetch the sequence manifest for a scan, or null when it has no 4D layer. */
-export async function fetchPerson4DManifest(scanFilename: string): Promise<Person4DManifest | null> {
-  const base = scanFilename.replace(/\.glb$/, '')
+/**
+ * Fetch the sequence manifest for a scan, or null when it has no 4D layer. `resolveUrl` turns a served path into the URL
+ * to request: the editor passes its token-adding builder (src/shared/access-token.ts), and the default adds the server's
+ * origin alone.
+ */
+export async function fetchPerson4DManifest(
+  scanFilename: string,
+  resolveUrl: (path: string) => string = apiUrl,
+): Promise<Person4DManifest | null> {
+  const base = scanArtifactBaseOf(scanFilename)
   try {
-    const res = await fetch(apiUrl(`/scans/${encodeURIComponent(`${base}.4d-capture.manifest.json`)}`))
+    const res = await fetch(resolveUrl(`/scans/${encodeURIComponent(`${base}.4d-capture.manifest.json`)}`))
     if (!res.ok) return null
     const manifest = await res.json() as Person4DManifest
     // Only a completed run has a sequence to play. A skipped one (no GPU host
@@ -96,11 +104,13 @@ export async function createSplat4DLayer(
   scanId: string,
   scanFilename: string,
   callbacks: Splat4DCallbacks,
+  /** As in {@link fetchPerson4DManifest}: used for the manifest and for every frame URL handed to SparkJS. */
+  resolveUrl: (path: string) => string = apiUrl,
 ): Promise<Splat4DLayer | null> {
-  const manifest = await fetchPerson4DManifest(scanFilename)
+  const manifest = await fetchPerson4DManifest(scanFilename, resolveUrl)
   if (!manifest || !manifest.frameCount || manifest.frameCount <= 0) return null
 
-  const base = scanFilename.replace(/\.glb$/, '')
+  const base = scanArtifactBaseOf(scanFilename)
   const frameCount = manifest.frameCount
   const fps = manifest.fps && manifest.fps > 0 ? manifest.fps : 5
   const durationSec = frameCount / fps
@@ -129,7 +139,7 @@ export async function createSplat4DLayer(
     const attempt = (async () => {
       for (const ext of ['sog', 'ply'] as const) {
         try {
-          const mesh = await loadSplat({ kind: 'url', url: apiUrl(frameUrl(base, index, ext)) })
+          const mesh = await loadSplat({ kind: 'url', url: resolveUrl(frameUrl(base, index, ext)) })
           if (disposed) { disposeSplat(mesh); return null }
           mesh.mesh.visible = false
           loaded.set(index, mesh)

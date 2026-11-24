@@ -274,6 +274,15 @@ export class NativeARProvider implements ARProvider, ImageHitTestContract {
   private verdictCallback: ((verdict: PreflightVerdict) => void) | null = null
   private verdictTimer: ReturnType<typeof setTimeout> | null = null
   private handles: NativeListenerHandle[] = []
+  /**
+   * The teardown stop() began, until it has finished. stop() cannot wait (ARProvider.stop() returns nothing), and the plugin's
+   * stop() can take a while to answer: the iOS plugin replies only after it saves a named Place's world map. A start() that
+   * reached the plugin in between, with the same options, was handed the old session back, which the pending stop then tore
+   * down. So start() waits for this first, without a bound: a start that went ahead of a late stop would be torn down by it, in
+   * this provider and in the plugin's one AR view. Both plugins always answer stop(): Android once its UI thread has released the
+   * session, iOS once ARKit has answered getCurrentWorldMap, which it always does, and the map is written.
+   */
+  private stopping: Promise<void> | null = null
   private nativeRunning = false
   private startedAt: number | null = null
   private renderer: NativeRenderer | null = null
@@ -375,6 +384,8 @@ export class NativeARProvider implements ARProvider, ImageHitTestContract {
       await this.delegate.start(canvas)
       return
     }
+    // A stop still on its way to the plugin lands first (see `stopping`).
+    if (this.stopping) await this.stopping.catch(() => undefined)
     try {
       await this.startNative(canvas)
     } catch (err) {
@@ -442,7 +453,14 @@ export class NativeARProvider implements ARProvider, ImageHitTestContract {
       this.delegate.stop()
       return
     }
-    void this.teardownNative()
+    // One teardown at a time: a second stop() while the first is on its way would ask the plugin to stop twice.
+    if (this.stopping) return
+    const stopping = this.teardownNative()
+    this.stopping = stopping
+    const settled = () => {
+      if (this.stopping === stopping) this.stopping = null
+    }
+    stopping.then(settled, settled)
   }
 
   private async teardownNative(): Promise<void> {
@@ -480,6 +498,7 @@ export class NativeARProvider implements ARProvider, ImageHitTestContract {
     this.frameHandle = null
     if (!this.nativeRunning || !this.renderer || !this.scene || !this.camera) return
     if (this.transform && this.projection) {
+      // Display-oriented, as the projection is (native-bridge.ts, NativePoseEvent.transform), so the two go in unchanged.
       this.camera.matrixWorld.fromArray(this.transform)
       this.camera.matrixWorldInverse.copy(this.camera.matrixWorld).invert()
       this.camera.projectionMatrix.fromArray(this.projection)

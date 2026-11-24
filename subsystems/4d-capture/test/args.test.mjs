@@ -50,25 +50,28 @@ test('a bad views_per_layer is caught before spawning', async () => {
   assert.ok(!spawned, 'must not start a 25-minute job with a value the model will reject')
 })
 
-test('brush args are assembled with the sequence-scale iteration default', () => {
+test('brush args are the flags brush-cli --help lists, with the sequence-scale iteration default', () => {
   const args = buildBrushArgs({ datasetDir: '/d', exportDir: '/e', trainIters: DEFAULT_TRAIN_ITERS })
   assert.equal(args[0], '/d')
-  assert.ok(args.includes('--export-path'))
-  assert.equal(args[args.indexOf('--total-steps') + 1], String(DEFAULT_TRAIN_ITERS))
+  // `--total-steps`, which this file once passed, is not a brush-cli flag.
+  assert.ok(!args.includes('--total-steps'))
+  assert.equal(args[args.indexOf('--total-train-iters') + 1], String(DEFAULT_TRAIN_ITERS))
+  assert.equal(args[args.indexOf('--export-every') + 1], String(DEFAULT_TRAIN_ITERS))
+  assert.equal(args[args.indexOf('--export-path') + 1], '/e')
+  assert.equal(args[args.indexOf('--export-name') + 1], 'splat_{iter}.ply')
   // Lower than a static scan's 15000 because it is paid once per timestep.
   assert.ok(DEFAULT_TRAIN_ITERS < 15000)
 })
 
-test('transforms carry unflipped camera-to-world matrices', () => {
-  const t = buildTransforms(
-    { views: [{ viewIndex: 0, matrix: [[1, 0, 0, 5], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]] }] },
-    { width: 1080, height: 1920, fovYDeg: 60 },
-  )
-  assert.equal(t.w, 1080)
-  assert.equal(t.h, 1920)
+test('transforms carry each view’s own unflipped matrix and intrinsics', () => {
+  const t = buildTransforms([
+    { file: 'images/view-000.jpg', matrix: [[1, 0, 0, 5], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], fl_x: 800, fl_y: 800, cx: 360, cy: 640, w: 720, h: 1280 },
+  ])
   // No axis flip — Companion-Scan poses are already in Nerfstudio's convention.
   assert.equal(t.frames[0].transform_matrix[0][3], 5)
   assert.equal(t.frames[0].file_path, 'images/view-000.jpg')
+  assert.equal(t.frames[0].w, 720)
+  assert.equal(t.frames[0].fl_y, 800)
 })
 
 test('stub PLY is a valid binary INRIA 3DGS file', () => {

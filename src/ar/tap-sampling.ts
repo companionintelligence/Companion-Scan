@@ -36,6 +36,7 @@ import {
 import { TRACKING_RECOVERING_TEXT, cameraJumped, trackingIsStableForPlacement } from './tracking-quality.ts'
 import type { TapEvidence, TapSource } from '../world/calibration-evidence.ts'
 import type { Vec3 } from '../world/types.ts'
+import { isRotation, rotationAngleDeg } from '../shared/pose-math.ts'
 
 // `ScanCalibration.tap` stores a `TapEvidence`, so the two types are declared in ../world/calibration-evidence.ts,
 // where the server and the editor can import them without this module's provider (ADR 0002). They keep their names here.
@@ -432,10 +433,13 @@ function currentPose(provider: TapProvider): Pose | undefined {
   }
 }
 
-/** Radians between two orientations. NaN where either is not a usable rotation. */
+/**
+ * Radians between two orientations. NaN where either is not a usable rotation, which is what leaves `slideSince`
+ * without an answer: the shared full-turn angle (src/shared/pose-math.ts) reads a zero quaternion as no turn, and a pose
+ * with no rotation is not evidence that the camera did not turn.
+ */
 function turnBetween(a: Pose['rotation'], b: Pose['rotation']): number {
-  const dot = Math.abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w) / (Math.hypot(a.x, a.y, a.z, a.w) * Math.hypot(b.x, b.y, b.z, b.w))
-  return 2 * Math.acos(Math.min(1, dot))
+  return isRotation(a) && isRotation(b) ? rotationAngleDeg(a, b) * (Math.PI / 180) : Number.NaN
 }
 
 /**

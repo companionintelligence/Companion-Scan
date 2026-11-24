@@ -293,6 +293,70 @@ test('stop ends the native session, removes the listeners, and disposes the rend
   assert.equal(provider.activeRuntime(), 'idle')
 })
 
+/** The fake plugin with a stop() that answers only when the test lets it, as the iOS plugin answers after a Place's map is saved. */
+function slowStop(plugin: ReturnType<typeof fakePlugin>): { calls: string[]; release: () => void } {
+  const calls: string[] = []
+  let release = () => {}
+  const start = plugin.start.bind(plugin)
+  plugin.start = async (options) => {
+    calls.push('start')
+    return start(options)
+  }
+  plugin.stop = () => {
+    calls.push('stop')
+    plugin.stopped += 1
+    return new Promise<void>((resolve) => {
+      release = () => {
+        calls.push('stopped')
+        resolve()
+      }
+    })
+  }
+  return { calls, release: () => release() }
+}
+
+const settle = () => new Promise((resolve) => setImmediate(resolve))
+
+test('a start right after a stop waits for the plugin to finish stopping, so the old session is never handed back and torn down (FN-157)', async () => {
+  const plugin = fakePlugin()
+  const { calls, release } = slowStop(plugin)
+  const provider = new NativeARProvider(options(plugin))
+  await provider.start(fakeCanvas())
+  provider.stop()
+  let started = false
+  const again = provider.start(fakeCanvas()).then(() => { started = true })
+  await settle()
+  assert.deepEqual(calls, ['start', 'stop'], 'the second start has not reached the plugin while the stop is pending')
+  assert.equal(started, false)
+  release()
+  await again
+  assert.deepEqual(calls, ['start', 'stop', 'stopped', 'start'], 'it reaches the plugin once the stop has landed')
+  assert.equal(provider.activeRuntime(), 'native')
+  assert.equal(plugin.listenerCount('pose'), 1, 'and the new session listens once, with the old listeners gone')
+})
+
+test('a second stop while the first is on its way asks the plugin to stop once', async () => {
+  const plugin = fakePlugin()
+  const { calls, release } = slowStop(plugin)
+  const provider = new NativeARProvider(options(plugin))
+  await provider.start(fakeCanvas())
+  provider.stop()
+  provider.stop()
+  await settle()
+  release()
+  await settle()
+  assert.deepEqual(calls, ['start', 'stop', 'stopped'])
+  assert.equal(plugin.stopped, 1)
+  assert.equal(provider.activeRuntime(), 'idle')
+  // And the next stop, of the next session, is not swallowed by the first.
+  await provider.start(fakeCanvas())
+  provider.stop()
+  await settle()
+  release()
+  await settle()
+  assert.equal(plugin.stopped, 2)
+})
+
 test('start sends the saved world map name and reports whether the map was found', async () => {
   const plugin = fakePlugin()
   plugin.worldMapResult = 'loaded'

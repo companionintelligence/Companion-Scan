@@ -186,12 +186,17 @@ export function findDuplicateWorldJob(
   jobs: WorldJob[],
   type: WorldJobType,
   target: string | undefined,
+  /**
+   * How a job's target is read, for comparing with `target`. Defaults to `worldJobTarget`; main.ts passes
+   * `dedupeKeyFor` (server/world/job_request.ts), which also makes the whole-world types one per world (FN-148).
+   */
+  targetOf: (job: WorldJob) => string | undefined = worldJobTarget,
 ): WorldJob | undefined {
   if (target === undefined) return undefined
   return jobs.find((j) =>
     j.type === type &&
     (j.status === 'queued' || j.status === 'processing') &&
-    worldJobTarget(j) === target
+    targetOf(j) === target
   )
 }
 

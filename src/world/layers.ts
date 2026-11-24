@@ -27,8 +27,14 @@ export const LAYER_ORDER: LayerType[] = [
  *
  * `rgbFrames`/`depth`/`semanticMasks`/`splat` are heavy or usually absent;
  * `anchor` is a deliberate alignment aid, not core scan geometry.
+ *
+ * `detections` (the detection bounds) starts hidden too. The editor had two switches for it, the HUD's Bounds button
+ * (off by default) and the Detections row (on), and drew the bounds only when both were on, so they started hidden
+ * while this set said otherwise. One switch now (src/viewer/viewer.ts, setLayerVisible), and the default it had in
+ * effect is the one written here: a manifest's `visibleByDefault` for `detections` is false.
  */
 export const LAYERS_HIDDEN_BY_DEFAULT: ReadonlySet<LayerType> = new Set<LayerType>([
+  'detections',
   'rgbFrames',
   'depth',
   'semanticMasks',

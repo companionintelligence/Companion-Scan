@@ -11,28 +11,72 @@
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-0a6358?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/badge/chat-Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.com/invite/yQp9hwpzAa)
 
-<p align="center"><a href="docs/README.md">Documentation</a> · <a href="#quick-setup">Get started</a> · <a href="#license">License</a> · <a href="https://docs.ci.computer/docs/reference/open-source-systems">Systems map</a></p>
+<p align="center"><a href="docs/README.md">Documentation</a> · <a href="#device-targets">Device targets</a> · <a href="#quick-setup">Get started</a> · <a href="#license">License</a> · <a href="https://docs.ci.computer/docs/reference/open-source-systems">Systems map</a></p>
 
 <p align="center">
   <a href="https://docs.ci.computer/docs/apps-available/first-party-apps/spatial-scan"><img src="https://img.shields.io/badge/Companion%20Scan%20docs-Companion%20Scan%20docs-0a6358?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Companion Scan docs" height="30"></a>
 </p>
 
-It uses 8th Wall/WebXR for capture, an engine-agnostic vision layer for object detection, and Three.js for the **Companion Scan Spatial Editor** at `/editor`. Several scans combine in one Place, are assigned to Areas such as rooms or floors, and remain independently traceable through layers and Things. Inference defaults to local Ollama; bundled ONNX and deterministic mock CV engines are alternatives selected via `INFERENCE_MODE`.
+Companion Scan captures with 8th Wall or WebXR in a browser, or with the phone's own ARKit or ARCore session in the apps. An engine-agnostic vision layer detects objects, and Three.js renders the **Companion Scan Spatial Editor** at `/editor`. Several scans combine in one Place, are assigned to Areas such as rooms or floors, and remain independently traceable through layers and Things. Inference defaults to local Ollama; bundled ONNX and deterministic mock CV engines are alternatives selected via `INFERENCE_MODE`.
 
 The current product contract is [Place-First Product Design](docs/product/PLACE_SCAN_DESIGN.md). `WorldProject` remains the internal ENU scene format during the compatibility migration; it is not the primary user-facing noun.
 
 ---
 
+## Device targets
+
+Each target has a page under [docs/targets/](docs/targets/README.md): what it is, what has run on a
+device and what has not, its entry points and files, and how to build, run and test it. A result
+counts as verified only when someone ran it on the hardware and read the output back.
+
+| Target | Status | Page |
+|---|---|---|
+| **Web, 8th Wall**: iPhone and iPad Safari | In code. No run on an iPhone or iPad is recorded. | [web-8thwall.md](docs/targets/web-8thwall.md) |
+| **Web, WebXR**: Android Chrome with ARCore, Meta Quest Browser | In code. On Android one session start was seen, and tracking was not reached. Quest support is documented, not verified. | [web-webxr.md](docs/targets/web-webxr.md) |
+| **Android app, ARCore**: the Capacitor shell with `ScanAR`, native first, then 8th Wall, then WebXR | Built at `81e437c`, the tree `main` merged as `e897380`, and on `main` after wave 14 by Mobile Build (run 45327838056), which also runs its unit tests. Not run on a device. | [android-arcore.md](docs/targets/android-arcore.md) |
+| **Android app, 8th Wall**: the same shell built with `VITE_AR_RUNTIME=8thwall` | Built locally at `81e437c`, and by Mobile Build's 8th Wall job on `main` after wave 14 (run 45327838056); `npm run build:8thwall` in `mobile/` makes it. No device run is recorded. It shares the app id, so it replaces the ARCore build on a device. | [android-8thwall.md](docs/targets/android-8thwall.md) |
+| **Meta Quest app**: a native headset app on the Meta Spatial SDK (`meta/`) | Built locally at `81e437c`, and by the Quest Build workflow on `main` after wave 14 (run 45327834865), whose 108 JVM unit tests pass. It signs in with `shell=quest`. Not run on a headset. | [meta-quest.md](docs/targets/meta-quest.md) |
+| **iOS app**: the Capacitor shell with ARKit through `ScanAR` | In code, drawn in RealityKit's `ARView` (ADR 0012). Compiled for the iOS Simulator at `81e437c` (Mobile Build run 45260987425), and on `main` after wave 14 (run 45327838056); not run on a device. | [ios.md](docs/targets/ios.md) |
+| **Desktop app**: the editor and viewer, for Windows, macOS and Linux | In code. It cannot capture. Sign-in has not run against a real Portal. | [desktop/README.md](desktop/README.md) |
+
+The desktop and Android apps are published only as GitHub pre-releases, and no app is in an app
+store. How they are built and released: [docs/targets/README.md](docs/targets/README.md#releases).
+
+## Common server
+
+Every target talks to one Scan server. The phone and desktop apps have none of their own: each is
+pointed at the person's own server by its https address. The server is a Deno API
+(`server/main.ts`, `:8000`) behind Vite (`:5173`, HTTPS). It:
+
+- stores scans, sessions and Places, and sends the editor its live updates;
+- runs every background job through one `WorldJob` queue: the `optimize-scan` GLB optimizer on
+  every upload, and the slower reconstruction chain (LingBot-Map or COLMAP poses, Brush or Spirula
+  splat training, splat detection and compression);
+- runs object detection through the engine `INFERENCE_MODE` names: `ollama` (the default),
+  `onnx` or `mock`;
+- signs people in with a Companion Account when `PORTAL_OIDC_ENABLED` is on.
+
+Its status, files, and how to run and test it: [docs/targets/server.md](docs/targets/server.md).
+Its settings and sign-in are [below](#server-settings-and-sign-in), with the [API](#server-api)
+and [inference](#inference).
+
+---
+
 ## Quick setup
 
-The scanner web app on its own:
+The web app and its server, on one machine:
 
 ```bash
+git clone https://github.com/companionintelligence/CI-Spatial.git
+cd CI-Spatial
 npm ci             # not `npm install` — Deno shares this node_modules tree (deno.json's
                    # nodeModulesDir: "auto"), and an in-place install corrupts it; the
                    # symptom is a phantom Playwright "two different versions" error
 npm start          # Deno API server (:8000) + Vite dev server (:5173, self-signed HTTPS), together
 ```
+
+`npm start` uses `concurrently` to run the Deno server on `:8000` (`npm run server`) and the
+Vite dev server on `:5173` with HTTPS (`npm run dev`).
 
 Then open `https://localhost:5173` (accept the self-signed cert warning, or run
 `tailscale cert <your-machine>.<tailnet>.ts.net` first and restart — see `vite.config.ts` for how
@@ -41,6 +85,29 @@ it picks that up automatically). The server admits a page on `localhost` only wh
 is refused there, so use `ALLOW_DEV_ORIGINS=1 npm start` on a dev machine. A page on your tailnet
 address needs no flag. Point a phone at the same URL over Tailscale to scan for real;
 `npm run qr` prints a scannable link.
+
+A phone browser opens the camera only over HTTPS. For trusted HTTPS on every device, phones use
+the [Tailscale](https://tailscale.com) address and its `tailscale cert` certificate. Vite finds the
+host name at startup: the `TAILSCALE_HOSTNAME` env var, then
+`tailscale status --json`, then a `<hostname>.ts.net.crt` file in the repo root. Set
+`TAILSCALE_HOSTNAME` explicitly only if detection picks the wrong name (see `.env.example` for all
+configuration knobs).
+
+Key routes, on `https://<host>:5173`:
+
+- Scanner / uploader, to scan or upload content from a Place: `/?project=default`
+- Spatial Editor, on desktop: `/editor?project=default`
+- WebXR scanner: `/webxr.html`
+
+**Vision models.** The default `ollama` mode needs no bundled model: install
+[Ollama](https://ollama.com), then run `npm run setup:models` to see the recommended vision models
+and pull the ones you want. Only for `INFERENCE_MODE=onnx`, download the ONNX model (2.2 GB):
+
+```bash
+python3 download_models.py
+```
+
+This downloads `LiquidAI/LFM2.5-VL-1.6B-ONNX` into `public/models/LiquidAI/LFM2.5-VL-1.6B-ONNX/`.
 
 **Plus the gimbal-driven capture subsystem** ([`subsystems/osmo-ble/`](subsystems/osmo-ble/),
 full details in [docs/operations/GIMBAL_INTEGRATION.md](docs/operations/GIMBAL_INTEGRATION.md)) — controls a DJI Osmo
@@ -55,71 +122,21 @@ npm run backend    # must run in a real terminal — macOS Bluetooth permission 
 The `osmo-gimbal` MCP server is already registered in this repo's [`.mcp.json`](.mcp.json) —
 Claude Code picks it up automatically once the backend above is running.
 
----
+**Next.** For persistent serving from a Linux box (systemd units, GPU inference, cert renewal) see
+[docs/operations/DEPLOY.md](docs/operations/DEPLOY.md). For each phone, headset and app, see the
+[device targets](docs/targets/README.md). For the on-device test protocol, including driving an
+Android device's UI directly through
+[android-remote-control-mcp](https://github.com/danielealbano/android-remote-control-mcp) as a
+Claude Code connector, see
+[docs/testing/DEVICE_TESTING.md](docs/testing/DEVICE_TESTING.md#remote-controlled-testing-android-remote-control-mcp).
 
-## Desktop and Android apps
-
-The same web app also ships as two native apps, built from this repository: a desktop app for
-Windows, macOS and Linux ([`desktop/`](desktop/README.md), Tauri 2) and an Android app
-([`mobile/`](mobile/README.md), Capacitor 8). Pre-releases are published on
-[GitHub Releases](https://github.com/companionintelligence/CI-Spatial/releases) by
-[`.github/workflows/native-release.yml`](.github/workflows/native-release.yml). They are not in
-any app store.
-
-| | Desktop app | Android app |
-|---|---|---|
-| What it is | The Place Scan Editor and viewer. It opens the editor, and it cannot capture. | The scanner and the editor. AR capture (the phone's own ARCore session, with the 8th Wall engine as the fallback) has not been tried on a phone yet. |
-| Scan server | The person's own, such as the one on their Companion Hub: its https address is set in the app ([why https only](#the-scan-server-in-the-android-ios-and-desktop-apps)). | The same. |
-| Companion Account | Signs in through the default browser and comes back on `computer.ci.scan.desktop://auth`. | Signs in through the browser sheet and comes back on `com.companionintelligence.scan://auth`. |
-| Release files | NSIS and MSI installers (Windows), a universal dmg (macOS, ad-hoc signed), deb and rpm (Linux). All unsigned apart from the macOS ad-hoc signature. | A release APK, signed with the release key or a throwaway key, and named for which. |
-| Engine | Leaves the XR Engine out. | Carries the XR Engine unmodified, and shows Niantic's notice. |
-
-Each app carries `THIRD-PARTY-NOTICES.txt` (generated from the lockfiles for exactly what that
-bundle contains) and `LICENSE.txt`, and shows both under Legal notices. No server address, API
-key or secret is built into either app, and no model weights ship in them.
-
-### Building them
-
-```bash
-npm ci
-npm ci --prefix desktop && npm run build --prefix desktop     # this OS's installers
-npm ci --prefix mobile && npm run build:web --prefix mobile   # then:
-(cd mobile && npx cap sync android) && (cd mobile/android && ./gradlew assembleRelease)
-```
-
-Both web builds go through [`scripts/native/build-web.mjs`](scripts/native/build-web.mjs), which
-builds without the service worker, leaves the engine out of the desktop app, leaves model weights
-and test files out of both, refuses a `.env` file that sets a `VITE_` variable, and writes the
-notices. The Android release build signs from four environment variables or the git-ignored
-`mobile/android/keystore.properties` ([mobile/README.md](mobile/README.md#publishing)).
-
-### Publishing a pre-release
-
-1. Set the next version in all six places, and raise the Android `versionCode` by one.
-   `node scripts/native/check-versions.mjs` says whether they agree.
-2. Dispatch **Native Release** with the tag `v<version>` (for example `v0.2.0`; `v0.1.0` is the
-   container pre-release) and `android_signing`: `auto` signs with the release key when the four
-   repository secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`
-   and `ANDROID_KEY_PASSWORD` are set, with a throwaway key made in the job and never stored when
-   none of them is, and stops when only some are. The tag must not exist yet, as a release or as
-   a git tag: the release makes it on the commit it built, and the workflow stops if it finds
-   one, before building and again just before publishing.
-3. The workflow builds every installer and the APK, and publishes only when all of them
-   succeeded: a GitHub pre-release with the installers, the APK, `LICENSE`,
-   `THIRD-PARTY-NOTICES.txt`, `SHA256SUMS.txt` and notes on installing each one.
-
-### Not done yet
-
-- The identifiers are provisional: `computer.ci.scan.desktop` and `com.companionintelligence.scan`.
-  They name where each app keeps its local data, so change them before people rely on a build.
-- AR capture in the Android app has not run on a phone, and Companion Account sign-in has not run
-  against a real Portal on either app.
-- The installers are not code-signed or notarized, so Windows and macOS warn on first open.
-- iOS, Google Play and the App Store are out of scope here: they need the owner's Apple and
-  Google accounts ([mobile/README.md](mobile/README.md#publishing)).
+New here? [docs/product/UX_FLOW.md](docs/product/UX_FLOW.md) walks the whole happy path as a user
+story — install and onboarding on the phone, scanning a room, structuring scans into the 4D world
+in the desktop editor, queuing reconstruction jobs, and sharing a world — plus the mental model for
+the four capture modes (manual tap, auto-capture, keyframe streaming, and WebRTC live). For the
+full documentation index see [docs/README.md](docs/README.md).
 
 ---
-
 
 ## Screenshots
 
@@ -148,7 +165,7 @@ flowchart LR
 ## Architecture & Flows
 
 ### 1. System Architecture
-The application coordinates Volumetric SLAM tracking, local/remote VLM inference, IndexedDB state caching, and live WebRTC streaming to desktop editors, backed by Deno and Vite servers.
+The client coordinates AR tracking (8th Wall, WebXR, or the native ARKit or ARCore session in the apps), on-device or server VLM inference, IndexedDB state caching, and live WebRTC streaming to the desktop editor, backed by the Deno and Vite servers.
 
 ```mermaid
 flowchart TB
@@ -158,7 +175,7 @@ flowchart TB
     end
 
     subgraph ClientCore ["Client Core Runtimes"]
-        ARProvider["AR Provider Layer (WebXR / 8th Wall)"]
+        ARProvider["AR Provider Layer (8th Wall / WebXR / native ScanAR)"]
         InferenceRouter["Inference Router (WebGPU Worker / Server)"]
         Broadcaster["WebRTC Broadcaster (broadcaster.ts)"]
         PWA["PWA Service Worker & Offline Sync Queue"]
@@ -199,7 +216,7 @@ flowchart TB
     EditorDesktop --> IDB_Client
     
     PWA -->|HTTP Proxy / Vite| HTTPGateway
-    EditorDesktop -->|HTTP / SSE / worlds| HTTPGateway
+    EditorDesktop -->|HTTP / WebSocket / worlds| HTTPGateway
     
     HTTPGateway --> JobRunner
     HTTPGateway --> OptimizationPipeline
@@ -250,7 +267,7 @@ Posed video keyframes and voxelized points feed into local spatial stores and re
 ```mermaid
 graph TD
     subgraph Client ["Client Device (PWA / Mobile / Desktop)"]
-        SLAM["8th Wall / WebXR SLAM Engine"] -->|Raw Points & Poses| PC["Local PointCloud (Voxel Grid)"]
+        SLAM["8th Wall, WebXR or native ARKit / ARCore tracking"] -->|Raw Points & Poses| PC["Local PointCloud (Voxel Grid)"]
         Camera["Camera Video Stream"] -->|Frames| Cap["Capture Module"]
         Cap -->|Frame JPEG + Pose| VLM_Local["In-Browser WebGPU Inference"]
         PC & Dets_Local["Detections"] -->|Saved state| IDB[(IndexedDB Session Store)]
@@ -292,7 +309,7 @@ graph TD
 | **Offline recovery** | Queue writes when disconnected and export scene geometry as GLB. |
 
 
-- **AR scanning** — the 8th Wall XR Engine's SLAM tracks the environment and accumulates a colourised point cloud in real time. The engine is Niantic Spatial's proprietary binary (`public/xr.js`), free to use but not open source; see [NOTICE.md](NOTICE.md).
+- **AR scanning** — the 8th Wall XR Engine's SLAM tracks the environment and accumulates a colourised point cloud in real time. The engine is Niantic Spatial's proprietary binary (`public/xr.js`), free to use but not open source; see [NOTICE.md](NOTICE.md). WebXR (`/webxr.html`) and, in the phone apps, the native ARKit or ARCore session (`ScanAR`) are the other runtimes; see [Device targets](#device-targets).
 - **Engine-agnostic inference** — object detection runs through a local Deno server whose engine is chosen by `INFERENCE_MODE`: `ollama` (default, runs whatever `OLLAMA_MODEL` names — `qwen3-vl:4b` by default, with the context window pinned by `OLLAMA_NUM_CTX`), `onnx` (bundled `LiquidAI/LFM2.5-VL-1.6B-ONNX` via `onnxruntime-node`), or `mock` (deterministic colour-blob CV engine for CI/tests). An on-device WebGPU path also exists — opt-in, offered wherever the browser exposes `navigator.gpu` (see [Inference](#inference) below). `npm run eval:cv` / `npm run bench:models` score `/infer` output against ground truth from a corpus selected by `CV_CORPUS`: `real` (default, `test-data/real/`) is human-verified photographs — the only fixture that can tell a working vision model from a fabricating one, so it's what `bench:models` uses to rank candidates; `synthetic` (`test-data/cv/`) is the generated colour-rectangle corpus, a regression fixture for the *mock* engine only — scoring a real model against it warns loudly instead of reporting a silent 0%. As of this writing the real corpus is scaffolded but has **0 photographs** (a manual/physical step, not yet done — see `docs/factory/06-detection-ground-truth/`), so `bench:models` cannot rank models until it is populated.
 - **3D object pins** — detected objects are placed at their SLAM-resolved world positions as live 3D labels tracking the scene.
 - **Onboarding Overlay** — 2-step interactive overlay guiding users through permission prompts and walking speed. Its second step lists this install's setup status (see [First-run setup status and settings](#first-run-setup-status-and-settings)). Bypasses automatically on CI/mocks and replays on help button click.
@@ -313,6 +330,34 @@ graph TD
 
 ---
 
+## Capture geometry: walk the camera, don't spin it
+
+This is the single biggest difference between a scan that reconstructs and one that does not, and it is not a tuning problem.
+
+Monocular structure-from-motion locates a 3D point by intersecting the rays to it from two camera centres **that are in different places**. Rotate on the spot and there is no second place: the rays are collinear, the intersection is undefined at any noise level, and the two-view geometry collapses to a homography. COLMAP has a name for this exact condition — it reports such pairs as `PLANAR_OR_PANORAMIC`. No amount of extra frames, better exposure, or matcher tuning changes it.
+
+Three captures from this repo, ordered by how much the camera actually moved:
+
+| Capture | Frames | Camera motion | COLMAP result |
+|---|---|---|---|
+| Walkthrough video, `sess-video-20260830-033839` | 32 | translating through the space | **32 / 32 registered**, 9362 points, 27.6 s — trained to a usable splat |
+| Handheld phone, `sess-a7e2f642-…` | 17 | near-in-place; rotation dominated translation | **3 / 17 registered, 1 triangulated point** |
+| Gimbal dome, one station | 9 | effectively none — lens offset from the pan/tilt axes only | **4 / 9 registered**; 29 of 36 pairs `PLANAR_OR_PANORAMIC` |
+
+(Row 1 is `scans/sessions/sess-video-20260830-033839/colmap-poses.manifest.json`, still on disk. Row 2's session is on disk but its solve manifest is not — those numbers, and the re-runs that showed the ratio is reproducible on a bad capture while the point count is not, are recorded at `server/colmap/colmap_poses.ts:204-236`. Row 3 is from [ADR 0007](docs/adr/0007-splat-backends-are-selectable-and-a-rotation-only-sweep-is-not-a-reconstruction-capture.md), sourced from `docs/operations/GIMBAL_INTEGRATION.md`.)
+
+**So, when you capture:**
+
+- **Walk.** Move through the room and keep moving while recording — down a hallway, around a table, along a wall. Sideways steps buy you more than sweeps do.
+- **Orbit things, don't pan across them.** To capture an object, circle it. Standing in one spot and turning to face it is the failure case above.
+- **Give the shot a baseline comparable to the depth of what you're looking at.** Baselines measured for the two rows above (ADR 0007): the 32/32 run reached ~13.6 units against a 2.2–2.5 unit scene depth — several times the depth it was looking at; the 3/17 run reached 0.88 m over a 3.62 m path while rotating 90.4°.
+- **Keep overlap while you move**, so features survive between viewpoints — translate steadily rather than jumping between disconnected vantage points.
+- **A rotation-only sweep is a panorama, not a reconstruction capture.** It is the *ideal* input for a 360° projection and a useless one for SfM; those are the same property seen from two sides. Don't run a dome and expect a 3D model.
+
+**Check the verdict, don't assume it.** A solve that ran, exited 0, and wrote real files still reports `status: "ok"` — the 3-of-17 capture above did exactly that. The usable signal is the quality block a `colmap-poses` job now writes into `colmap-poses.manifest.json`: `quality.registrationRatio`, `quality.degenerate`, and `quality.status` (a `ScanReviewStatus` — `ready` / `needs-rescan`), with `quality.reasons` saying which gate tripped and `quality.thresholds` recording what it was judged against. The defaults are a 0.6 registration ratio and a 100-point floor, both overridable (`COLMAP_MIN_REGISTRATION_RATIO`, `COLMAP_MIN_POINTS3D`). Treat `degenerate: true` as "go back and walk the room again", not as something to tune around.
+
+---
+
 ## Requirements
 
 | Tool | Version | Purpose |
@@ -320,9 +365,9 @@ graph TD
 | [Node.js](https://nodejs.org) | ≥ 22.18.0 | Vite dev server + build; type stripping for the `.mjs` scripts that import `.ts` |
 | [Deno](https://deno.land) | ≥ 2.0 | Inference server |
 | [Python 3](https://python.org) | ≥ 3.8 | Model downloader |
-| [ffmpeg](https://ffmpeg.org) (with `ffprobe`) | any | `/ingest-video` and `/ingest-photos` — `scripts/ingest-*.mjs` shell out to it. Missing, an Upload Content video fails with `spawnSync ffmpeg ENOENT` inside an HTTP 500 |
+| [ffmpeg](https://ffmpeg.org) (with `ffprobe`) | any | `/ingest-video` — `scripts/ingest-video.mjs` shells out to it. Missing, an Upload Content video fails with `spawnSync ffmpeg ENOENT` inside an HTTP 500. `/ingest-photos` does not need it: `scripts/ingest-photos.mjs` reads and scales photos in Node, with `sharp` or `jimp` |
 
-An iOS or Android device with camera is required for AR scanning. The 3D viewer and inference server work on desktop.
+AR scanning needs a phone or tablet with a camera, or a headset with WebXR; see [Device targets](#device-targets). The 3D viewer and inference server work on desktop.
 The **Upload Content** path — a walkthrough video or photos, no phone, tailnet, cert or AR engine involved — needs only ffmpeg on the server.
 
 ### Reconstruction toolchain (all optional)
@@ -404,62 +449,10 @@ health troubleshooting, see [docs/testing/DEVICE_TESTING.md](docs/testing/DEVICE
 
 ---
 
-## Quick Start
+## Server settings and sign-in
 
-### 1. Clone and install
-
-```bash
-git clone https://github.com/companionintelligence/CI-Spatial.git
-cd CI-Spatial
-npm ci
-```
-
-### 2. (Optional) Download the ONNX model (2.2 GB)
-
-The default `ollama` mode needs no bundled model — install [Ollama](https://ollama.com), then run `npm run setup:models` to see the recommended vision models and pull the ones you want. Only run the downloader below if you plan to use `INFERENCE_MODE=onnx` instead:
-
-```bash
-python3 download_models.py
-```
-
-This downloads `LiquidAI/LFM2.5-VL-1.6B-ONNX` into `public/models/LiquidAI/LFM2.5-VL-1.6B-ONNX/`.
-
-### 3. Set up HTTPS (required for camera access)
-
-For trusted HTTPS on all devices via [Tailscale](https://tailscale.com):
-
-```bash
-tailscale cert <your-machine>.<your-tailnet>.ts.net
-```
-
-The hostname is auto-detected at Vite startup: `TAILSCALE_HOSTNAME` env var →
-`tailscale status --json` → a `<hostname>.ts.net.crt` file in the repo root.
-Set `TAILSCALE_HOSTNAME` explicitly only if detection picks the wrong name
-(see `.env.example` for all configuration knobs).
-
-### 4. Start both servers
-
-```bash
-npm start
-```
-
-This uses `concurrently` to run:
-- **Deno inference server** on `:8000` (`npm run server`)
-- **Vite dev server** on `:5173` with HTTPS (`npm run dev`)
-
-Open `https://<tailscale-hostname>:5173` on your phone to scan or upload content from a Place, or use the Spatial Editor on desktop at `https://<tailscale-hostname>:5173/editor?project=default`.
-
-Key routes (replace the hostname with your machine's):
-
-- Scanner / uploader: `https://<your-tailscale-hostname>:5173/?project=default`
-- Spatial Editor: `https://<your-tailscale-hostname>:5173/editor?project=default`
-- WebXR scanner: `https://<your-tailscale-hostname>:5173/webxr.html`
-
-For persistent serving from a Linux box (systemd units, GPU inference, cert renewal) see [docs/operations/DEPLOY.md](docs/operations/DEPLOY.md); for the on-device test protocol — including driving an Android device's UI directly through [android-remote-control-mcp](https://github.com/danielealbano/android-remote-control-mcp) as a Claude Code connector — see [docs/testing/DEVICE_TESTING.md](docs/testing/DEVICE_TESTING.md#remote-controlled-testing-android-remote-control-mcp).
-
-### First-time use / everyday flow
-
-New here? [docs/product/UX_FLOW.md](docs/product/UX_FLOW.md) walks the whole happy path as a user story — install and onboarding on the phone, scanning a room, structuring scans into the 4D world in the desktop editor, queuing reconstruction jobs, and sharing a world — plus the mental model for the four capture modes (manual tap, auto-capture, keyframe streaming, and WebRTC live). For the full documentation index see [docs/README.md](docs/README.md).
+These are the server's settings, and they apply whichever target is in use. Running and testing the
+server: [docs/targets/server.md](docs/targets/server.md).
 
 ### First-run setup status and settings
 
@@ -473,13 +466,15 @@ The second step of the first-run overlay lists three things about this install. 
 
 A row reads "Status unavailable." when its endpoint does not answer. When none of the three answers, as on the static public site, one Server row replaces them: "None answered. Sign-in, saved projects and object labels need one." Reading the Companion Memory row makes the server probe the configured Companion Memory once: an empty-batch POST with a five-second timeout.
 
+`engineLoadState: ready` means Ollama answered and a model was resolved. It does not mean a capture has run. The engine loads once, when the server starts, and is not retried, so start Ollama before the Deno server, or restart the server after you start Ollama.
+
 #### The Scan server in the Android, iOS and desktop apps
 
 The apps have no server of their own. They talk to the person's own Scan server, such as the one on their Companion Hub, and its address is set on the device. In the Android and iOS apps a Server row comes first on the second step: "None set" with an Add server control, the server's host with a Change control, or the host followed by "did not answer". The control opens a form that tests the address (`GET /health`) and saves it. The editor has the same form under Navigate, Scan server, and asks for an address when none is set. The phone apps also end the list with Legal notices (and the editor's Navigate menu has it too), which shows Companion Scan's licence, the Niantic Spatial XR Engine notice in the apps that bundle the engine, Google's ARCore notice in the Android app, and the licences of the other third-party software in the app (`src/ui/legal-notices.ts`). The desktop app opens the editor and never shows the first-run screen, so its Navigate menu holds all of this: Scan server, Legal notices, and the account control that signs in. Either way the address is kept in the app's storage (`companion-scan-server`, `src/shared/api-base.ts`), and saving a different server drops the session token, which belongs to the old one. A build can name a default server with `VITE_API_BASE`; an address saved on the device wins over it. The hosted web app never reads the saved address, so the public site behaves as it always has.
 
 Only `https://` addresses are accepted, and an address is an origin: no path, query or user name. Plain `http` is refused rather than allowed, because no documented setup needs it. A Companion Hub serves its apps over HTTPS, a self-hosted server on a tailnet uses a `tailscale cert` certificate ([docs/operations/DEPLOY.md](docs/operations/DEPLOY.md)), and the phone browser already needs HTTPS for the camera. The Android app refuses cleartext and mixed content (`mobile/capacitor.config.ts`), the desktop app's content security policy allows only `https:` and `wss:` to remote hosts, and the session token must not cross a network in clear text. A server that only answers plain `http` on a LAN needs TLS in front of it before the apps can use it.
 
-`engineLoadState: ready` means Ollama answered and a model was resolved. It does not mean a capture has run. The engine loads once, when the server starts, and is not retried, so start Ollama before the Deno server, or restart the server after you start Ollama.
+### Settings the server reads
 
 The server reads these settings. Defaults are the code's own, and the Hub column says where Companion Hub supplies a value.
 
@@ -500,43 +495,13 @@ The server reads these settings. Defaults are the code's own, and the Hub column
 
 When Companion Hub hosts the scanner, the Hub fills the memory and inference values from the app's store manifest (`hub_integration` in `ci-web-xr-scan/config.json` in the CI-Marketplace repo), so nobody types them by hand. The Hub writes the memory values after a completed connect. The app form also has advanced fields for an external Companion Memory, which you can fill instead. The server reads its memory settings once at boot, so a connect needs a server restart. Whether the Hub restarts the app itself is to confirm.
 
+### Companion Account sign-in
+
 The sign-in endpoints (authorize, token, userinfo and JWKS) are not set by hand. The server reads them from CI-Portal's OpenID metadata, at `${OIDC_ISSUER_URL}/.well-known/openid-configuration` or, where CI-Portal serves it under its auth routes, at `${OIDC_ISSUER_URL}/api/auth/.well-known/openid-configuration`. It accepts the metadata only if its issuer is `OIDC_ISSUER_URL`, every endpoint is on that origin, and PKCE S256 is offered. The boot log says what it found. If neither location can be read, the server uses the usual `/api/auth/` paths and logs a warning. `PORTAL_OIDC_JWKS_URI` overrides the JWKS URL only.
 
 Sign-in is off unless `PORTAL_OIDC_ENABLED` is on. The first-run control starts it at `/authenticate/oidc?redirect=/`, which returns to the scanner after CI-Portal. A direct visit to `/authenticate/oidc` lands in the world editor instead. When sign-in is off, the only sign-in route registered is `/authenticate/status`. A native shell starts the same sign-in with `shell=1` and a PKCE challenge, and gets its session from `POST /authenticate/shell/exchange`; see [mobile/README.md](mobile/README.md#companion-account-sign-in). The desktop app sends `shell=desktop` instead, and the server hands its code back at `computer.ci.scan.desktop://auth` rather than the phone app's scheme. CI-Portal only ever redirects to the Scan server's own `/authenticate/oidc/callback`, so neither app scheme is registered with the Portal.
 
 Once sign-in is on, the API needs a Companion session. The session comes as the browser cookie, as a `Bearer` token from the app, or as a `token` query parameter for media and sockets. The data, write and compute routes (scans, sessions, projects, uploads, ingest, inference, jobs, events) answer `401` without one, and `/health`, `/authenticate/*` and the app bundle stay open. World writes need that world's token. `SCAN_REQUIRE_AUTH=1` applies the same gate with sign-in off, and then no request gets in. A public Scan needs sign-in on.
-
-### Capture geometry: walk the camera, don't spin it
-
-This is the single biggest difference between a scan that reconstructs and one that does not, and it is not a tuning problem.
-
-Monocular structure-from-motion locates a 3D point by intersecting the rays to it from two camera centres **that are in different places**. Rotate on the spot and there is no second place: the rays are collinear, the intersection is undefined at any noise level, and the two-view geometry collapses to a homography. COLMAP has a name for this exact condition — it reports such pairs as `PLANAR_OR_PANORAMIC`. No amount of extra frames, better exposure, or matcher tuning changes it.
-
-Three captures from this repo, ordered by how much the camera actually moved:
-
-| Capture | Frames | Camera motion | COLMAP result |
-|---|---|---|---|
-| Walkthrough video, `sess-video-20260830-033839` | 32 | translating through the space | **32 / 32 registered**, 9362 points, 27.6 s — trained to a usable splat |
-| Handheld phone, `sess-a7e2f642-…` | 17 | near-in-place; rotation dominated translation | **3 / 17 registered, 1 triangulated point** |
-| Gimbal dome, one station | 9 | effectively none — lens offset from the pan/tilt axes only | **4 / 9 registered**; 29 of 36 pairs `PLANAR_OR_PANORAMIC` |
-
-(Row 1 is `scans/sessions/sess-video-20260830-033839/colmap-poses.manifest.json`, still on disk. Row 2's session is on disk but its solve manifest is not — those numbers, and the re-runs that showed the ratio is reproducible on a bad capture while the point count is not, are recorded at `server/colmap/colmap_poses.ts:204-236`. Row 3 is from [ADR 0007](docs/adr/0007-splat-backends-are-selectable-and-a-rotation-only-sweep-is-not-a-reconstruction-capture.md), sourced from `docs/operations/GIMBAL_INTEGRATION.md`.)
-
-**So, when you capture:**
-
-- **Walk.** Move through the room and keep moving while recording — down a hallway, around a table, along a wall. Sideways steps buy you more than sweeps do.
-- **Orbit things, don't pan across them.** To capture an object, circle it. Standing in one spot and turning to face it is the failure case above.
-- **Give the shot a baseline comparable to the depth of what you're looking at.** Baselines measured for the two rows above (ADR 0007): the 32/32 run reached ~13.6 units against a 2.2–2.5 unit scene depth — several times the depth it was looking at; the 3/17 run reached 0.88 m over a 3.62 m path while rotating 90.4°.
-- **Keep overlap while you move**, so features survive between viewpoints — translate steadily rather than jumping between disconnected vantage points.
-- **A rotation-only sweep is a panorama, not a reconstruction capture.** It is the *ideal* input for a 360° projection and a useless one for SfM; those are the same property seen from two sides. Don't run a dome and expect a 3D model.
-
-**Check the verdict, don't assume it.** A solve that ran, exited 0, and wrote real files still reports `status: "ok"` — the 3-of-17 capture above did exactly that. The usable signal is the quality block a `colmap-poses` job now writes into `colmap-poses.manifest.json`: `quality.registrationRatio`, `quality.degenerate`, and `quality.status` (a `ScanReviewStatus` — `ready` / `needs-rescan`), with `quality.reasons` saying which gate tripped and `quality.thresholds` recording what it was judged against. The defaults are a 0.6 registration ratio and a 100-point floor, both overridable (`COLMAP_MIN_REGISTRATION_RATIO`, `COLMAP_MIN_POINTS3D`). Treat `degenerate: true` as "go back and walk the room again", not as something to tune around.
-
-### WebXR mode (HelloXR on iOS)
-
-`/webxr.html` runs the same scanner on a **native WebXR `immersive-ar` session** instead of the 8th Wall SLAM engine. Safari on iOS has no WebXR AR, so open the URL inside [HelloXR](https://apps.apple.com/us/app/helloxr/id6757726359), a WebXR-enabled iOS browser (Android Chrome and headset browsers work directly).
-The page auto-detects support and forwards to the scanner in forced-WebXR mode (`/?ar=webxr` — `xr.js` is not loaded at all on this path); without support it shows the HelloXR install link and fallbacks. The 🥽 button in the AR app and the WebXR button in the viewer toolbar navigate between the two runtimes.
-In WebXR mode the point cloud accumulates from per-frame hit-test samples (WebXR exposes no SLAM feature points), so sweep the camera slowly across surfaces.
 
 ---
 
@@ -548,6 +513,7 @@ In WebXR mode the point cloud accumulates from per-frame hit-test samples (WebXR
 ├── viewer.html                # Standalone 3D viewer / World Editor entry point
 ├── scanner.html               # Share-link scanner redirect entry point
 ├── webxr.html                 # WebXR-forced runtime entry point
+├── xr-world.html              # Headset world editor (immersive-vr) entry point
 ├── ar-hittest-sphere.html     # 8th Wall hit-test prototype (diagnostic)
 ├── ar-ground-anchor.html      # Ground-anchor calibration prototype (diagnostic)
 ├── download_models.py         # ONNX model download helper
@@ -598,7 +564,8 @@ In WebXR mode the point cloud accumulates from per-frame hit-test samples (WebXR
 ├── src/                        # Frontend — unaffected by the server/ regrouping above
 │   ├── main.ts                #   Frontend app bootstrap
 │   ├── pwa.ts                  #   Service-worker registration + offline write queue
-│   ├── ar/                     #   provider.ts, eighthwall.ts, webxr.ts, scanner.ts
+│   ├── ar/                     #   provider.ts, eighthwall.ts, webxr.ts, native.ts (ScanAR),
+│   │                           #     native-bridge.ts, runtime-select.ts, scanner.ts
 │   ├── capture/                 #   capture.ts, auto-capture.ts, keyframes.ts, quality-monitor.ts
 │   ├── inference/                #   router.ts, server.ts, webgpu.worker.ts, prompt.ts,
 │   │                               #     lfm-driver.ts, model-provisioning.ts
@@ -609,7 +576,7 @@ In WebXR mode the point cloud accumulates from per-frame hit-test samples (WebXR
 │   ├── viewer/                     #   editor + layers: viewer.ts, editor.ts, assets.ts,
 │   │                               #     geomap.ts, lingbot-map.ts, livefeed.ts, measure.ts,
 │   │                               #     splat-toolbox.ts, splat-viewer.ts, splat-layer.ts,
-│   │                               #     splat-detect-layer.ts
+│   │                               #     splat-detect-layer.ts, xr-world.ts (headset editor)
 │   ├── world/                      #   types.ts (WorldProject/ScanManifest/LayerManifest/EditPatch),
 │   │                                #     geo.ts, layers.ts
 │   ├── geo/                         #   geo-tracker.ts  (device geolocation tracking)
@@ -619,7 +586,7 @@ In WebXR mode the point cloud accumulates from per-frame hit-test samples (WebXR
 │   ├── shared/                          #   cv-palette.ts, test-homes.ts, session-id.ts
 │   └── test/                             #   webxr-emulation.ts
 │
-├── scripts/                   # ~30 Node/shell/Python dev scripts — see Development Scripts below
+├── scripts/                   # Node, shell and Python dev scripts — see Development Scripts below
 │
 ├── tests/
 │   ├── *.spec.ts               # Playwright specs (AR flow, API/CV-mock, house-readiness,
@@ -631,10 +598,13 @@ In WebXR mode the point cloud accumulates from per-frame hit-test samples (WebXR
 │       └── node/               #   Node unit suites — detection_store, editor_pick, glb_provenance,
 │                                #     lingbot_map_glb, pipeline_detection_graph, resolver
 │
+├── mobile/                    # Capacitor 8 shell: the Android and iOS apps (ScanAR plugin)
+├── desktop/                   # Tauri 2 desktop app: the editor and viewer, no capture
 ├── deploy/                    # systemd units + env template for a persistent Linux deployment
 ├── docs/                      # adr/, factory/ (ticket waves + the atlas), operations/, pipelines/,
-│                               #   product/, testing/
+│                               #   product/, targets/ (one page per device target), testing/
 ├── video/                     # Self-contained marketing/capture tool (own package.json)
+├── subsystems/4d-capture/     # Off-box 4D person reconstruction (ADR 0006; own package.json)
 └── subsystems/osmo-ble/       # Self-contained BLE gimbal-control subsystem (own package.json)
 ```
 
@@ -672,7 +642,7 @@ smoke test (Docker build + `/health` + static UI gate) is manual via
 
 ## Development Scripts
 
-The repo defines ~30 npm scripts. The most common:
+The repo defines over 140 npm scripts (`package.json`). The most common:
 
 > **Node ≥ 22.18.0 is required.** `scripts/generate-test-homes.mjs`, `scripts/generate-cv-images.mjs`
 > and `scripts/smoke-pipeline.mjs` import TypeScript directly, which only works once Node strips
@@ -691,7 +661,7 @@ The repo defines ~30 npm scripts. The most common:
 | `npm run build` | TypeScript check + Vite production build |
 | `npm test` | Playwright tests (webkit-desktop) |
 | `npm run test:mobile` | Playwright tests (webkit iPhone 15 emulation) |
-| `npm run test:iphone` | Playwright over USB on a real iPhone |
+| `npm run test:iphone` | Playwright (WebKit, iPhone 15 profile) against the live tailnet URL; no real device, no USB |
 | `npm run test:house` | Two-story-house field-acceptance suite |
 | `npm run test:box` | Self-contained browser loop — boots its own Deno API (`:8100`) and Vite (`:5273`) on scratch data dirs, seeds a corpus, runs the `api` + `chromium-mock` Playwright projects, tears it all down. Never touches the long-lived `:8000`/`:5173` servers or the real `scans/`. |
 | `npm run test:mock` / `test:api` | Mock-engine + API-only test tiers |
@@ -738,13 +708,13 @@ The full, canonical route table lives in [docs/architecture.md](docs/architectur
 | `GET` | `/scan-locations` | Returns geo-located scan positions |
 | `GET`/`POST` | `/worlds` | List / create world projects |
 | `GET` | `/worlds/:slug` | World manifest: scans, layers, members, jobs, patches (+ `.splat` sidecars) |
-| `GET` | `/worlds/:slug/share` | Compatibility endpoint returning view/comment/edit/scanner/owner links scoped to one Place |
+| `GET` | `/worlds/:slug/share` | Compatibility endpoint returning the share links scoped to one Place, only those at or below the caller's role (an owner token gets the owner link) |
 | `POST` | `/worlds/:slug/patches` | Persists transform, label, category, notes, visibility edit patches |
 | `GET`/`POST` | `/worlds/:slug/jobs` | List / queue async world jobs (`align-scan`, `semantic-pass`, `splat-train`, `lingbot-map-reconstruct`, …) |
 | `GET` | `/jobs` / `/jobs/:id` | Legacy view of `optimize-scan` jobs (shimmed from WorldJob data, shape unchanged) |
 | `GET` | `/worlds/:slug/frames/:scanId` | Pose, intrinsics, RGB URL, frustum for streamed keyframes |
-| `POST` | `/rtc-signal` | WebRTC signalling for live geometry |
-| `GET` | `/events` | Server-Sent Events stream |
+| `GET` | `/rtc-signal` | WebSocket upgrade: the WebRTC signalling relay for live geometry |
+| `GET` | `/events` | WebSocket upgrade: the server's event broadcast (scans, jobs, sessions) |
 | `POST` | `/client-logs` | Ingests client-side log batches |
 | `GET` | `/projects` | Lists projects |
 
@@ -858,17 +828,18 @@ For the two-story-house field acceptance protocol see [docs/testing/HOUSE_VALIDA
 ## Testing
 
 ```bash
-# Fast, hermetic gate — server type-check + full Deno suite + frontend
-# type-check. No servers, browsers, or seeded corpus needed (~3s).
+# Hermetic gate — the server, frontend and test type-checks, the full Deno suite, and
+# the Node unit suites `verify` names. No servers, browsers, or seeded corpus needed.
 npm run verify
 
-# Unit + E2E tests (desktop WebKit)
+# Playwright E2E tests (desktop WebKit)
 npm test
 
-# iPhone simulator
+# Mobile Safari viewport (WebKit with the iPhone 15 profile; no simulator, no device)
 npm run test:mobile
 
-# Real iPhone over USB (requires ios-webkit-debug-proxy)
+# The same profile against the live tailnet URL, so the real cert, proxy and CORS path
+# is exercised. No real device and no USB: Playwright cannot drive Safari on an iPhone.
 npm run test:iphone
 
 # Full isolated browser loop: boots its own Deno + Vite on scratch ports and
@@ -876,7 +847,7 @@ npm run test:iphone
 npm run test:box
 ```
 
-See `playwright.config.ts` for project configurations.
+See `playwright.config.ts` for project configurations. The on-device checklists for each target are linked from [docs/targets/](docs/targets/README.md).
 
 ### Pre-push guard
 
@@ -892,13 +863,13 @@ The hook covers only the hermetic gates — the Playwright suites need servers, 
 browser binary, and a seeded corpus, so they stay in `npm run test:box` rather
 than in front of every push. Emergency escape hatch: `git push --no-verify`.
 
-### 8th Wall Simulator
+### 8th Wall in automated tests
 
-The 8th Wall engine ships with a desktop simulator that replays pre-recorded SLAM sessions. To use it for automated testing:
-
-1. Launch the app in Chrome/Edge on desktop — XR8 will load its simulator UI
-2. Load the mock XR8 driver from `public/test-fixtures/xr8-mock.js` (if present)
-3. Playwright tests tagged `@simulator` can drive the capture loop headlessly
+The automated tests do not run the engine. `public/test-fixtures/xr8-mock.js`, loaded with
+`/?mock=xr8`, is a scripted stand-in: it sends SLAM poses, world feature points and a fake camera
+feed, and the `mock-xr8-*` Playwright specs drive the capture loop on it in headless Chromium
+(`npm run test:mock`). No spec is tagged `@simulator`, though `tests/ar-scan.spec.ts` mentions the
+tag, and no test uses an engine simulator.
 
 ---
 
@@ -913,7 +884,7 @@ The 8th Wall engine ships with a desktop simulator that replays pre-recorded SLA
 | Server | Local API and session state |
 | Viewer | Scene and WebXR presentation |
 
-The optional reconstruction toolchain is separate from the basic viewer/server flow. Camera capture requires the HTTPS setup described in Quick Start; keep model files, captured scenes, and any server credentials in the intended local storage and deployment boundary.
+The optional reconstruction toolchain is separate from the basic viewer/server flow. Camera capture requires the HTTPS setup described in [Quick setup](#quick-setup); keep model files, captured scenes, and any server credentials in the intended local storage and deployment boundary.
 
 ## License
 

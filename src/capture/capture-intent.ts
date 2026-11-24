@@ -57,7 +57,14 @@ export type CaptureSubject = 'room' | 'place' | 'object' | 'person'
 
 /** How it gets captured. Chosen for them, never presented as a choice. */
 export type CaptureMethod =
-  /** Live, on the phone's own tracking. */
+  /**
+   * Live, on the device's own platform tracking: ARKit or ARCore, whichever runtime reaches it. That is two runtimes
+   * (FN-047), and `nativeAr` says which one this device's answer is about:
+   *  - in a native shell, the ScanAR plugin's native session (src/ar/native.ts), which src/main.ts reports as `'yes'`;
+   *  - on the web, a WebXR immersive-ar session (src/ar/webxr.ts), ARCore behind Chrome, which a browser can only
+   *    advertise (`deviceFromProbe` reads that as `'unknown'`).
+   * The card's words are the same for both.
+   */
   | 'live-native'
   /** Live, run in the browser — no install, and no dependency on the phone's own. */
   | 'live-browser'
@@ -81,7 +88,10 @@ export type Availability = 'yes' | 'no' | 'unknown'
 export interface DeviceCapture {
   /** HTTPS. Without it the camera cannot open, so no live rung can run. */
   secureContext: boolean
-  /** Live capture on the phone's own tracking service. */
+  /**
+   * Live capture on the device's own tracking service: the ScanAR plugin's session in a native shell, or a WebXR
+   * immersive-ar session on the web (see `'live-native'`).
+   */
   nativeAr: Availability
   /** Live capture run in the browser. */
   browserAr: Availability

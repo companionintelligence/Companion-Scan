@@ -3,7 +3,7 @@
  *
  * locar's scene puts east at +x and north at −z. So do `sceneFromEnu` (src/world/enu.ts) and `latLngToScene`
  * (src/viewer/map-plane-math.ts) when the frame has no bearing. Placement therefore uses the repo's own exact
- * ENU, not locar's Web Mercator default, whose scale grows as 1/cos(latitude) (ADR 0012, ADR 0001).
+ * ENU, not locar's Web Mercator default, whose scale grows as 1/cos(latitude) (ADR 0014, ADR 0001).
  *
  * One rule places everything. `scenePlacement().toScene` replaces `LocAR.lonLatToWorldCoords` on the instance, so
  * the camera's own GPS fixes and every Place go through the same origin and the same turn. The origin is the first

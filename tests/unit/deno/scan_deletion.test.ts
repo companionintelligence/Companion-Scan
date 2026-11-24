@@ -161,6 +161,26 @@ Deno.test('a finished SenseNova job\'s folder goes with its scan, and nothing ou
   })
 })
 
+Deno.test('a scan\'s interactive-asset folder goes with it, case folders and their copy of the frame too, and a sibling keeps its own', async () => {
+  await withTree(async (tree) => {
+    await makeScanWithEverything(tree.scans, MINE)
+    await makeScanWithEverything(tree.scans, SIBLING)
+    for (const filename of [MINE, SIBLING]) {
+      const folder = `${tree.scans}/${filename.replace(/\.glb$/, '')}.interactive`
+      await Deno.mkdir(`${folder}/job-1-0a1b2c3d/input`, { recursive: true })
+      await Deno.writeTextFile(`${folder}/job-1-0a1b2c3d/input/source.jpg`, 'a copy of a camera frame')
+      await Deno.writeTextFile(`${folder}/job-1-0a1b2c3d.glb`, 'glTF')
+      await Deno.writeTextFile(`${folder}/job-1-0a1b2c3d.delivery.json`, '{}')
+    }
+    const calls: Calls = { order: [], worldsSawGlb: null, worldsHeld: 1 }
+    const reply = await deleteScan(MINE, fakeDeps(tree, calls))
+    assertEquals(reply.status, 200, JSON.stringify(reply.body))
+    assertFalse(await exists(`${tree.scans}/100_room.interactive`), 'the assets, the reports and the case folders went')
+    assert(await exists(`${tree.scans}/100_room-two.interactive/job-1-0a1b2c3d/input/source.jpg`), 'another scan\'s stay')
+    assertEquals((reply.body['deleted'] as Record<string, unknown>)['sidecars'], 4 + 1 + SPLAT.length + 1 + 1, 'the folder counts once')
+  })
+})
+
 Deno.test('the worlds go last: every file is already gone when the scan is taken out of them', async () => {
   await withTree(async (tree) => {
     await makeScanWithEverything(tree.scans, MINE)
@@ -439,6 +459,17 @@ Deno.test('clearing everything removes the scans, what was made from them and ev
     assert(await exists(`${tree.scans}/projects/proj-1/ref-landmark.jpg`), 'a Place\'s photos are not scan data: they stay')
     assertEquals(calls, ['running', 'exports', 'worlds'])
     assertEquals(reply.body['deleted'], 2 * (1 + 1 + 4 + 1 + SPLAT.length + 1) + 1, 'every file and folder removed is counted')
+  })
+})
+
+Deno.test('clearing everything removes every interactive-asset folder, with its case folders', async () => {
+  await withTree(async (tree) => {
+    await makeScanWithEverything(tree.scans, MINE)
+    await Deno.mkdir(`${tree.scans}/100_room.interactive/job-1-0a1b2c3d/input`, { recursive: true })
+    await Deno.writeTextFile(`${tree.scans}/100_room.interactive/job-1-0a1b2c3d/input/source.jpg`, 'a copy of a camera frame')
+    const reply = await deleteAllScans(allDeps(tree, []))
+    assertEquals(reply.status, 200, JSON.stringify(reply.body))
+    assertFalse(await exists(`${tree.scans}/100_room.interactive`))
   })
 })
 

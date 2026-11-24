@@ -33,7 +33,19 @@ import {
   PROBE_STOP_MARGIN_DEG,
   PROBE_MAX_MOVES,
   JAM_INTERIOR_MARGIN_DEG,
+  planGrid,
+  moveTargetProblem,
+  planSweepAlongArc,
+  arcFromPayload,
+  isTiltReachable,
+  TILT_MIN_DEG,
+  TILT_MAX_DEG,
+  SCANNER_MIN_ROTATION_DEG,
+  DOME_PAN_STEP_DEG,
 } from './dome.mjs';
+import { planGrid as planGridViaCapture } from '../server/android-capture.mjs';
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 /**
  * A gimbal with a pan arc that is 178 degrees wide and falls WHEREVER `minusStop` says.
@@ -474,4 +486,107 @@ test('a gimbal that stops travelling without a stall flag is still read as a sto
   probe.next();
   probe.observe({ converged: false, finalPan: 169.5, stalled: false });
   assert.equal(probe.stops.plusDeg, 169.5);
+});
+
+
+/* ---------------------------------------------------------------------------------------- *
+ * The grid order, the move-to guard, the along-arc sweep, and the front-ends' defaults
+ * (wave 14, ticket 0007: FN-181, FN-182, FN-189, FN-194).
+ * ---------------------------------------------------------------------------------------- */
+
+test('planGrid is serpentine, and android-capture.mjs still exports the same one', () => {
+  const grid = planGrid({ pans: [96, 121, 146], tilts: [-25, 0] });
+  assert.deepEqual(grid.map((g) => `${g.pan}/${g.tilt}`), ['96/-25', '121/-25', '146/-25', '146/0', '121/0', '96/0']);
+  assert.equal(planGridViaCapture, planGrid, 'one function, re-exported for the old import path');
+});
+
+test('move-to guard: pan 0 is refused on the fallback arc, which it names as the fallback and says to measure', () => {
+  const problem = moveTargetProblem({ panDeg: 0, tiltDeg: 0 });
+  assert.ok(problem, 'pan 0 is inside the fallback dead zone');
+  assert.match(problem.error, /built-in fallback, NOT measured/);
+  assert.match(problem.remediation, /arc-probe/);
+  assert.equal(moveTargetProblem({ panDeg: PAN_ARC_CENTER_DEG, tiltDeg: 0 }), null, 'the arc centre is fine');
+  assert.equal(moveTargetProblem({ panDeg: 82, tiltDeg: 0 }), null, 'the start stop itself is on the arc');
+  assert.equal(moveTargetProblem({ panDeg: -100, tiltDeg: 0 }), null, 'and the end stop');
+});
+
+test('move-to guard: a measured arc decides, and its refusal points at the measured centre', () => {
+  const arc = makeArc({ startDeg: -60, endDeg: 100, source: 'measured', measuredAt: 1 });
+  assert.equal(moveTargetProblem({ panDeg: 0, tiltDeg: 0, arc }), null);
+  const problem = moveTargetProblem({ panDeg: 171, tiltDeg: 0, arc });
+  assert.match(problem.error, /measured from this tripod position/);
+  assert.match(problem.remediation, /centre is 20°/);
+});
+
+test('move-to guard: non-finite and non-number targets are refused, never looped on', () => {
+  for (const panDeg of [Infinity, -Infinity, NaN, '120', null, undefined]) {
+    assert.match(moveTargetProblem({ panDeg, tiltDeg: 0 }).error, /not a finite number/, String(panDeg));
+  }
+  assert.match(moveTargetProblem({ panDeg: 171, tiltDeg: Infinity }).error, /not a finite number/);
+});
+
+test('tilt travel: one pair of limits for the grid, move-to and the MCP schemas', () => {
+  assert.equal(TILT_MIN_DEG, -45);
+  assert.equal(TILT_MAX_DEG, 16);
+  for (const t of [-45, -25, 0, 16]) assert.equal(isTiltReachable(t), true, String(t));
+  for (const t of [-45.1, 16.1, NaN, '0', null]) assert.equal(isTiltReachable(t), false, String(t));
+  assert.match(moveTargetProblem({ panDeg: 171, tiltDeg: 20 }).error, /outside the measured travel/);
+});
+
+test('the sweep steps along the arc: 96 to -114 goes round through 180, never through the front', () => {
+  const { pans, error } = planSweepAlongArc({ startDeg: 96, endDeg: -114, stepDeg: 30 });
+  assert.equal(error, undefined);
+  assert.deepEqual(pans, [96, 126, 156, -174, -144, -114]);
+  assert.deepEqual(unreachablePans(pans), [], 'every step is reachable');
+  // The old numeric interpolation took 96 -> -114 straight through 0:
+  const numeric = Array.from({ length: 8 }, (_, i) => 96 - 30 * i);
+  assert.ok(unreachablePans(numeric).length >= 5, 'the numeric path was mostly dead zone');
+});
+
+test('the sweep keeps its old step count and lands exactly on the end, in either direction', () => {
+  assert.deepEqual(planSweepAlongArc({ startDeg: 100, endDeg: 150, stepDeg: 15 }).pans, [100, 115, 130, 150]);
+  // 150 degrees at 70 is floor(150 / 70) + 1 = 3 positions, the last landing on the end, as before.
+  assert.deepEqual(planSweepAlongArc({ startDeg: -114, endDeg: 96, stepDeg: 70 }).pans, [-114, 176, 96]);
+  assert.deepEqual(planSweepAlongArc({ startDeg: 171, endDeg: 171 }).pans, [171]);
+});
+
+test('the sweep refuses an end outside the arc in use, and an over-long sweep, before any move', () => {
+  assert.match(planSweepAlongArc({ startDeg: 0, endDeg: 120 }).error, /0° is outside the reachable arc in use/);
+  const measured = makeArc({ startDeg: -60, endDeg: 100, source: 'measured', measuredAt: 1 });
+  assert.deepEqual(planSweepAlongArc({ startDeg: -30, endDeg: 30, stepDeg: 30, arc: measured }).pans, [-30, 0, 30]);
+  assert.match(planSweepAlongArc({ startDeg: 96, endDeg: -100, stepDeg: 1 }).error, /max 60/);
+  assert.match(planSweepAlongArc({ startDeg: Infinity, endDeg: 96 }).error, /finite/);
+});
+
+test('arcFromPayload rebuilds the arc the backend reports, and falls back for anything else', () => {
+  const measured = makeArc({ startDeg: -60, endDeg: 100, source: 'measured', measuredAt: 1234 });
+  const payload = { startDeg: measured.startDeg, endDeg: measured.endDeg, spanDeg: measured.spanDeg, centerDeg: measured.centerDeg, source: 'measured', measuredAt: 1234 };
+  const rebuilt = arcFromPayload(payload);
+  assert.equal(rebuilt.source, 'measured');
+  assert.equal(rebuilt.measuredAt, 1234);
+  assert.equal(rebuilt.centerDeg, 20);
+  assert.equal(isPanReachable(0, rebuilt), true);
+  assert.equal(isPanReachable(171, rebuilt), false);
+  const fallback = arcFromPayload({ startDeg: 82, endDeg: -100, source: 'default' });
+  assert.equal(fallback.source, 'default');
+  assert.deepEqual([fallback.startArc, fallback.endArc], [DEFAULT_PAN_ARC.startArc, DEFAULT_PAN_ARC.endArc]);
+  for (const junk of [null, undefined, 'x', {}, { startDeg: 'a', endDeg: 1 }]) assert.equal(arcFromPayload(junk), DEFAULT_PAN_ARC);
+});
+
+test('the front-ends default to a 25-degree pan step, which clears the scanner keyframe threshold', () => {
+  assert.equal(DOME_PAN_STEP_DEG, 25);
+  assert.ok(DOME_PAN_STEP_DEG >= SCANNER_MIN_ROTATION_DEG);
+  // 150 degrees at that step is the 7-column dome every front-end shows.
+  assert.equal(planDomePans({ stepDeg: DOME_PAN_STEP_DEG }).pans.length, 7);
+});
+
+// The scanner's threshold is a parallel copy of a TypeScript default in the main app. This pins the
+// two together, so the copy cannot drift without a failure. It is skipped only when the subsystem is
+// checked out on its own, without the app beside it.
+const KEYFRAMES_TS = fileURLToPath(new URL('../../../src/capture/keyframes.ts', import.meta.url));
+test('SCANNER_MIN_ROTATION_DEG matches the scanner app\'s minRotationDeg default', { skip: !existsSync(KEYFRAMES_TS) && 'no src/ beside this subsystem' }, () => {
+  const source = readFileSync(KEYFRAMES_TS, 'utf8');
+  const match = /const DEFAULTS\b[^=]*=\s*\{[\s\S]*?\bminRotationDeg:\s*([\d.]+)/.exec(source);
+  assert.ok(match, 'found the DEFAULTS block and its minRotationDeg in src/capture/keyframes.ts');
+  assert.equal(Number(match[1]), SCANNER_MIN_ROTATION_DEG);
 });

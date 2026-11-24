@@ -289,10 +289,12 @@ Deno.test('a scan is stored at the placement it was uploaded with, and that firs
       assertEquals(row.calibrationStatus, 'provisional')
     })
 
-    await t.step('the very first read of a world that did not exist yet already carries it', async () => {
-      // A world is built from the scans on disk on its first read and answered as built, not read back, so it is stamped as it is built.
-      const reply = await server.get('/worlds/a-world-nobody-has-read')
-      assertEquals(reply.status, 200, reply.text)
+    await t.step('the very first answer for a world that did not exist yet already carries it', async () => {
+      // A read does not make a world (F-03): POST /worlds does, building it from the scans on disk and answering it as
+      // built, not read back, so it is stamped as it is built.
+      assertEquals((await server.get('/worlds/a-world-nobody-has-read')).status, 404, 'a read makes no world')
+      const reply = await server.post('/worlds', { shareSlug: 'a-world-nobody-has-read' })
+      assertEquals(reply.status, 201, reply.text)
       assertEquals(rowOf(reply.json<WorldProject>(), filename).calibratedLocalToWorld, calibrated())
     })
 

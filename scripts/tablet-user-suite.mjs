@@ -8,7 +8,7 @@
  *   TABLET_MCP_BEARER or TABLET_MCP_AUTH
  *
  * The app URL is resolved from TABLET_TEST_URL/VITE_URL, then the repo's
- * Tailscale cert hostname, then the historical liambook fallback.
+ * Tailscale cert hostname, then localhost (F-01: no developer machine's name).
  */
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
@@ -60,7 +60,7 @@ function resolveAppBaseUrl() {
   if (fromEnv) return `https://${fromEnv}:${port}`
 
   const cert = readdirSync(process.cwd()).find((f) => f.endsWith('.ts.net.crt'))
-  const host = cert ? cert.replace(/\.crt$/, '') : 'liambook.capybara-ulmer.ts.net'
+  const host = cert ? cert.replace(/\.crt$/, '') : 'localhost'
   return `https://${host}:${port}`
 }
 

@@ -38,7 +38,6 @@ import { collectBurst } from './hit-burst.ts'
 import type { TrackingStatus } from './tracking-quality'
 import {
   FrameEpochTracker,
-  MAX_CAPTURE_POSE_AGE_MS,
   TRACKING_LOST_MESSAGE,
   type FrameDiscontinuity,
   type FrameDiscontinuityListener,
@@ -49,11 +48,46 @@ import { imagePointToViewportPoint, type ImageHitTestContract, type ViewSize } f
 import { EngineScaleSession } from './engine-config.ts'
 import type { ScaleKind, ScaleMode } from '../world/scale-mode.ts'
 import { poseDistance, usefulWorldPoint } from './point-filter.ts'
+import { projectionAspect, projectionFovYDeg } from '../shared/pose-math.ts'
+import {
+  HiddenSpell,
+  capturePoseTooOld,
+  failCaptures,
+  queueCapture,
+  settleCaptures,
+  withPoseAge,
+  type PendingCapture,
+} from './provider-plumbing.ts'
 
 type Point3 = { x: number; y: number; z: number }
 
 /** How long start() waits for /xr.js before giving up with a real error. */
 const XR_LOAD_TIMEOUT_MS = 10_000
+
+/**
+ * True once the 8th Wall engine has loaded (the XR8 global exists, or `xrloaded` fires), false when `timeoutMs` passes
+ * first. Bounded deliberately: an unconditional wait never settles if /xr.js fails to load, which is indistinguishable
+ * from "still initialising". `start()` and `createEighthWallProvider()` both wait through it (FN-046).
+ */
+function engineLoaded(timeoutMs: number): Promise<boolean> {
+  if (typeof XR8 !== 'undefined') return Promise.resolve(true)
+  return new Promise<boolean>((resolve) => {
+    const onLoaded = (): void => {
+      clearTimeout(timer)
+      resolve(true)
+    }
+    const timer = setTimeout(() => {
+      window.removeEventListener('xrloaded', onLoaded)
+      resolve(false)
+    }, timeoutMs)
+    window.addEventListener('xrloaded', onLoaded, { once: true })
+  })
+}
+
+/** What a wait for the engine that ran out says. */
+function engineDidNotLoad(timeoutMs: number): Error {
+  return new Error(`8th Wall engine (/xr.js) did not load within ${timeoutMs} ms — the AR camera cannot start`)
+}
 
 /**
  * How long the camera may sit at `requesting` before the page says it is still
@@ -335,11 +369,8 @@ function frameTimeMs(frameStartResult: Record<string, unknown> | undefined): num
 }
 
 export class EighthWallProvider implements ARProvider, ImageHitTestContract {
-  private captureQueue: Array<{
-    resolve: (frame: RawFrame) => void
-    reject: (error: Error) => void
-    timeout: ReturnType<typeof setTimeout>
-  }> = []
+  /** Waiting `captureFrame()` calls (./provider-plumbing.ts). Normally one. */
+  private captureQueue: PendingCapture[] = []
   private latestPose: Pose = {
     position: { x: 0, y: 0, z: 0 },
     rotation: { x: 0, y: 0, z: 0, w: 1 },
@@ -369,10 +400,11 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
    * taken fresh, which is every frame that has one.
    */
   private _poseHeld = false
-  /** Whether the page was last seen hidden, so a return to it can be told from a first look. */
-  private _pageHidden = false
-  /** When the page was last hidden, on the page clock (ms), so a return can say how long it was away. */
-  private _hiddenAtMs: number | null = null
+  /**
+   * Whether the page was last seen hidden, and since when on the page clock, so a return to it can be told from a first
+   * look and can say how long it was away (./provider-plumbing.ts).
+   */
+  private _pageVisibility = new HiddenSpell()
   /** The page-visibility listener, held so `stop()` can remove it. */
   private _onVisibility: (() => void) | null = null
   private _diagLogged = false
@@ -569,11 +601,13 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
       : ArrayBuffer.isView(intr)
         ? Array.from(intr as unknown as Float32Array)
         : null
-    if (proj && proj.length >= 6 && Number.isFinite(proj[5]) && proj[5] !== 0) {
-      this._fovY = 2 * Math.atan(1 / proj[5]) * (180 / Math.PI)
-      if (Number.isFinite(proj[0]) && proj[0] !== 0) {
-        this._cameraAspect = proj[5] / proj[0]
-      }
+    // The lens from the projection (src/shared/pose-math.ts, which the WebXR provider reads its lens with too). The
+    // field of view stands without the aspect: an unusable horizontal term leaves the aspect as it was.
+    const projFovY = projectionFovYDeg(proj)
+    if (projFovY > 0) {
+      this._fovY = projFovY
+      const projAspect = projectionAspect(proj)
+      if (projAspect > 0) this._cameraAspect = projAspect
     } else if (intr && typeof intr === 'object' && !Array.isArray(intr)) {
       // Object-shaped intrinsics: kept because 8th Wall has published this shape
       // on other builds, and falling back is cheaper than guessing which one a
@@ -628,7 +662,7 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
    * the tick that ends it brings a fresh one.
    */
   private _poseTooOldForCapture(nowMs: number): boolean {
-    return this._poseHeld && this._poseAtMs !== null && nowMs - this._poseAtMs > MAX_CAPTURE_POSE_AGE_MS
+    return this._poseHeld && capturePoseTooOld(this._poseAtMs, nowMs)
   }
 
   /**
@@ -771,17 +805,8 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
     // no camera — indistinguishable from "still initialising". main.ts's
     // waitForXR8() already times out for the same reason; this is the same
     // guarantee one layer down.
-    if (typeof XR8 === 'undefined') {
-      const loaded = await new Promise<boolean>((resolve) => {
-        const timer = setTimeout(() => resolve(false), XR_LOAD_TIMEOUT_MS)
-        window.addEventListener('xrloaded', () => { clearTimeout(timer); resolve(true) }, { once: true })
-      })
-      if (!loaded) {
-        throw new Error(
-          `8th Wall engine (/xr.js) did not load within ${XR_LOAD_TIMEOUT_MS} ms — the AR camera cannot start`,
-        )
-      }
-    }
+    // An engine that is already there is not waited for at all, so XR8.loadChunk below runs in the same tick as before.
+    if (typeof XR8 === 'undefined' && !(await engineLoaded(XR_LOAD_TIMEOUT_MS))) throw engineDidNotLoad(XR_LOAD_TIMEOUT_MS)
 
     // SLAM chunk may already be preloaded via data-preload-chunks="slam";
     // calling loadChunk again is a no-op if already loaded.
@@ -946,10 +971,7 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
           // a photograph places everything detected in it where the camera no longer is, so
           // the capture is refused with a reason the person can act on instead.
           if (self._poseTooOldForCapture(frameMs)) {
-            for (const pending of self.captureQueue.splice(0)) {
-              clearTimeout(pending.timeout)
-              pending.reject(new Error(TRACKING_LOST_MESSAGE))
-            }
+            failCaptures(self.captureQueue, TRACKING_LOST_MESSAGE)
             return
           }
 
@@ -977,11 +999,7 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
           }
 
           // Drain the queue — normally one waiting captureFrame() call.
-          const queue = self.captureQueue.splice(0)
-          queue.forEach((pending) => {
-            clearTimeout(pending.timeout)
-            pending.resolve(frame)
-          })
+          settleCaptures(self.captureQueue, frame)
         },
 
         // Called when XR8.resume() is called
@@ -1017,18 +1035,10 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
     // (https://8thwall.org/docs/api/engine/camerapipelinemodule/onresume), and nothing says a
     // return to a hidden page calls it, so the page's own visibility is the signal relied on
     // here. A return that both report is one resume: see _noteResumed.
-    this._pageHidden = document.visibilityState === 'hidden'
-    this._hiddenAtMs = this._pageHidden ? performance.now() : null
+    this._pageVisibility.begin(document.visibilityState === 'hidden', performance.now())
     this._onVisibility = () => {
-      if (document.visibilityState === 'hidden') {
-        if (!this._pageHidden) this._hiddenAtMs = performance.now()
-        this._pageHidden = true
-      } else if (this._pageHidden) {
-        this._pageHidden = false
-        const away = this._hiddenAtMs === null ? undefined : performance.now() - this._hiddenAtMs
-        this._hiddenAtMs = null
-        this._noteResumed(away)
-      }
+      const back = this._pageVisibility.note(document.visibilityState === 'hidden', performance.now())
+      if (back) this._noteResumed(back.awayMs)
     }
     document.addEventListener('visibilitychange', this._onVisibility)
 
@@ -1204,7 +1214,7 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
     this._poseAtMs = null
     this._frameMs = null
     this._poseHeld = false
-    this._hiddenAtMs = null
+    this._pageVisibility.reset()
     if (this._onViewportChange) {
       window.removeEventListener('resize', this._onViewportChange)
       window.removeEventListener('orientationchange', this._onViewportChange)
@@ -1230,10 +1240,7 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
   getTrackingDiagnostics(): TrackingDiagnostics {
     // How old the pose a capture would carry is, as of the last frame the engine delivered:
     // 0 while a pose arrives every frame, growing while one is being held over.
-    const poseAgeMs = this._poseAtMs !== null && this._frameMs !== null
-      ? Math.max(0, this._frameMs - this._poseAtMs)
-      : undefined
-    return { ...this._epochs.diagnostics(), ...(poseAgeMs !== undefined ? { poseAgeMs } : {}) }
+    return withPoseAge(this._epochs.diagnostics(), this._poseAtMs, this._frameMs)
   }
 
   getFrameEpoch(): number {
@@ -1245,22 +1252,7 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
   }
 
   captureFrame(timeoutMs = 4000): Promise<RawFrame> {
-    if (this.captureQueue.length > 0) {
-      return Promise.reject(new Error('Capture already pending'))
-    }
-
-    return new Promise((resolve, reject) => {
-      const pending = {
-        resolve,
-        reject,
-        timeout: setTimeout(() => {
-          const idx = this.captureQueue.indexOf(pending)
-          if (idx >= 0) this.captureQueue.splice(idx, 1)
-          reject(new Error('Timed out waiting for camera frame'))
-        }, timeoutMs),
-      }
-      this.captureQueue.push(pending)
-    })
+    return queueCapture(this.captureQueue, timeoutMs)
   }
 
   /**
@@ -1500,12 +1492,14 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
   }
 }
 
-/** Waits for the XR8 global to be available, then returns a provider instance */
-export async function createEighthWallProvider(): Promise<EighthWallProvider> {
-  if (typeof XR8 === 'undefined') {
-    await new Promise<void>((resolve) =>
-      window.addEventListener('xrloaded', () => resolve(), { once: true }),
-    )
-  }
+/**
+ * Waits for the XR8 global to be available, then returns a provider instance.
+ *
+ * Bounded (FN-046), as `start()` is: an engine that never loads used to leave this waiting forever, so a caller could
+ * neither fall back nor say why. It rejects after `timeoutMs` (default the same 10 s `start()` allows) with the message
+ * `start()` throws, which a caller's fallback to WebXR catches like any other start failure.
+ */
+export async function createEighthWallProvider(timeoutMs: number = XR_LOAD_TIMEOUT_MS): Promise<EighthWallProvider> {
+  if (typeof XR8 === 'undefined' && !(await engineLoaded(timeoutMs))) throw engineDidNotLoad(timeoutMs)
   return new EighthWallProvider()
 }

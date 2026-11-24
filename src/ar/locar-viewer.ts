@@ -1,9 +1,9 @@
 /**
- * Places around you: each saved Place with a pin, drawn over the camera at its GPS position (ADR 0012).
+ * Places around you: each saved Place with a pin, drawn over the camera at its GPS position (ADR 0014).
  *
  * In a browser and in the Android shell it runs on locar.js, with the one placement rule of ./locar-placement.ts
  * (exact ENU, declination turned into the compass frame). In the iOS shell it hands the pins to the native geo view
- * instead: ScanAR.openGeoView, ARKit-CoreLocation on SceneKit (docs/factory/13-ar-runtime-targets/0006-ios-geo-view.md).
+ * instead: ScanAR.openGeoView, ARKit-CoreLocation on SceneKit (docs/factory/15-ar-runtime-targets/0006-ios-geo-view.md).
  *
  * It reads GET /project-locations, the map's own pins route, and uses only each Place's id, name and pin. It writes
  * nothing. It is a viewer, not a capture path: GPS places content to metres, so it finds a Place but cannot align a

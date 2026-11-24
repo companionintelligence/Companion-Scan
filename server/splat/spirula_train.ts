@@ -46,10 +46,9 @@
  */
 
 import { resolve } from '@std/path'
-import { buildBrushDataset } from './splat_train_dataset.ts'
-import { isRunnable } from '../exec_probe.ts'
-import { budgetFromEnv, runWithDeadline } from '../run_with_deadline.ts'
-import { runColmapPoses } from '../colmap/colmap_poses.ts'
+import { locateTool, runnerToolLookup, toolSkip } from '../exec_probe.ts'
+import { budgetFromEnv, finishRun, intFromEnv, KILL_GRACE_MS, runWithDeadline, writeRunnerManifest } from '../run_with_deadline.ts'
+import { buildDatasetWithAutoPoses } from './auto_poses.ts'
 // ADR 0001 — these three are the splat-train driver's, not Brush's: the
 // session-dir predicate, the manifest-sized stderr condenser, and the PLY
 // header vertex count are all backend-independent, and a second copy of any of
@@ -144,6 +143,11 @@ export interface SpirulaTrainRunOptions {
   ) => Promise<{ code: number; stderr: string; stdout?: string; timeoutReason?: string | null }>
   /** Provenance forwarded into the manifest. */
   provenance?: { sessionId: string; scanId?: string }
+  /**
+   * Stops the run when it fires: the job pump passes its job's signal, so a job
+   * it has given up on does not leave its child running (F-27).
+   */
+  signal?: AbortSignal
 }
 
 export interface SpirulaTrainResult extends Omit<SplatTrainResult, 'manifest'> {
@@ -151,20 +155,16 @@ export interface SpirulaTrainResult extends Omit<SplatTrainResult, 'manifest'> {
 }
 
 /**
- * Where an unconfigured install is looked for, in order.
+ * Where an unconfigured install is looked for, in order, after PATH.
  *
- * Modelled on colmap_poses.ts's FALLBACK_COLMAP_BINS, and for the same reason:
- * the release is a single self-contained binary a developer unzips somewhere
+ * The release is a single self-contained binary a developer unzips somewhere
  * user-local, and requiring an env var for the one layout everyone actually
  * uses turns a working box into a `skipped`. The absolute path that was
  * actually run is recorded in the manifest, so a fallback hit is never
- * ambiguous after the fact.
+ * ambiguous after the fact. The list is the shared table's
+ * (runnerToolLookups, server/exec_probe.ts), kept exported under this name.
  */
-export const FALLBACK_SPIRULA_BINS = [
-  `${Deno.env.get('HOME') ?? '~'}/opt/spirula/spirula`,
-  `${Deno.env.get('HOME') ?? '~'}/.local/bin/spirula`,
-  '/usr/local/bin/spirula',
-]
+export const FALLBACK_SPIRULA_BINS = runnerToolLookup('spirula').fallbacks
 
 /** Spirula's Nerfstudio parser rejects 'PERSPECTIVE'; see this file's header. */
 export const SPIRULA_CAMERA_MODEL = 'OPENCV' as const
@@ -174,13 +174,15 @@ const DATASET_SUBDIR = 'spirula-dataset'
 const OUTPUT_SUBDIR = 'spirula-out'
 const RUN_NAME = 'run'
 
+/**
+ * The Spirula binary: the option or SPIRULA_BIN, then `spirula` on PATH, then
+ * FALLBACK_SPIRULA_BINS. When nothing is found it returns the explicit value or
+ * the first documented path, so the skip names somewhere to put it.
+ */
 export async function resolveSpirulaBin(opts: SpirulaTrainRunOptions): Promise<string> {
-  const explicit = opts.spirulaBin ?? Deno.env.get('SPIRULA_BIN')
-  if (explicit) return explicit
-  for (const candidate of FALLBACK_SPIRULA_BINS) {
-    if (await isRunnable(candidate)) return candidate
-  }
-  return FALLBACK_SPIRULA_BINS[0]
+  const lookup = runnerToolLookup('spirula')
+  const location = await locateTool(lookup, { explicit: opts.spirulaBin })
+  return location.path ?? lookup.fallbacks[0]
 }
 
 export function resolveSpirulaParams(
@@ -256,65 +258,31 @@ export async function runSpirulaTrain(opts: SpirulaTrainRunOptions): Promise<Spi
     return _finish(manifestPath, { ...baseManifest, status: 'error', error: 'invalid session directory' }, 2, 'invalid session directory')
   }
 
-  // 1. Guard the binary before the dataset conversion — missing is a skip.
-  if (!(await isRunnable(params.spirulaBin))) {
+  // 1. Guard the binary before the dataset conversion — missing is a skip. The
+  //    remediation names the download, not the repo: Spirula must NOT be built
+  //    from source here (see this file's licensing header).
+  const spirulaLookup = runnerToolLookup('spirula')
+  const spirulaLocation = await locateTool(spirulaLookup, { explicit: params.spirulaBin })
+  if (!spirulaLocation.found) {
     return _finish(manifestPath, {
       ...baseManifest,
       status: 'skipped',
-      skippedReason: `Spirula binary not found or not executable: ${params.spirulaBin}`,
-      // Name the download, not the repo: Spirula must NOT be built from source
-      // here (it needs the Vulkan SDK), and more importantly this project may
-      // only ever invoke a prebuilt binary as a separate process — see this
-      // file's licensing header.
-      remediation:
-        'Download a prebuilt Spirula Studio release (https://github.com/harry7557558/spirula-studio/releases — ' +
-        'the ubuntu-vulkan-x86_64 zip), unzip it to ~/opt/spirula/spirula, and `chmod +x` it; ' +
-        'or set SPIRULA_BIN to an existing binary. Needs a Vulkan-capable GPU. ' +
-        'SPLAT_BACKEND=brush switches back to Brush; see docs/pipelines/splat-train.md — Backends.',
+      ...toolSkip(spirulaLookup, spirulaLocation, 'Spirula binary'),
     }, 0, `spirula binary missing: ${params.spirulaBin}`)
   }
 
   // 2. Session → Nerfstudio dataset, with COLMAP auto-solve for a pose-less
-  //    session. Identical policy to splat_train.ts (read its step 2 for why);
-  //    the only difference is the camera-model spelling and the dataset dir.
-  let dataset
-  const autoSolve = opts.autoSolvePoses ?? Deno.env.get('SPLAT_TRAIN_AUTO_POSES') !== '0'
-  const datasetOpts = {
+  //    session: the policy splat_train.ts uses, from the same function
+  //    (auto_poses.ts). Only the camera-model spelling and the dataset dir differ.
+  const built = await buildDatasetWithAutoPoses({
     sessionDir,
     datasetDir: `${sessionDir}/${DATASET_SUBDIR}`,
     cameraModel: SPIRULA_CAMERA_MODEL,
+  }, opts.autoSolvePoses, { signal: opts.signal })
+  if (!built.ok) {
+    return _finish(manifestPath, { ...baseManifest, ...built.failure.manifest }, built.failure.exitCode, built.failure.log)
   }
-  try {
-    dataset = await buildBrushDataset(datasetOpts)
-  } catch (e0) {
-    const msg0 = e0 instanceof Error ? e0.message : String(e0)
-    if (autoSolve && /no camera poses/.test(msg0)) {
-      const solved = await runColmapPoses({ sessionDir })
-      if (solved.status !== 'ok') {
-        const reason = solved.manifest.skippedReason ?? solved.manifest.error ?? 'pose solve failed'
-        return _finish(manifestPath, {
-          ...baseManifest,
-          status: solved.status === 'skipped' ? 'skipped' : 'error',
-          ...(solved.status === 'skipped' ? { skippedReason: reason } : { error: reason }),
-          remediation: solved.manifest.remediation,
-        }, solved.status === 'skipped' ? 0 : 2, solved.log)
-      }
-    }
-    try {
-      dataset = await buildBrushDataset(datasetOpts)
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      if (/no keyframes|no usable keyframes/.test(msg)) {
-        return _finish(manifestPath, {
-          ...baseManifest,
-          status: 'skipped',
-          skippedReason: msg,
-          remediation: 'Stream keyframes for this scan before training a splat.',
-        }, 0, msg)
-      }
-      return _finish(manifestPath, { ...baseManifest, status: 'error', error: `dataset build failed: ${msg}` }, 2, msg)
-    }
-  }
+  const dataset = built.dataset
   baseManifest.frameCount = dataset.frameCount
 
   // 3. Spawn Spirula headless.
@@ -325,7 +293,7 @@ export async function runSpirulaTrain(opts: SpirulaTrainRunOptions): Promise<Spi
   try {
     spawnResult = opts._spawn
       ? await opts._spawn(params.spirulaBin, args, {})
-      : await defaultSpawn(params.spirulaBin, args)
+      : await defaultSpawn(params.spirulaBin, args, opts.signal)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return _finish(manifestPath, { ...baseManifest, status: 'error', error: `spirula spawn failed: ${msg}` }, 3, msg)
@@ -474,11 +442,14 @@ const DEFAULT_SPIRULA_TIMEOUT_MS = 3 * 60 * 60 * 1000
 async function defaultSpawn(
   bin: string,
   args: string[],
+  signal?: AbortSignal,
 ): Promise<{ code: number; stderr: string; stdout: string; timeoutReason: string | null }> {
   const output = await runWithDeadline(
     bin,
     { args, stdout: 'piped', stderr: 'piped' },
     budgetFromEnv('SPIRULA_TIMEOUT_MS', DEFAULT_SPIRULA_TIMEOUT_MS),
+    KILL_GRACE_MS,
+    signal,
   )
   return {
     code: output.code,
@@ -489,11 +460,7 @@ async function defaultSpawn(
 }
 
 async function writeManifest(path: string, manifest: SpirulaTrainManifest): Promise<void> {
-  try {
-    await Deno.writeTextFile(path, JSON.stringify(manifest, null, 2))
-  } catch (e) {
-    console.warn('[spirula-train] failed to write manifest:', e)
-  }
+  await writeRunnerManifest(path, manifest, 'spirula-train')
 }
 
 async function _finish(
@@ -502,12 +469,6 @@ async function _finish(
   exitCode: number,
   log: string,
 ): Promise<SpirulaTrainResult> {
-  await writeManifest(manifestPath, manifest)
-  return { status: manifest.status as SplatTrainStatus, manifest, log, exitCode }
-}
-
-function intFromEnv(name: string, fallback: number): number {
-  const raw = Deno.env.get(name)
-  const n = raw ? Number(raw) : NaN
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
+  const out = await finishRun(manifestPath, manifest, exitCode, log, 'spirula-train')
+  return { ...out, status: manifest.status as SplatTrainStatus }
 }

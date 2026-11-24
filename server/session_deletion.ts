@@ -35,6 +35,12 @@
  * frames are that scan's data too, and deleting one scan must not take another one's source. It goes when
  * the last scan that names it is deleted.
  *
+ * ## Copies of the frames
+ *
+ * A PhysAg3D case folder holds a copy of one frame (server/physag3d/asset_files.ts). Every caller in main.ts passes
+ * `removeCopies`, and the copies of a session's frames go before the session does, in its write queue; a session whose
+ * copies cannot go yet (a run is using them) is kept and reported failed.
+ *
  * ## Order, and what a failure leaves
  *
  * The sessions go before the scan's own files. A scan that stays because a session could not be removed
@@ -69,7 +75,7 @@ export interface ScanSessionPlan {
   retained: Array<{ sessionId: string; usedBy: string[] }>
 }
 
-const DERIVED_GLB = /\.(opt|lod\d+)\.glb$/
+const DERIVED_GLB = /\.(opt|lod\d+|lingbot)\.glb$/
 
 /**
  * Files read at once when a directory is measured or its scans' sidecars are read. Adopted, not measured (ADR 0005
@@ -248,6 +254,13 @@ export interface RemoveSessionHooks {
 }
 
 /**
+ * Removes the copies of one session's frames that live outside its folder: a PhysAg3D case folder holds one
+ * (server/physag3d/asset_files.ts, `removeSessionCaseCopies`). Throws to keep the session: a copy that could not be
+ * removed, or a run still using the frames, must not be left with no source to delete it with.
+ */
+export type RemoveSessionCopies = (sessionId: string) => Promise<unknown>
+
+/**
  * Removes one session directory: everything but `session.json` first, listing again until nothing else is left, then
  * the folder itself with `session.json` in it. A half-removed session keeps its record, so it can be found and the
  * scan that names it deleted again. A file that appears after the last listing (a reconstruction job writing beside the
@@ -255,10 +268,16 @@ export interface RemoveSessionHooks {
  * already gone, and leave a folder with the pictures' neighbours in it and nothing pointing to it.
  * Runs behind the session's keyframe write queue (server/wp-a-keyframes.ts), so a frame being written
  * is finished before the removal starts and cannot land in a directory that is being emptied.
- * Resolves false when the directory was already gone.
+ * `removeCopies`, when given, runs first, in the same queue, which is where a copy of a frame is made too: when it
+ * throws, nothing of the session is removed. Resolves false when the directory was already gone.
  */
-export function removeSessionDirectory(dir: string, hooks: RemoveSessionHooks = {}): Promise<boolean> {
+export function removeSessionDirectory(
+  dir: string,
+  hooks: RemoveSessionHooks = {},
+  removeCopies?: () => Promise<unknown>,
+): Promise<boolean> {
   return queueKeyframeWrite(dir, async () => {
+    await removeCopies?.()
     for (let pass = 0; pass < MAX_QUIET_PASSES; pass++) {
       const names: string[] = []
       try {
@@ -283,25 +302,42 @@ export function removeSessionDirectory(dir: string, hooks: RemoveSessionHooks = 
  * Removes the sessions `ids` name under `sessionsDir`. An id that is not a session id is refused without
  * touching the filesystem. A directory that is a link, or not a directory, is refused too: only a real
  * directory directly under `sessionsDir` is ever removed. Never throws for one session: each outcome is in
- * the report.
+ * the report. With `removeCopies`, the copies of a session's frames elsewhere go before the session does (see
+ * `RemoveSessionCopies`), and those of a session that is already gone go too, so a second try finishes what a
+ * first left. A session whose copies could not be removed is reported failed and kept.
  */
 export async function deleteSessionDirectories(
   sessionsDir: string,
   ids: readonly string[],
+  /**
+   * `signal`, when it aborts, stops the call before the next session (the retention purge passes the job pump's
+   * deadline, F-27): the sessions already removed stay removed, and the rest are not in the report.
+   */
+  opts: { removeCopies?: RemoveSessionCopies; signal?: AbortSignal } = {},
 ): Promise<SessionDeletionReport> {
   const report: SessionDeletionReport = { deleted: [], missing: [], failed: [], bytes: 0 }
   for (const sessionId of new Set(ids)) {
+    if (opts.signal?.aborted) break
     const dir = sessionDirPath(sessionsDir, sessionId)
     if (!dir) {
       report.failed.push({ sessionId, reason: 'InvalidSessionId' })
       continue
     }
+    const removeCopies = opts.removeCopies ? () => opts.removeCopies!(sessionId) : undefined
     let info: Deno.FileInfo
     try {
       info = await Deno.lstat(dir)
     } catch (error) {
-      if (error instanceof Deno.errors.NotFound) report.missing.push(sessionId)
-      else report.failed.push({ sessionId, reason: reasonOf(error) })
+      if (!(error instanceof Deno.errors.NotFound)) {
+        report.failed.push({ sessionId, reason: reasonOf(error) })
+        continue
+      }
+      try {
+        await removeCopies?.()
+        report.missing.push(sessionId)
+      } catch (copyError) {
+        report.failed.push({ sessionId, reason: reasonOf(copyError) })
+      }
       continue
     }
     if (!info.isDirectory) {
@@ -310,7 +346,7 @@ export async function deleteSessionDirectories(
     }
     const bytes = await directoryBytes(dir)
     try {
-      if (await removeSessionDirectory(dir)) {
+      if (await removeSessionDirectory(dir, {}, removeCopies)) {
         report.deleted.push(sessionId)
         report.bytes += bytes
       } else {
@@ -337,6 +373,7 @@ export async function deleteScanSessions(opts: {
   scansDir: string
   sessionsDir: string
   filename: string
+  removeCopies?: RemoveSessionCopies
 }): Promise<ScanSessionDeletion> {
   const { scansDir, sessionsDir, filename } = opts
   const index = await loadSessionIndex(sessionsDir)
@@ -344,7 +381,7 @@ export async function deleteScanSessions(opts: {
   const own = sessionIdsLinkedToScan(index, filename, meta)
   const links = own.length > 0 ? await collectScanSessionLinks(scansDir, index) : new Map<string, string[]>()
   const plan = planScanSessionDeletion(own, links, filename)
-  return { plan, report: await deleteSessionDirectories(sessionsDir, plan.delete) }
+  return { plan, report: await deleteSessionDirectories(sessionsDir, plan.delete, { removeCopies: opts.removeCopies }) }
 }
 
 /** The part of a deletion a client is told: counts, and the ids it can act on. No paths. */
@@ -368,7 +405,10 @@ export function scanSessionDeletionBody(deletion: ScanSessionDeletion): {
  * Removes every session directory under `sessionsDir`, for the call that clears all scan storage. A
  * session is a scan's source, and no scan is left to name it.
  */
-export async function deleteAllSessions(sessionsDir: string): Promise<SessionDeletionReport> {
+export async function deleteAllSessions(
+  sessionsDir: string,
+  opts: { removeCopies?: RemoveSessionCopies } = {},
+): Promise<SessionDeletionReport> {
   const ids: string[] = []
   try {
     for await (const entry of Deno.readDir(sessionsDir)) {
@@ -377,7 +417,7 @@ export async function deleteAllSessions(sessionsDir: string): Promise<SessionDel
   } catch (error) {
     if (!(error instanceof Deno.errors.NotFound)) throw error
   }
-  return await deleteSessionDirectories(sessionsDir, ids)
+  return await deleteSessionDirectories(sessionsDir, ids, opts)
 }
 
 /** The reply to `DELETE /sessions/:id`: a status and a body, so the route is a few lines. */
@@ -392,8 +432,15 @@ export interface SessionDeleteReply {
  * `source` or `captureKind`) is refused: its frames are that scan's data, and they go when the scan is deleted.
  * A session of a scanner's own export is not refused even when a scan names it: the scan is the GLB, and what
  * is removed is the camera frames beside it. A session that is gone answers 404, which a caller reads as done.
+ * With `removeCopies`, the copies of its frames in PhysAg3D case folders go first. While a run is using them the
+ * session is kept and the answer is a 500 that says so: a phone keeps a session it got a 500 for and asks again,
+ * and drops one it got a 409 for (src/capture/keyframe-consent.ts), so a 409 here would lose the request.
  */
-export async function deleteStreamedSession(sessionsDir: string, id: string): Promise<SessionDeleteReply> {
+export async function deleteStreamedSession(
+  sessionsDir: string,
+  id: string,
+  opts: { removeCopies?: RemoveSessionCopies } = {},
+): Promise<SessionDeleteReply> {
   const dir = sessionDirPath(sessionsDir, id)
   if (!dir) return { status: 400, body: { error: 'Invalid session id' } }
   const record = await readSidecar(`${dir}/session.json`)
@@ -405,9 +452,13 @@ export async function deleteStreamedSession(sessionsDir: string, id: string): Pr
       body: { error: 'This session is the source of a scan. Delete the scan to remove it.', sessionId: id },
     }
   }
-  const report = await deleteSessionDirectories(sessionsDir, [id])
+  const report = await deleteSessionDirectories(sessionsDir, [id], opts)
   if (report.failed.length > 0) {
-    return { status: 500, body: { error: 'Could not remove this session', sessionId: id, reason: report.failed[0]!.reason } }
+    const reason = report.failed[0]!.reason
+    const error = reason === 'SessionFramesInUseError'
+      ? 'A job is making an interactive asset from this session\'s frames, so they were kept. Try again when it has finished.'
+      : 'Could not remove this session'
+    return { status: 500, body: { error, sessionId: id, reason } }
   }
   if (report.deleted.length === 0) return { status: 404, body: { error: 'Session not found' } }
   return { status: 200, body: { ok: true, sessionId: id, bytes: report.bytes } }

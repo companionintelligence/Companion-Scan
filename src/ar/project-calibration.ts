@@ -8,7 +8,6 @@ import type {
   Vec3,
 } from '../world/types'
 import {
-  referenceCrosshairPixels,
   referencePhotoTitle,
   type PendingReferencePhoto,
   type ReferencePhotoCapture,
@@ -82,6 +81,9 @@ import {
 import { createGhostLayer, drawStoredConstellation, GHOST_GAP_NAME, GHOST_NAME } from './constellation-ghosts'
 import { createReferencePhotoFlow, lensOfProvider } from './reference-photo-flow'
 import { createReturnVisitAids, returnAidsEnabled, returnVisitMarkup } from './return-visit-aids'
+import { fractionOfBox, listenForCanvasTaps } from './canvas-taps.ts'
+import { loadReferencePhotoInto, placeReferenceCrosshair } from './reference-photo-view.ts'
+import { disposeObject3D } from '../scene/dispose.ts'
 
 const TRACKING_TIMEOUT_MS = 10_000
 /**
@@ -292,15 +294,8 @@ const CALIBRATION_DRAWINGS: ReadonlySet<string> = new Set([
   GHOST_GAP_NAME,
 ])
 
-function disposeObject(root: THREE.Object3D): void {
-  root.traverse((child) => {
-    const drawable = child as Partial<THREE.Mesh>
-    drawable.geometry?.dispose()
-    const material = drawable.material
-    if (Array.isArray(material)) material.forEach((m) => m.dispose())
-    else material?.dispose()
-  })
-}
+/** The one dispose traversal (src/scene/dispose.ts), which the constellation ghosts use too. */
+const disposeObject = disposeObject3D
 
 export interface WithdrawOptions {
   /**
@@ -1092,12 +1087,8 @@ export function runProjectCalibration(options: CalibrationOptions): Promise<Cali
   }
 
   function positionCrosshair(tapPoint: { x: number; y: number }): void {
-    const { left, top } = referenceCrosshairPixels(tapPoint, {
-      width: referenceImg.clientWidth,
-      height: referenceImg.clientHeight,
-    })
-    referenceCrosshair.style.left = `${left}px`
-    referenceCrosshair.style.top = `${top}px`
+    // The picture fills its figure here, so its offset in the figure is 0 (./reference-photo-view.ts).
+    placeReferenceCrosshair(referenceCrosshair, referenceImg, tapPoint)
   }
 
   /**
@@ -1150,26 +1141,25 @@ export function runProjectCalibration(options: CalibrationOptions): Promise<Cali
       referenceNote.textContent = 'Saved photo not available this session.'
       return
     }
-    void load(photo)
-      .catch(() => null)
-      .then((src) => {
-        // The stage can move on while a photo is loading; dropping a late
-        // result is correct, showing point A's photo during stage B is not.
-        if (shownReferenceRole !== role) return
-        if (!src) {
-          referenceNote.textContent = photo.url === null
-            ? 'This point’s photo never finished uploading, so it is not on this device. Place it from memory.'
-            : 'The saved photo could not be loaded. Place this marker from memory.'
-          return
-        }
-        // Blob URLs are ours to release; a data URL or a plain path is not.
-        if (src.startsWith('blob:')) objectUrls.push(src)
-        referenceImg.onload = () => positionCrosshair(photo.tapPoint)
-        referenceImg.src = src
+    void loadReferencePhotoInto({
+      photo,
+      load,
+      img: referenceImg,
+      // The stage can move on while a photo is loading; dropping a late
+      // result is correct, showing point A's photo during stage B is not.
+      isCurrent: () => shownReferenceRole === role,
+      keepObjectUrl: (url) => objectUrls.push(url),
+      reveal: () => {
         show(referenceFigure, true)
         show(referenceNote, false)
-        positionCrosshair(photo.tapPoint)
-      })
+      },
+      placeCrosshair: () => positionCrosshair(photo.tapPoint),
+    }).then((outcome) => {
+      if (outcome !== 'failed') return
+      referenceNote.textContent = photo.url === null
+        ? 'This point’s photo never finished uploading, so it is not on this device. Place it from memory.'
+        : 'The saved photo could not be loaded. Place this marker from memory.'
+    })
   }
 
   /**
@@ -1448,8 +1438,7 @@ export function runProjectCalibration(options: CalibrationOptions): Promise<Cali
     const close = (result: CalibrationResult | null) => {
       closed = true
       clearInterval(interval)
-      options.canvas.removeEventListener('touchstart', onTouchStart)
-      options.canvas.removeEventListener('pointerdown', onPointerDown)
+      stopCanvasTaps()
       aids.dispose()
       clearPlacement()
       overlay.remove()
@@ -1984,29 +1973,15 @@ export function runProjectCalibration(options: CalibrationOptions): Promise<Cali
       if (onePointOfferNow()) commitSinglePoint()
     })
 
-    // Matches the placeground reference's own guard: a two-finger touch is a
-    // recenter/pinch gesture elsewhere in this app, not a placement tap.
-    const onTouchStart = (e: TouchEvent) => {
-      if (tapInFlight || e.touches.length !== 1 || !options.provider.isTracking()) return
-      const touch = e.touches[0]!
-      const rect = options.canvas.getBoundingClientRect()
-      placeAt((touch.clientX - rect.left) / rect.width, (touch.clientY - rect.top) / rect.height)
-    }
-    options.canvas.addEventListener('touchstart', onTouchStart, { passive: true })
-
-    // WebXR's dom-overlay input model (Quest/other controller-driven
-    // runtimes) synthesizes pointer/click events from a controller ray +
-    // select, not touch events — there's no touchscreen to generate a
-    // TouchEvent at all. Real touchscreens fire both touchstart *and*
-    // pointerdown for the same tap, so this skips pointerType 'touch' to
-    // avoid placing two anchors from one tap; that case is already handled
-    // above.
-    const onPointerDown = (e: PointerEvent) => {
-      if (tapInFlight || e.pointerType === 'touch' || !options.provider.isTracking()) return
-      const rect = options.canvas.getBoundingClientRect()
-      placeAt((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height)
-    }
-    options.canvas.addEventListener('pointerdown', onPointerDown)
+    // One tap is one placement, read the way the re-anchor banner reads one (./canvas-taps.ts): a single-finger
+    // touchstart, or a pointerdown that is not touch, which is what WebXR's dom-overlay input synthesizes from a
+    // controller ray and select on a Quest. A two-finger touch is a recenter/pinch gesture elsewhere in this app, as the
+    // placeground reference's own guard has it, not a placement tap. Whether a tap may place is this card's to say.
+    const stopCanvasTaps = listenForCanvasTaps(options.canvas, (clientX, clientY) => {
+      if (tapInFlight || !options.provider.isTracking()) return
+      const at = fractionOfBox(options.canvas, clientX, clientY)
+      placeAt(at.x, at.y)
+    })
 
     update()
   })

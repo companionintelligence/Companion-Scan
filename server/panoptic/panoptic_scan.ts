@@ -41,9 +41,9 @@ import {
   isIndexedCudaDevice,
   type PanopticScanManifest,
 } from '../../src/world/manifests.ts'
-import { isRunnable } from '../exec_probe.ts'
+import { locateTool, runnerToolLookup } from '../exec_probe.ts'
 import { sampleEvenly } from '../sample_even.ts'
-import { budgetFromEnv, runWithDeadline } from '../run_with_deadline.ts'
+import { budgetFromEnv, KILL_GRACE_MS, runWithDeadline } from '../run_with_deadline.ts'
 import {
   formatSegmentSummary,
   MIN_SEGMENT_PIXELS,
@@ -54,8 +54,9 @@ import {
 } from './panoptic_segments.ts'
 export type { PanopticScanManifest }
 
-const DEFAULT_PANOPTIC_PYTHON = `${Deno.env.get('HOME') ?? '~'}/.venvs/panoptic/bin/python`
-const DEFAULT_PANOPTIC_DIR = `${Deno.env.get('HOME') ?? '~'}/panoptic`
+/** The documented venv and checkout: the shared table's fallbacks (runnerToolLookups, server/exec_probe.ts). */
+const DEFAULT_PANOPTIC_PYTHON = runnerToolLookup('panoptic-python').fallbacks[0]
+const DEFAULT_PANOPTIC_DIR = runnerToolLookup('panoptic-worker').fallbacks[0]
 
 /**
  * Default checkpoint.
@@ -130,6 +131,11 @@ export interface PanopticScanRunOptions {
     args: string[],
     env: Record<string, string>,
   ) => Promise<{ code: number; stderr: string; timeoutReason?: string | null }>
+  /**
+   * Stops the run when it fires: the job pump passes its job's signal, so a job
+   * it has given up on does not leave its child running (F-27).
+   */
+  signal?: AbortSignal
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -190,11 +196,14 @@ async function defaultSpawn(
   bin: string,
   args: string[],
   env: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<{ code: number; stderr: string; timeoutReason: string | null }> {
   const out = await runWithDeadline(
     bin,
     { args, env, stdout: 'piped', stderr: 'piped' },
     budgetFromEnv('PANOPTIC_TIMEOUT_MS', DEFAULT_PANOPTIC_TIMEOUT_MS),
+    KILL_GRACE_MS,
+    signal,
   )
   return { code: out.code, stderr: new TextDecoder().decode(out.stderr), timeoutReason: out.timeoutReason }
 }
@@ -373,18 +382,23 @@ export async function runPanopticScan(opts: PanopticScanRunOptions): Promise<Pan
         `Set PANOPTIC_DEVICE to one of ${COMPUTE_DEVICES.join(', ')} (or cuda:N), or unset it for auto.`,
     }, Date.now() - started)
   }
-  if (!(await isRunnable(params.python))) {
+  // The interpreter resolves through the table GET /capabilities reports, so the
+  // two cannot disagree, and the skip carries the same remediation the report prints.
+  const pythonLookup = runnerToolLookup('panoptic-python')
+  const pythonLocation = await locateTool(pythonLookup, { explicit: params.python })
+  if (!pythonLocation.found) {
     return finish(manifestPath, {
       ...base,
       skippedReason: `panoptic python not found or not executable: ${params.python}`,
-      remediation: 'Create the venv and set PANOPTIC_PYTHON (see docs/pipelines/panoptic-scan.md — Setup).',
+      remediation: pythonLookup.remediation,
     }, Date.now() - started)
   }
+  const python = pythonLocation.path ?? params.python
   if (!(await exists(workerPath))) {
     return finish(manifestPath, {
       ...base,
       skippedReason: `panoptic worker not found: ${workerPath}`,
-      remediation: 'Install the worker and set PANOPTIC_DIR (see docs/pipelines/panoptic-scan.md — Setup).',
+      remediation: runnerToolLookup('panoptic-worker').remediation,
     }, Date.now() - started)
   }
 
@@ -421,8 +435,8 @@ export async function runPanopticScan(opts: PanopticScanRunOptions): Promise<Pan
   let result: { code: number; stderr: string; timeoutReason?: string | null }
   try {
     result = opts._spawn
-      ? await opts._spawn(params.python, args, {})
-      : await defaultSpawn(params.python, args, {})
+      ? await opts._spawn(python, args, {})
+      : await defaultSpawn(python, args, {}, opts.signal)
   } catch (e) {
     return finish(manifestPath, {
       ...base,

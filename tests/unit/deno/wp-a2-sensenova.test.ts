@@ -38,14 +38,20 @@ const HANGING_LAUNCHER = `#!/bin/sh
 exec sleep 30
 `
 
-async function makeFixture(root: string, launcher: string): Promise<{ repo: string; sessionDir: string; outputDir: string }> {
+async function makeFixture(
+  root: string,
+  launcher: string,
+): Promise<{ repo: string; sessionDir: string; outputDir: string; modelPath: string }> {
   const repo = `${root}/repo`
   await Deno.mkdir(`${repo}/scripts`, { recursive: true })
   await Deno.writeTextFile(`${repo}/scripts/run_sensenova_vision.sh`, launcher)
   const sessionDir = `${root}/sess-sensenova-0001`
   await Deno.mkdir(sessionDir, { recursive: true })
   await Deno.writeFile(`${sessionDir}/kf-00000.jpg`, new Uint8Array([0xff, 0xd8, 0xff, 0xd9]))
-  return { repo, sessionDir, outputDir: `${root}/out` }
+  // The model path must name something: one that names nothing is a skip (wp-runners-skips.test.ts).
+  const modelPath = `${root}/models/sensenova-test`
+  await Deno.mkdir(modelPath, { recursive: true })
+  return { repo, sessionDir, outputDir: `${root}/out`, modelPath }
 }
 
 Deno.test({
@@ -54,13 +60,13 @@ Deno.test({
   fn: async () => {
     const root = await Deno.makeTempDir({ prefix: 'wp-a2-sensenova-' })
     try {
-      const { repo, sessionDir, outputDir } = await makeFixture(root, RECORDING_LAUNCHER)
+      const { repo, sessionDir, outputDir, modelPath } = await makeFixture(root, RECORDING_LAUNCHER)
       const result = await runSenseNovaVision({
         sessionDir,
         outputDir,
         task: 'recon3d',
         repoDir: repo,
-        modelPath: '/models/sensenova-test',
+        modelPath,
         bashBin: 'bash',
       })
 
@@ -69,7 +75,7 @@ Deno.test({
       assert(recorded.includes('inference'))
       assert(recorded.includes('recon3d'))
       assert(recorded.includes('--model_path'))
-      assert(recorded.includes('/models/sensenova-test'))
+      assert(recorded.includes(modelPath))
     } finally {
       await Deno.remove(root, { recursive: true })
     }
@@ -79,13 +85,13 @@ Deno.test({
 Deno.test('SenseNova: a bare bash name that is not on PATH is skipped, and the skip names it', async () => {
   const root = await Deno.makeTempDir({ prefix: 'wp-a2-sensenova-' })
   try {
-    const { repo, sessionDir, outputDir } = await makeFixture(root, RECORDING_LAUNCHER)
+    const { repo, sessionDir, outputDir, modelPath } = await makeFixture(root, RECORDING_LAUNCHER)
     const result = await runSenseNovaVision({
       sessionDir,
       outputDir,
       task: 'recon3d',
       repoDir: repo,
-      modelPath: '/models/sensenova-test',
+      modelPath,
       bashBin: 'wp-a2-no-such-shell',
     })
 
@@ -100,14 +106,14 @@ Deno.test('SenseNova: a bare bash name that is not on PATH is skipped, and the s
 Deno.test('SenseNova: an absolute bash path that does not exist is skipped, and the skip names that path', async () => {
   const root = await Deno.makeTempDir({ prefix: 'wp-a2-sensenova-' })
   try {
-    const { repo, sessionDir, outputDir } = await makeFixture(root, RECORDING_LAUNCHER)
+    const { repo, sessionDir, outputDir, modelPath } = await makeFixture(root, RECORDING_LAUNCHER)
     const missing = `${root}/no-such-dir/bash`
     const result = await runSenseNovaVision({
       sessionDir,
       outputDir,
       task: 'recon3d',
       repoDir: repo,
-      modelPath: '/models/sensenova-test',
+      modelPath,
       bashBin: missing,
     })
 
@@ -128,14 +134,14 @@ Deno.test({
     const previous = Deno.env.get('SENSENOVA_TIMEOUT_MS')
     try {
       Deno.env.set('SENSENOVA_TIMEOUT_MS', '300')
-      const { repo, sessionDir, outputDir } = await makeFixture(root, HANGING_LAUNCHER)
+      const { repo, sessionDir, outputDir, modelPath } = await makeFixture(root, HANGING_LAUNCHER)
       const started = performance.now()
       const result = await runSenseNovaVision({
         sessionDir,
         outputDir,
         task: 'recon3d',
         repoDir: repo,
-        modelPath: '/models/sensenova-test',
+        modelPath,
         bashBin: 'bash',
       })
       const took = performance.now() - started

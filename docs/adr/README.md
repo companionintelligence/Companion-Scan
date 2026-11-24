@@ -25,4 +25,6 @@ shape future work, promote it to an ADR and link back to the issue.
 - [0009. Native ARKit and ARCore runtimes sit beside the 8th Wall provider](0009-native-ar-runtime-beside-8th-wall.md) — Accepted
 - [0010. iOS world maps stay on the phone, keyed by world slug](0010-ios-world-maps-stay-on-the-phone.md) — Accepted
 - [0011. A Place's frame is replaced by a new generation, never edited](0011-frame-generations.md) — Proposed
-- [0012. locar.js is a geo viewer beside the AR runtimes, not a scanning provider](0012-locar-js-is-a-geo-viewer-not-a-scanning-provider.md) — Accepted
+- [0012. The iOS shell draws its native AR view with RealityKit](0012-the-ios-shell-draws-its-native-ar-view-with-realitykit.md) — Accepted
+- [0013. The Quest app is a native Spatial SDK app that feeds the same server](0013-the-quest-app-is-a-native-spatial-sdk-app-that-feeds-the-same-server.md) — Accepted
+- [0014. locar.js is a geo viewer beside the AR runtimes, not a scanning provider](0014-locar-js-is-a-geo-viewer-not-a-scanning-provider.md) — Accepted

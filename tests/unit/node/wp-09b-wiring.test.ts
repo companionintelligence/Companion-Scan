@@ -79,11 +79,15 @@ test('a drift check reads its taps through sampleTap, with the host\'s own hit t
   assert.match(body, /readTap: \(x, y\) => driftTapReader\(\{/)
   assert.match(body, /hitTest: async \(hx, hy\) => \(asyncHitTest \? await asyncHitTest\(hx, hy\) : provider\.hitTest\(hx, hy\)\),/)
   assert.match(body, /ground: \(\) => pointCloud\.groundEstimate\(\),/)
+  // The reader is the calibration's own sampler (wave 14, FN-034), which runs sampleTap and reads the floor at each tap.
   const reader = read('src/ar/drift-tap.ts')
-  assert.match(reader, /sampleTap\(sources\.provider, x, y, \{/)
+  assert.match(reader, /calibrationTapSampler\(\{/)
   assert.match(reader, /singleHit: sources\.hitTest,/)
-  assert.match(reader, /floor: sources\.ground\(\),/, 'read at each tap, not once')
-  assert.match(reader, /floorRay: 'cross-check',/, 'the floor reports and does not move the point until DX5')
+  assert.match(reader, /ground: sources\.ground,/, 'read by the sampler at each tap, not once')
+  assert.match(reader, /search: sources\.search \?\? '',/, 'no ?tap= arm unless the host passes its query string')
+  const sampler = read('src/ar/calibration-taps.ts')
+  assert.match(sampler, /floor: extra\.floor !== undefined \? extra\.floor : deps\.ground\(\),/, 'read at each tap, not once')
+  assert.match(sampler, /const floorRay: FloorRayUse = mode === 'floor' \? 'prefer' : 'cross-check'/, 'the floor reports and does not move the point until DX5')
 })
 
 // ── The scan half of the host ───────────────────────────────────────────────────────────────────────

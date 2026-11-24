@@ -24,6 +24,7 @@
  */
 import * as THREE from 'three'
 import type { WorldProject } from '../world/types.ts'
+import { plainServerError } from './transform-tools.ts'
 import {
   applyRegistrationProposal,
   buildRegisterPatch,
@@ -76,18 +77,11 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, className?: stri
 
 /**
  * What went wrong, in the server's own words when it gave some. `postEditPatch` reports a refusal as
- * `<status> <body>`; the sentence a person can act on is the `error` inside that body, not the JSON around it.
+ * `<status> <body>`; the sentence a person can act on is the `error` inside that body, not the JSON around it. The one
+ * reader of that sentence is `plainServerError` (./transform-tools.ts, FN-085); without one, the message as it came.
  */
 function errorText(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-  const body = /^\d{3} (\{[\s\S]*\})$/.exec(message)
-  if (body) {
-    try {
-      const parsed = JSON.parse(body[1]!) as { error?: unknown }
-      if (typeof parsed.error === 'string' && parsed.error !== '') return parsed.error
-    } catch { /* not JSON after all: say what the server said */ }
-  }
-  return message
+  return plainServerError(error, error instanceof Error ? error.message : String(error))
 }
 
 export function mountRegisterProposals(host: RegisterProposalHost): RegisterProposals {

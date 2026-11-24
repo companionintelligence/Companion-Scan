@@ -61,11 +61,11 @@
      applied sparingly, to the handful of buttons that are the main action of their row. */
   button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
   button.primary:hover:not(:disabled) { background: var(--accent); opacity: .9; }
-  input[type=text], input[type=number], select {
+  input[type=text], input[type=number], input[type=password], select {
     background: transparent; border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-md);
     padding: 9px 10px; font-size: 13px; font-family: inherit; min-height: 40px;
   }
-  input[type=text]:focus, input[type=number]:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  input[type=text]:focus, input[type=number]:focus, input[type=password]:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
   /* Spinner arrows removed: they're invisible on the phones this is used from and only eat
      width from an already-narrow numeric field. Keyboard up/down still steps the value. */
   input[type=number] { -moz-appearance: textfield; }
@@ -145,8 +145,10 @@
   .grid-bar-fill {
     height: 100%; width: 0%; background: var(--accent); transition: width .3s ease-out;
   }
-  body.scanning .joystick-wrap { opacity: .3; }
-  body.scanning .act-bar { opacity: .45; }
+  /* Parked between stations, the backend lets manual motion through again (the capture is not
+     driving the motors), so the joystick and the action bar come back to full strength then. */
+  body.scanning:not(.scan-parked) .joystick-wrap { opacity: .3; }
+  body.scanning:not(.scan-parked) .act-bar { opacity: .45; }
   body.scanning .scan-panel, body.scanning details.debug-section {
     border-color: var(--accent);
   }
@@ -198,6 +200,10 @@
   .gp-summary strong { color: var(--text); }
   .gp-summary .gp-capped { color: var(--warn); }
   .scan-run { width: 100%; min-height: 44px; }
+  /* Stop sits directly under Run and only exists while a capture does. Outlined in the danger
+     colour rather than filled: it is the safety action, and it must read as different from Run
+     at a glance, not as a second primary button. */
+  .scan-stop { margin-top: 6px; border-color: var(--danger); color: var(--danger); font-weight: 700; }
 
   /* ---- Between-station prompt ----
      Given the accent border and a taller button because of where the operator is when it
@@ -547,6 +553,9 @@
               <input type="checkbox" id="be-grid-both" /> Both orientations per position
             </label>
             <button id="be-btn-grid" class="primary scan-run" disabled>Run scan</button>
+            <!-- Stops the capture: after the current position while it sweeps, at once while it
+                 is parked. Every station so far is kept. Shown only while a capture runs. -->
+            <button id="be-btn-stop" class="scan-run scan-stop" hidden disabled>Stop scan</button>
             <!-- The one control a multi-station capture cannot work without. Hidden until the
                  run parks between domes, then it is the largest thing on the panel: the
                  operator is holding a tripod, several metres away, and this is the only thing
@@ -667,6 +676,12 @@
                   <label for="be-url">Backend URL</label>
                   <input type="text" id="be-url" value="http://localhost:8788" />
                 </div>
+                <!-- Only when the backend was started with OSMO_BACKEND_TOKEN. Remembered in this
+                     browser; sent as a Bearer header, and as ?token= on the WebSocket. -->
+                <div class="row">
+                  <label for="be-token">Backend token</label>
+                  <input type="password" id="be-token" autocomplete="off" placeholder="only if the backend sets one" />
+                </div>
               </div>
             </details>
 
@@ -706,6 +721,12 @@
         <details class="debug-section">
           <summary>Command test matrix</summary>
           <div class="details-body">
+            <!-- The probes are bench routes the backend serves only with BACKEND_TEST_ROUTES=1, and
+                 its status says which. Without this note the buttons just answered 404. -->
+            <p id="be-test-routes-note" class="reset-tip" hidden>
+              The backend's test routes are off, so these probes are disabled. Restart the backend
+              with <strong>BACKEND_TEST_ROUTES=1</strong> in the shell that starts it to use them.
+            </p>
             <div id="be-test-matrix"></div>
           </div>
         </details>
@@ -761,10 +782,12 @@
           <div class="banner">
             Reverse-engineered DUML protocol. Pairing and the frame codec are checked against a
             real captured frame. Gimbal speed-control axis order/signs were corrected and
-            live-verified via the joystick on 2026-08-21 (see protocol/commands.mjs). Absolute
-            angle got the same axis fix by inference, not yet independently live-tested. The
-            "mode" buttons above are confirmed to be a portrait/landscape toggle, not a real
-            lock/follow/fpv selector. Shutter/record intentionally not implemented.
+            live-verified via the joystick on 2026-08-21 (see protocol/commands.mjs). The
+            absolute-angle command (0x14) does nothing on an Osmo Mobile 6: an A/B test against
+            the speed command on 2026-08-21 showed no movement. Moves are closed-loop speed
+            control instead. The "mode" buttons above are confirmed to be a portrait/landscape
+            toggle, not a real lock/follow/fpv selector. Shutter/record intentionally not
+            implemented.
           </div>
         </div>
       </details>

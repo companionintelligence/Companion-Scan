@@ -66,11 +66,7 @@ export function thumbstickStep(y: number, latch: StickLatch): StickStep {
 }
 
 /**
- * The world a page opens, by the desktop viewer's rule (src/viewer/viewer.ts): `?world=`
- * if given, else the Place's own world for `?project=`, else `default`.
+ * The world a page opens. One rule for both editors, kept in ./world-rules.ts and re-exported here for the
+ * importers that already read it from this module.
  */
-export function worldSlugFrom(search: string): string {
-  const query = new URLSearchParams(search)
-  const project = query.get('project')
-  return query.get('world') || (project ? `project-${project}` : 'default')
-}
+export { worldSlugFrom } from './world-rules.ts'

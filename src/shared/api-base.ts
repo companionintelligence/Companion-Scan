@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { SCAN_SERVER_KEY } from './storage-keys.ts'
+import { SCAN_SERVER_KEY, SHELL_SESSION_KEY, SHELL_SIGN_IN_PENDING_KEY } from './storage-keys.ts'
 
 /**
  * Where the Scan server is, as seen from the page.
@@ -190,17 +190,13 @@ export function editorPath(search = ''): string {
   return `${isNativeShell() ? '/viewer.html' : '/editor'}${search}`
 }
 
-/** Where a shell keeps its Companion session token (src/shared/shell-sign-in.ts writes it). */
-export const SHELL_SESSION_KEY = 'companion-scan-shell-session'
-
-/** Where a shell keeps the PKCE verifier of a sign-in it started, until the browser hands the app back. */
-export const SHELL_SIGN_IN_PENDING_KEY = 'companion-scan-shell-sign-in'
-
 /**
- * Where a shell keeps the one-time codes of the latest sign-in returns it was handed, so that a
- * return handed over again on a later page load is not finished a second time.
+ * The localStorage keys a shell keeps its Companion sign-in in: the session token (src/shared/shell-sign-in.ts writes
+ * it), the PKCE verifier of a sign-in it started, and the one-time codes of the latest sign-in returns it was handed.
+ * They are declared once, in the key registry (src/shared/storage-keys.ts), and re-exported here for the modules that
+ * have always imported them from api-base.
  */
-export const SHELL_SIGN_IN_CODES_KEY = 'companion-scan-shell-sign-in-codes'
+export { SHELL_SESSION_KEY, SHELL_SIGN_IN_CODES_KEY, SHELL_SIGN_IN_PENDING_KEY } from './storage-keys.ts'
 
 /** The shell's session token, or null outside a shell or before its sign-in. Blocked storage reads as no token. */
 export function shellSessionToken(): string | null {
@@ -209,11 +205,29 @@ export function shellSessionToken(): string | null {
 }
 
 /**
- * `url` with the session token as a `token` parameter, for the requests that cannot send a header:
- * media and sockets. Unchanged without a token.
+ * `url` with `token` as its one `token` parameter. Unchanged without a token. A `token` the URL
+ * already carries is replaced, not joined by a second one: the server reads the first `token` only,
+ * so a second would never be read. The rest of the query and the fragment are kept as they were, and
+ * a root-relative, absolute or WebSocket URL all work.
+ */
+export function withTokenParameter(url: string, token: string | null | undefined): string {
+  if (!token) return url
+  const hashAt = url.indexOf('#')
+  const hash = hashAt >= 0 ? url.slice(hashAt) : ''
+  const beforeHash = hashAt >= 0 ? url.slice(0, hashAt) : url
+  const queryAt = beforeHash.indexOf('?')
+  if (queryAt < 0) return `${beforeHash}?token=${encodeURIComponent(token)}${hash}`
+  const kept = beforeHash.slice(queryAt + 1).split('&').filter((part) => part !== '' && part !== 'token' && !part.startsWith('token='))
+  kept.push(`token=${encodeURIComponent(token)}`)
+  return `${beforeHash.slice(0, queryAt)}?${kept.join('&')}${hash}`
+}
+
+/**
+ * `url` with the session token as its `token` parameter, for the requests that cannot send a header:
+ * media and sockets. Unchanged without a token; a `token` already there is replaced
+ * ({@link withTokenParameter}). Which credential an editor media URL carries is chosen in
+ * src/shared/access-token.ts (`mediaUrl`).
  */
 export function withSessionToken(url: string, token: string | null): string {
-  if (!token) return url
-  const separator = url.includes('?') ? '&' : '?'
-  return `${url}${separator}token=${encodeURIComponent(token)}`
+  return withTokenParameter(url, token)
 }

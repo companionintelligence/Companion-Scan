@@ -13,7 +13,7 @@
  *     map moving, and a pose that has covered 1.4 m in the one second a stalled bridge held back is a person walking;
  *   - tracking that is missing for at least RECOVERY_SUSPECT_MS and returns is suspect, a shorter blip is not, and a
  *     relocalization counts whatever its length (src/ar/frame-epoch.ts, the rules at the top of the file);
- *   - ARCore reports no relocalization (ScanARRenderer.trackingName), ARKit does (ScanARPlugin.describe), so the same short
+ *   - ARCore reports no relocalization (ScanARRules.trackingName), ARKit does (ScanARPlugin.describe), so the same short
  *     stretch of limited tracking is an epoch on iOS and not on Android: a signal the runtime does not give is not invented.
  *
  * Run: node --experimental-strip-types --no-warnings --test tests/unit/node/wp-09b-native-provider.test.ts
@@ -226,7 +226,7 @@ test('a person walking steadily is no frame shift: epoch 0, nothing told, no jum
 })
 
 test('start-up is not a loss: a session that spends its first seconds limited while it initialises, as both natives do, starts no epoch when it reaches normal', async () => {
-  // ARKit begins limited.initializing, ARCore's PAUSED with no reason reads the same (ScanARRenderer.trackingName): every native
+  // ARKit begins limited.initializing, ARCore's PAUSED with no reason reads the same until it has tracked once (ScanARRules.trackingName): every native
   // scan begins this way, so a first NORMAL that counted as a recovery would begin every scan with a frame shift.
   const { provider, phone, events } = await native()
   phone.track('notAvailable')
@@ -277,14 +277,14 @@ test('1.4 m covered in the one second a stalled bridge held back is a person wal
 })
 
 test('a pause of five seconds that ends with the phone elsewhere is one suspect epoch, "recovered", that says how long it was away', async () => {
-  // ARCore, backgrounded: the plugin reports notAvailable and sends no pose; on return it reports PAUSED with no reason as
-  // limited.initializing until it is tracking again (ScanARRenderer.pauseSession, trackingName).
+  // ARCore, backgrounded: the plugin reports notAvailable and sends no pose; on return it reports PAUSED with no reason as plain
+  // limited until it is tracking again, since this session has tracked before (ScanARRenderer.pauseSession, ScanARRules.trackingName).
   const { provider, phone, events } = await native()
   phone.walk(60, 1.4)
   phone.track('notAvailable')
   phone.t += 5
-  phone.frameAfter(FRAME_S, 0.4, 0, 0, 'limited.initializing')
-  for (let i = 0; i < 9; i++) phone.frameAfter(FRAME_S, 0, 0, 0, 'limited.initializing')
+  phone.frameAfter(FRAME_S, 0.4, 0, 0, 'limited')
+  for (let i = 0; i < 9; i++) phone.frameAfter(FRAME_S, 0, 0, 0, 'limited')
   assert.equal(provider.getFrameEpoch!(), 0, 'nothing is decided while tracking is still limited')
   phone.frameAfter(FRAME_S, 0, 0, 0, 'normal')
   assert.equal(provider.getFrameEpoch!(), 1)
@@ -304,7 +304,7 @@ test('the same loss, delivered late (the page held back the notAvailable until t
   const before = phone.t
   phone.t += 5
   phone.track('notAvailable')
-  phone.frameAfter(FRAME_S, 0.2, 0, 0, 'limited.initializing')
+  phone.frameAfter(FRAME_S, 0.2, 0, 0, 'limited')
   phone.frameAfter(FRAME_S, 0, 0, 0, 'normal')
   assert.equal(provider.getFrameEpoch!(), 1)
   assert.ok((events[0]!.degradedMs ?? 0) >= 5000, `degradedMs ${events[0]!.degradedMs}, the pause began at ${before}`)
@@ -314,7 +314,7 @@ test('tracking that blinks for a fifth of a second is not an epoch', async () =>
   const { provider, phone, events } = await native()
   phone.walk(60, 1.4)
   phone.track('notAvailable')
-  phone.frameAfter(0.2, 0.01, 0, 0, 'limited.initializing')
+  phone.frameAfter(0.2, 0.01, 0, 0, 'limited')
   phone.frameAfter(FRAME_S, 0.01, 0, 0, 'normal')
   assert.ok(0.2 * 1000 < RECOVERY_SUSPECT_MS, 'the blink is shorter than the rule that makes a return suspect')
   assert.equal(provider.getFrameEpoch!(), 0)
@@ -336,7 +336,7 @@ test('ARKit reporting limited.relocalizing is a relocalization, which counts wha
 test('the same short stretch of limited tracking on ARCore, which reports no relocalization, is not an epoch: no signal is invented', async () => {
   const { provider, phone, events } = await native()
   phone.walk(60, 1.4)
-  for (let i = 0; i < 5; i++) phone.frameAfter(FRAME_S, i === 0 ? 0.1 : 0, 0, 0, 'limited.initializing')
+  for (let i = 0; i < 5; i++) phone.frameAfter(FRAME_S, i === 0 ? 0.1 : 0, 0, 0, 'limited')
   phone.frameAfter(FRAME_S, 0, 0, 0, 'normal')
   assert.equal(provider.getFrameEpoch!(), 0)
   assert.deepEqual(events, [])

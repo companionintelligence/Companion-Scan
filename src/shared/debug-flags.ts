@@ -34,6 +34,12 @@ export type DebugFlag =
    * phone arms both: `?debug=remote,probe`.
    */
   | 'probe'
+  /**
+   * Show the GPS fix's coordinates and accuracy in the scanner HUD's geo chip
+   * (`#geo-coords`, src/main.ts updateGeoIndicator). It used to be read with an
+   * exact `=== 'geo'`, so `?debug=geo,pose` armed pose and not geo (FN-007).
+   */
+  | 'geo'
 
 /**
  * True when `flag` appears in the current page's `?debug=` token list.
