@@ -76,6 +76,16 @@ export const SCAN_SERVER_KEY = 'companion-scan-server'
 export const BASEMAP_CONSENT_KEY = 'companion-scan-basemap-consent'
 
 /**
+ * localStorage key: this device's answer to "look up the street address at <host>?", the reverse
+ * geocoder GeoTracker would send the position to, as JSON `{ "host": string, "allowed": boolean }`
+ * (the same shape as BASEMAP_CONSENT_KEY's, through src/geo/consent.ts). Read/written by
+ * src/geo/geocode-consent.ts, once per device. No answer means no request (wave 14, F-08). Brand
+ * new; treat it as frozen from here on, because renaming it would ask every device again, and a
+ * declined answer would be forgotten.
+ */
+export const GEOCODE_CONSENT_KEY = 'companion-scan-geocode-consent'
+
+/**
  * sessionStorage key: caches the most recent GeoTracker fix so a page
  * reload mid-session doesn't lose GPS/compass state. Read/written by
  * src/geo/geo-tracker.ts (there as `SESSION_KEY`). Do not rename — breaks
@@ -86,7 +96,9 @@ export const GEO_FIX_SESSION_KEY = 'ci-xr-geo-fix'
 
 /**
  * sessionStorage key: selected place for this scanner tab. A missing value
- * means "decide later" and exports use projectId:null.
+ * means "decide later" and exports use projectId:null. src/main.ts writes it to
+ * sessionStorage only, and when this tab has none it also reads the same key
+ * from localStorage (FN-044), so one value of this key can be in either store.
  */
 export const PLACE_SELECTION_SESSION_KEY = 'ci-xr-place-selection'
 
@@ -98,6 +110,25 @@ export const PLACE_SELECTION_SESSION_KEY = 'ci-xr-place-selection'
  * (CLAUDE.md "Do not rename".)
  */
 export const SCAN_DB_NAME = 'ci-xr-scan'
+
+/**
+ * IndexedDB database name for the Places store: the Places themselves, their scans, their reference photos and a frame
+ * not yet sent (src/project/project-store.ts). Do not rename — orphans every existing user's Places, which are records
+ * of their own and not data a later scan regenerates. Five Playwright specs type it as a literal too. It belongs in
+ * CLAUDE.md's "Do not rename" table beside `SCAN_DB_NAME`; wave 14 adds it there (F-49).
+ */
+export const PROJECTS_DB_NAME = 'ci-xr-projects'
+
+/**
+ * localStorage keys a native shell keeps its Companion sign-in in (FN-044): the session token
+ * (src/shared/shell-sign-in.ts writes it), the PKCE verifier of a sign-in it started, and the one-time codes of the
+ * latest sign-in returns it was handed. src/shared/api-base.ts declares the same three names with the same values and
+ * reads them; tests/unit/node/wp-capture-core-registry.test.ts holds the two equal until api-base imports these. Do not
+ * rename: a shell that already signed in would read as signed out, and a sign-in in flight could not be finished.
+ */
+export const SHELL_SESSION_KEY = 'companion-scan-shell-session'
+export const SHELL_SIGN_IN_PENDING_KEY = 'companion-scan-shell-sign-in'
+export const SHELL_SIGN_IN_CODES_KEY = 'companion-scan-shell-sign-in-codes'
 
 /**
  * IndexedDB database name for the service worker's offline upload queue

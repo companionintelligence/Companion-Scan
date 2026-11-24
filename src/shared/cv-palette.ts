@@ -2,9 +2,12 @@
  * Shared CV test palette — one saturated, well-separated colour per furniture
  * label.  Used by:
  *   - scripts/generate-cv-images.mjs   (draws synthetic room images)
- *   - inference.ts mock engine          (detects these colours as objects)
+ *   - server/inference.ts mock engine   (detects these colours as objects)
  *   - public/test-fixtures/xr8-mock.js  (paints the fake camera feed — keep
- *     its inline copy in sync when editing)
+ *     its inline copy in sync when editing; tests/unit/deno/sync.test.ts
+ *     fails when the two drift)
+ *   - labelDisplayRgb() below, the one table a detection's colour on screen
+ *     and in the GLB comes from
  *
  * Runtime-agnostic: imported by Deno (server), Node (scripts), and Vite.
  */
@@ -43,6 +46,69 @@ export function paletteColorFor(label: string): [number, number, number] {
 /** Plain-English colour name for a palette label; '' when the label is unknown. */
 export function paletteColorNameFor(label: string): string {
   return CV_PALETTE.find((p) => p.label === label)?.colorName ?? ''
+}
+
+// ── Display colours ──────────────────────────────────────────────────────────
+
+/** The colour a label with no entry below is drawn in: the grey `paletteColorFor` falls back to. */
+export const LABEL_DISPLAY_DEFAULT_RGB: readonly [number, number, number] = [176, 190, 197]
+
+function paletteRgb(label: string): readonly [number, number, number] {
+  const entry = CV_PALETTE.find((p) => p.label === label)
+  if (!entry) throw new Error(`cv-palette: no CV_PALETTE entry for ${label}`)
+  return entry.rgb
+}
+
+/**
+ * The one table a detection's colour on screen comes from (F-44): the GLB's boxes (src/export/gltf.ts), and any
+ * list, dot or pin that colours a label. A label is matched by the first key it contains, lowercased and in this
+ * order, so "office chair" is a chair and "table lamp" a table, as the GLB has always matched them.
+ *
+ * - A CV_PALETTE label takes its palette colour, which is also the colour the synthetic rooms paint it and the mock
+ *   detector matches, so a blue chair in a test image is a blue chair in the export.
+ * - An alias takes its palette label's colour: couch is sofa, monitor is tv, bookcase is shelf.
+ * - A label the palette has no entry for keeps the colour the GLB gave it before this table existed.
+ *
+ * Separate from CV_PALETTE on purpose. That list is the mock detector's match table (`classifyPixel`), mirrored in
+ * public/test-fixtures/xr8-mock.js, and a display-only label added to it would become something the mock detects.
+ */
+const LABEL_DISPLAY_ORDER: ReadonlyArray<readonly [string, readonly [number, number, number]]> = [
+  ['chair', paletteRgb('chair')],
+  ['table', paletteRgb('table')],
+  ['sofa', paletteRgb('sofa')],
+  ['couch', paletteRgb('sofa')],
+  ['bed', paletteRgb('bed')],
+  ['desk', [165, 214, 167]],
+  ['monitor', paletteRgb('tv')],
+  ['tv', paletteRgb('tv')],
+  ['door', [255, 204, 128]],
+  ['window', [128, 222, 234]],
+  ['shelf', paletteRgb('shelf')],
+  ['bookcase', paletteRgb('shelf')],
+  ['lamp', paletteRgb('lamp')],
+  ['plant', paletteRgb('plant')],
+  ['wall', [120, 144, 156]],
+  ['floor', [84, 110, 122]],
+  ['ceiling', [144, 164, 174]],
+]
+
+/** The sRGB 0-255 colour a detection labelled `label` is drawn in. A fresh array: changing it changes nothing here. */
+export function labelDisplayRgb(label: string): [number, number, number] {
+  const lower = String(label ?? '').toLowerCase()
+  const hit = LABEL_DISPLAY_ORDER.find(([key]) => lower.includes(key))
+  const [r, g, b] = hit ? hit[1] : LABEL_DISPLAY_DEFAULT_RGB
+  return [r, g, b]
+}
+
+/** {@link labelDisplayRgb} as a 0xRRGGBB number, the form three.js colours take. */
+export function labelDisplayHex(label: string): number {
+  const [r, g, b] = labelDisplayRgb(label)
+  return (r << 16) | (g << 8) | b
+}
+
+/** {@link labelDisplayRgb} as a CSS `#rrggbb` string, the form the DOM takes. */
+export function labelDisplayCss(label: string): string {
+  return `#${labelDisplayHex(label).toString(16).padStart(6, '0')}`
 }
 
 /** Classify an sRGB pixel against the palette; null when it matches nothing */

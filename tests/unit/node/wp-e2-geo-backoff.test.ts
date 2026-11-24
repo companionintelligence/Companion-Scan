@@ -10,6 +10,13 @@ import test, { type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { GeoTracker, type GeoFix } from '../../../src/geo/geo-tracker.ts'
 
+/**
+ * This device has said yes to the address lookup (src/geo/geocode-consent.ts). Since wave 14 (F-08) nothing goes to the
+ * geocoder without one; what a lookup does once allowed is what this file tests, and
+ * tests/unit/node/wp-capture-core-geo-privacy.test.ts tests the asking.
+ */
+const LOOKUPS_ALLOWED = { answer: (): boolean => true, ask: async (): Promise<boolean> => true }
+
 interface FakePosition {
   coords: { latitude: number, longitude: number, accuracy: number, altitude: number | null }
   timestamp: number
@@ -55,7 +62,7 @@ test('a failed lookup waits on the monotonic clock, not on Date.now', async (t) 
   t.mock.method(performance, 'now', () => monotonic)
   // Date.now is deliberately not mocked: the wait has to hold whatever the wall clock reads.
   const asked = lookups(t, async (call) => (call < 2 ? json({}, 503) : json(LONDON)))
-  const geo = new GeoTracker() as unknown as Tracker
+  const geo = new GeoTracker({ geocodeConsent: LOOKUPS_ALLOWED }) as unknown as Tracker
   const fix = geo._applyPosition(at(ROOM_A))
 
   await geo._geocode(fix) // try 1 fails: the wait is 5 s
@@ -75,7 +82,7 @@ test('failures back off by doubling up to the five-minute cap, and the cap holds
   t.mock.method(performance, 'now', () => monotonic)
   // The first eight tries fail, and the ninth answers.
   const asked = lookups(t, async (call) => (call < 9 ? json({}, 503) : json(LONDON)))
-  const geo = new GeoTracker() as unknown as Tracker
+  const geo = new GeoTracker({ geocodeConsent: LOOKUPS_ALLOWED }) as unknown as Tracker
   const fix = geo._applyPosition(at(ROOM_A))
   // The wait after each failure, in seconds: doubling from 5 s, then held at the 300 s cap from the seventh failure on.
   const waits = [5, 10, 20, 40, 80, 160, 300, 300]

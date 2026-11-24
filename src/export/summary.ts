@@ -20,6 +20,8 @@ import type { PointCloud } from '../scene/pointcloud'
 import type { Pose } from '../ar/provider'
 import type { GeoFix } from '../geo/geo-tracker'
 import { apiUrl } from '../shared/api-base.ts'
+import { pathLengthM as walkedM } from '../shared/pose-math.ts'
+import { isServerSessionId } from '../shared/session-id.ts'
 
 export interface SummaryData {
   store: DetectionStore
@@ -56,14 +58,9 @@ function buildMarkdown(data: SummaryData): string {
     ? ((bb.max.x - bb.min.x) * (bb.max.z - bb.min.z)).toFixed(1)
     : '?'
 
-  // Camera path length
-  let pathLengthM = 0
-  for (let i = 1; i < poseHistory.length; i++) {
-    const a = poseHistory[i - 1].position
-    const b = poseHistory[i].position
-    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z
-    pathLengthM += Math.sqrt(dx * dx + dy * dy + dz * dz)
-  }
+  // Camera path length: the one walk measure (src/shared/pose-math.ts), which the closure record reads too. A pose
+  // whose position is not a number is skipped rather than turning the whole length into NaN.
+  const pathLengthM = walkedM(poseHistory)
 
   // Natural language scene description
   const scene = synthesiseDescription(dets, bb)
@@ -99,7 +96,7 @@ function buildMarkdown(data: SummaryData): string {
     lines.push(`| Latitude | ${geoFix.lat.toFixed(6)}° |`)
     lines.push(`| Longitude | ${geoFix.lng.toFixed(6)}° |`)
     lines.push(`| Accuracy | ±${Math.round(geoFix.accuracy)} m |`)
-    if (geoFix.altitudeM !== null) lines.push(`| Altitude | ${Math.round(geoFix.altitudeM)} m ASL |`)
+    if (geoFix.altitudeM !== null) lines.push(`| Altitude | ${altitudeCell(geoFix.altitudeM)} |`)
     if (geoFix.bearing !== null) lines.push(`| Compass Bearing | ${Math.round(geoFix.bearing)}° (magnetic north) |`)
     const mapUrl = `https://maps.google.com/maps?q=${geoFix.lat.toFixed(6)},${geoFix.lng.toFixed(6)}`
     lines.push(`| Map | [View on Google Maps](${mapUrl}) |`)
@@ -285,11 +282,30 @@ function triggerDownload(content: string, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }
 
+/**
+ * The altitude as the summary prints it. The platform's number comes with no datum (src/geo/geo-tracker.ts, `GeoFix`):
+ * Safari has been recorded giving height above mean sea level and Chrome on Android the WGS-84 ellipsoid's, so the row
+ * says which it might be rather than claim "above sea level" (FN-049).
+ */
+export function altitudeCell(altitudeM: number): string {
+  return `${Math.round(altitudeM)} m, datum unknown (sea level or the WGS-84 ellipsoid, by browser)`
+}
+
+/**
+ * The form `POST /upload-summary` takes: the file, and the scan's session id only when it is one the server minted
+ * (`isServerSessionId`, src/shared/session-id.ts). A client-local `local-…` id names no server session, so it is never
+ * sent (FN-049); the summary still uploads without it.
+ */
+export function summaryUploadForm(content: string, filename: string, sessionId: string | null | undefined): FormData {
+  const form = new FormData()
+  form.append('file', new Blob([content], { type: 'text/markdown' }), filename)
+  if (isServerSessionId(sessionId)) form.append('sessionId', sessionId)
+  return form
+}
+
 async function uploadSummary(content: string, filename: string, store: DetectionStore): Promise<void> {
   try {
-    const form = new FormData()
-    form.append('file', new Blob([content], { type: 'text/markdown' }), filename)
-    form.append('sessionId', store.sessionId)
+    const form = summaryUploadForm(content, filename, store.sessionId)
     const resp = await fetch(apiUrl('/upload-summary'), { method: 'POST', body: form })
     if (resp.ok) {
       const body = await resp.json() as { filename: string }

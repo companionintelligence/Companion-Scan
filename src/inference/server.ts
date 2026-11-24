@@ -1,8 +1,10 @@
 /**
  * Server inference client — POST to the Deno inference server.
  *
- * Used on iOS and older Android where navigator.gpu is unavailable.
- * Requests are proxied same-origin through Vite.
+ * The default path everywhere, not only where navigator.gpu is missing:
+ * `InferenceRouter.init()` (./router.ts) uses on-device WebGPU only when the
+ * person chose it before and the browser supports it, and sends every other
+ * request here. Requests are proxied same-origin through Vite.
  */
 // Explicit .ts extension: see src/scene/store.ts's identical note — this
 // module is now reachable from tests/unit/node/inference_router.test.ts via

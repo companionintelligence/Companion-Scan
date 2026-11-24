@@ -18,12 +18,15 @@
  *    the `hit-test` feature). A boolean probe cannot see this coming; only the
  *    rejection names it, which is why `startFailureVerdict()` exists.
  *
- * 2. 8th Wall lies by reporting ready. On the same device the engine loads,
+ * 2. 8th Wall can lie by reporting ready. On the same device the engine loads,
  *    `XR8.run()` is accepted, and the camera track is acquired at 960x720 — but
- *    the pipeline never emits a frame. The startup diagnostic in
+ *    on some starts the pipeline never emits a frame. The startup diagnostic in
  *    `eighthwall.ts` read `"frame":"unreported"` and `"projectionAspect":null`,
- *    and no pose ever arrived. The only signal is an ABSENCE, so the verdict
- *    has to be made on a timer: `firstFrameVerdict()`.
+ *    and no pose arrived. The stall is intermittent, about two starts in eight
+ *    (docs/operations/AR_DEVICE_SUPPORT.md, the Beam Pro measurement), and not
+ *    a property of the device. The only
+ *    signal is an ABSENCE, so the verdict has to be made on a timer:
+ *    `firstFrameVerdict()`.
  *
  * Nothing here decides on its own that a device is hopeless before giving it
  * time — see `'warming-up'`, which exists precisely so a slow phone is not

@@ -15,7 +15,7 @@ import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { collectBurst, type BurstRun } from '../../../src/ar/hit-burst.ts'
 import { EighthWallProvider, hitTypesFromSearch } from '../../../src/ar/eighthwall.ts'
-import { WebXRProvider } from '../../../src/ar/webxr.ts'
+import { WebXRProvider, statusOfViewerPose } from '../../../src/ar/webxr.ts'
 import { sampleTap, type TapSample } from '../../../src/ar/tap-sampling.ts'
 import type { HitBurstFrame } from '../../../src/ar/provider.ts'
 
@@ -798,6 +798,8 @@ function fakeXrSession(): FakeXrSession {
 interface XrFrameOptions {
   camera?: { x: number; y: number; z: number } | null
   hit?: { x: number; y: number; z: number } | null
+  /** The viewer pose is an emulated one (`XRPose.emulatedPosition`): the last known position, given again after a loss. */
+  emulated?: boolean
 }
 
 function xrFrame(o: XrFrameOptions = {}): unknown {
@@ -805,7 +807,7 @@ function xrFrame(o: XrFrameOptions = {}): unknown {
   const hit = o.hit === undefined ? { x: 0, y: -1.2, z: -2 } : o.hit
   const pose = (p: { x: number; y: number; z: number }) => ({ transform: { position: p, orientation: { x: 0, y: 0, z: 0, w: 1 } } })
   return {
-    getViewerPose: () => (camera ? pose(camera) : undefined),
+    getViewerPose: () => (camera ? { ...pose(camera), emulatedPosition: o.emulated === true } : undefined),
     getHitTestResults: () => (hit ? [{ getPose: () => pose(hit) }] : []),
   }
 }
@@ -849,7 +851,7 @@ test('WebXR burst: ONE hit-test source serves the whole window, and it is cancel
   assert.equal(session.endListeners(), 0, 'and the end listener is gone')
 })
 
-test('WebXR burst: each frame reports its hit, the camera pose it was read at, the distance from it, and UNKNOWN status', async () => {
+test('WebXR burst: each frame reports its hit, the camera pose it was read at, the distance from it, and the status trackingStatus() would give it', async () => {
   const { provider, session } = liveWebXr()
   const burst = provider.hitTestBurstAsync(0.5, 0.5, 0)
   await settle()
@@ -859,9 +861,25 @@ test('WebXR burst: each frame reports its hit, the camera pose it was read at, t
   assert.deepEqual(f.hit?.rotation, { x: 0, y: 0, z: 0, w: 1 })
   assert.ok(Math.abs((f.hit?.distance ?? 0) - Math.hypot(0, 1.9, 3)) < 1e-12, 'measured from this frame\'s own viewer pose')
   assert.deepEqual(f.pose, { position: { x: 1, y: 1.5, z: 2 }, rotation: { x: 0, y: 0, z: 0, w: 1 } })
-  assert.equal(f.status, 'UNKNOWN')
+  // A tracked viewer pose is NORMAL, as trackingStatus() reads it (FN-036: it used to be UNKNOWN for any pose).
+  assert.equal(f.status, 'NORMAL')
   assert.equal(f.reason, undefined)
   assert.equal(f.poseJumps, undefined)
+})
+
+test('WebXR burst: an emulated viewer pose is LIMITED, as trackingStatus() reads it, so a tap burst over one is refused (FN-036)', async () => {
+  const { provider, session } = liveWebXr()
+  const burst = provider.hitTestBurstAsync(0.5, 0.5, 100)
+  await settle()
+  session.pump(0, xrFrame())
+  session.pump(50, xrFrame({ emulated: true }))
+  session.pump(100, xrFrame({ camera: null }))
+  const frames = (await burst).frames
+  assert.deepEqual(frames.map((f) => f.status), ['NORMAL', 'LIMITED', 'NOT_AVAILABLE'])
+  assert.ok(frames[1].pose, 'an emulated pose is still a pose: the frame keeps it, the status says it is not to be trusted')
+  for (const [viewerPose, status] of [[undefined, 'NOT_AVAILABLE'], [{ emulatedPosition: true }, 'LIMITED'], [{ emulatedPosition: false }, 'NORMAL']] as const) {
+    assert.equal(statusOfViewerPose(viewerPose as unknown as XRViewerPose | undefined), status)
+  }
 })
 
 test('WebXR burst: a frame with no hit result has no hit, and one with no viewer pose has neither hit nor pose and is NOT_AVAILABLE', async () => {
@@ -877,7 +895,7 @@ test('WebXR burst: a frame with no hit result has no hit, and one with no viewer
   assert.equal(frames[1].hit, null)
   assert.equal(frames[1].pose, undefined)
   assert.ok(frames[2].hit)
-  assert.deepEqual(frames.map((f) => f.status), ['UNKNOWN', 'NOT_AVAILABLE', 'UNKNOWN'], 'the runtime had no pose for the middle frame: it could not locate the device')
+  assert.deepEqual(frames.map((f) => f.status), ['NORMAL', 'NOT_AVAILABLE', 'NORMAL'], 'the runtime had no pose for the middle frame: it could not locate the device')
 })
 
 /**
@@ -914,7 +932,7 @@ test('WebXR burst: the frames are told to a listener as they come', async () => 
   session.pump(1050, xrFrame({ camera: null }))
   session.pump(1100, xrFrame())
   await burst
-  assert.deepEqual(heard, [['UNKNOWN', 0], ['NOT_AVAILABLE', 50], ['UNKNOWN', 100]])
+  assert.deepEqual(heard, [['NORMAL', 0], ['NOT_AVAILABLE', 50], ['NORMAL', 100]])
 })
 
 test('WebXR burst: the session ending mid-window settles the burst, cancels the source, and later frames do nothing', async (t: TestContext) => {

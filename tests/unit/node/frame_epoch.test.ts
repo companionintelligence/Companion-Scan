@@ -117,12 +117,16 @@ test('classifyTracking: a degraded reason makes a NORMAL status degraded; nothin
   assert.equal(classifyTracking('SOME_FUTURE_STATUS', 'SOME_FUTURE_REASON'), 'unknown')
 })
 
-test('classifyTracking: the native runtimes\' reason names are not in the web provider\'s set', () => {
-  // EXCESSIVE_MOTION and INSUFFICIENT_FEATURES are native reasons (src/ar/native-provider.ts). They are not in 8th Wall's
-  // documentation and not in the set this build treats as degraded for the web runtime, so a NORMAL web frame carrying one
-  // stays good. If a phone log (DX4) shows a web build reporting them, they join the set.
-  assert.equal(classifyTracking('NORMAL', 'EXCESSIVE_MOTION'), 'good')
-  assert.equal(classifyTracking('NORMAL', 'INSUFFICIENT_FEATURES'), 'good')
+test('classifyTracking: the native runtimes\' reason names are in the one set, so a frame carrying one is degraded', () => {
+  // EXCESSIVE_MOTION and INSUFFICIENT_FEATURES are the native layers' words (src/ar/native-codec.ts). Wave 14 (ticket 0004,
+  // FN-035) made one set of unsure reasons for both readers (src/ar/tracking-reasons.ts) and put them in it: today they
+  // only arrive with LIMITED, which was degraded already, and a runtime that ever sent one beside NORMAL is unsure all
+  // the same. This test said the opposite before that decision.
+  assert.equal(classifyTracking('NORMAL', 'EXCESSIVE_MOTION'), 'degraded')
+  assert.equal(classifyTracking('NORMAL', 'INSUFFICIENT_FEATURES'), 'degraded')
+  assert.equal(classifyTracking('LIMITED', 'EXCESSIVE_MOTION'), 'degraded')
+  // A reason this build does not know still changes nothing.
+  assert.equal(classifyTracking('NORMAL', 'INSUFFICIENT_LIGHT'), 'good')
 })
 
 // ─── Heading arithmetic ────────────────────────────────────────────────────

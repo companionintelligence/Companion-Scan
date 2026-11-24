@@ -16,6 +16,7 @@ import type { ARProvider, Pose, HitResult } from '../ar/provider'
 import type { RawDetection } from '../inference/prompt'
 import type { PointCloud } from '../scene/pointcloud'
 import type { DetectionObservation } from '../world/types'
+import { MAX_DEPTH_M, MIN_DEPTH_M } from '../shared/panoptic_lift.ts'
 
 // Widened from 0.3 m: hit-test/raycast noise and viewing-angle differences
 // commonly place the same real object 0.3-0.4 m apart across two captures,
@@ -48,13 +49,15 @@ const FALLBACK_DEPTH_M = 2.0
  * A room-scale bound by construction, adopted by decision rather than
  * measurement (ticket 0006 closed unrun). Scanning a space genuinely deeper
  * than this needs it raised, and that should be a deliberate change rather
- * than a silent default.
+ * than a silent default. It is the panoptic lift's depth window's far edge,
+ * `MAX_DEPTH_M` in src/shared/panoptic_lift.ts, which was lifted from here:
+ * one number, in one place (FN-041).
  *
  * **Revisit when:** legitimate far detections start disappearing in a large
  * space. The rejection is logged with the measured distance, so the log says
  * plainly whether this bound is the reason.
  */
-const MAX_HIT_DISTANCE_M = 5.0
+const MAX_HIT_DISTANCE_M = MAX_DEPTH_M
 
 export interface ViewSize {
   width: number
@@ -131,12 +134,25 @@ function isFiniteVec3(p: { x: number; y: number; z: number } | null | undefined)
   return !!p && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)
 }
 
+/**
+ * Tier 3: the cloud point most nearly on the capture ray, inside a fixed 0.25 m cylinder and the 0.5-5.0 m depth window.
+ *
+ * Not `liftSegment` (src/shared/panoptic_lift.ts), which places a panoptic segment from the same kind of cloud, and the
+ * two are not one policy with two copies (FN-041). This one always answers when any point is near the ray, and the most
+ * collinear point wins; `liftSegment` sizes its cone from the segment's area, takes the nearest depth cluster with enough
+ * points as the surface, and abstains when none qualifies or two disagree. On a cloud with a stray point near the camera
+ * in front of a real surface they give different answers, and on a sparse cloud this answers where `liftSegment` does not
+ * (tests/unit/node/wp-capture-core-resolver-lift.test.ts shows both). What they share is the depth window, which is
+ * `liftSegment`'s constants. Moving this tier onto `liftSegment` would change where live detections land and how many
+ * fall to the 2 m fallback below, which no measurement on this tier's inputs has looked at: an owner decision, not a
+ * refactor.
+ */
 function raycastPointCloud(
   ray: THREE.Raycaster,
   pointCloud: PointCloud,
   maxDistanceToRay = 0.25, // 25 cm tolerance
-  minDepth = 0.5,
-  maxDepth = 5.0
+  minDepth = MIN_DEPTH_M,
+  maxDepth = MAX_DEPTH_M
 ): { position: { x: number; y: number; z: number } } | null {
   const pts = pointCloud.toFloat32Array()
   const count = pointCloud.count

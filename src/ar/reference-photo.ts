@@ -16,12 +16,15 @@
 import { viewportPointToImagePoint } from '../spatial/resolver.ts'
 import { twoPointSeparationM } from '../world/geo.ts'
 import type { CalibrationReferencePhoto, Vec3 } from '../world/types'
+import { conjugateQuat, rotateVectorByQuat } from '../shared/pose-math.ts'
+import type { ReferencePhotoRole } from '../project/project-store.ts'
 
 /**
  * Which point a photo is of: the landmark, the heading marker, or a check point (`check1` is the first, the one the flow
- * offers; the schema holds up to three).
+ * offers; the schema holds up to three). Declared once, by the store that keeps the photos (src/project/project-store.ts;
+ * wave 14, FN-039), and exported from here under the name it always had. A type import: nothing of the store runs here.
  */
-export type ReferencePhotoRole = 'landmark' | 'headingMarker' | 'check1' | 'check2' | 'check3'
+export type { ReferencePhotoRole }
 
 /** Width/height of either the camera frame or the rendered photo, in pixels. */
 export interface PhotoSize {
@@ -179,20 +182,12 @@ export function projectMarkerIntoPhoto(
   if (!(norm > 1e-9)) return null
 
   // The marker's offset from the camera in the camera's own axes: the inverse (conjugate) of the pose rotation applied
-  // to it. v' = v + w t + q x t, with t = 2 q x v, q the vector part; the conjugate negates the vector part.
-  const dx = markerSession.x - p.x
-  const dy = markerSession.y - p.y
-  const dz = markerSession.z - p.z
-  const qx = -q.x / norm
-  const qy = -q.y / norm
-  const qz = -q.z / norm
-  const qw = q.w / norm
-  const tx = 2 * (qy * dz - qz * dy)
-  const ty = 2 * (qz * dx - qx * dz)
-  const tz = 2 * (qx * dy - qy * dx)
-  const cx = dx + qw * tx + (qy * tz - qz * ty)
-  const cy = dy + qw * ty + (qz * tx - qx * tz)
-  const cz = dz + qw * tz + (qx * ty - qy * tx)
+  // to it (src/shared/pose-math.ts).
+  const { x: cx, y: cy, z: cz } = rotateVectorByQuat(conjugateQuat(q), {
+    x: markerSession.x - p.x,
+    y: markerSession.y - p.y,
+    z: markerSession.z - p.z,
+  })
 
   const depth = -cz
   if (!(depth > 0)) return null

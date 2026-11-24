@@ -48,15 +48,6 @@ export interface PlaceExits {
 
 type ModalOptions = Parameters<typeof runModal>[0]
 
-/**
- * The option WP-07's return-visit flow adds to the modal: pressing "Wrong Place? Choose another" calls it, and the modal
- * closes with no calibration. Declared here, so that this file builds without that package; once it has landed the modal's
- * own option type carries it and this adds nothing.
- */
-interface WrongPlaceHook {
-  onWrongPlace?: () => void
-}
-
 export type PlaceCalibrationOptions = Omit<ModalOptions, 'project' | 'generation' | 'onWrongPlace'> & {
   exits: PlaceExits
   /** Whether "Improve this Place's reference" is offered for a frame. Default: `improveOffered`. */
@@ -95,7 +86,9 @@ export async function runProjectCalibration(options: PlaceCalibrationOptions): P
       if (!project) return Promise.resolve(null)
       last.ran = true
       last.held = project.spatialFrame
-      const modalRun: ModalOptions & WrongPlaceHook = {
+      // `onWrongPlace` is the modal's own option (CalibrationOptions in ./project-calibration.ts): WP-07's "Wrong Place?
+      // Choose another" calls it, and the modal closes with no calibration.
+      const modalRun: ModalOptions = {
         ...modalOptions,
         project: runMode === 'upgrade' ? withoutFrame(project) : project,
         generation: {

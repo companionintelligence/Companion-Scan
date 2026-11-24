@@ -75,6 +75,7 @@
  */
 
 import { isNativeShell } from '../shared/api-base.ts'
+import { frozenForMs, lookAtVideo } from './video-liveness.ts'
 
 /**
  * The shortest gap allowed between two banked photos.
@@ -356,18 +357,19 @@ export function tickCadence(state: CadenceState, tick: CameraTick): { state: Cad
     return { state, action: 'wait' }
   }
 
+  // The look at `currentTime` is the one WebXR's capture makes too (./video-liveness.ts); what a sweep does with a
+  // frozen one, and the proof of life it needs first, are its own.
+  const look = lookAtVideo(state, tick.currentTime, tick.nowMs)
   let next: CadenceState
-  if (tick.currentTime !== state.lastCurrentTime) {
+  if (look.moved) {
     // A first reading is a baseline, not proof of life; the second different
     // one is. `lastCurrentTime` starts at -1, which no real currentTime is.
     const seenLive = state.seenLive || state.lastCurrentTime >= 0
-    next = { ...state, lastCurrentTime: tick.currentTime, seenLive, stalledSinceMs: null }
-  } else if (state.stalledSinceMs === null) {
-    next = { ...state, stalledSinceMs: tick.nowMs }
-  } else if (tick.nowMs - state.stalledSinceMs >= SWEEP_STALL_MS) {
+    next = { ...state, lastCurrentTime: look.lastCurrentTime, seenLive, stalledSinceMs: null }
+  } else if (frozenForMs(look, tick.nowMs) >= SWEEP_STALL_MS) {
     return { state: endCadence(state, 'stalled'), action: 'end' }
   } else {
-    next = state
+    next = look.stalledSinceMs === state.stalledSinceMs ? state : { ...state, stalledSinceMs: look.stalledSinceMs }
   }
 
   // What the picture itself is doing, recorded whether or not it is time for a
