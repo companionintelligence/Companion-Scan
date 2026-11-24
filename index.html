@@ -697,10 +697,11 @@
       }
 
       /* Hidden until there is a fix to show. updateGeoIndicator() sets
-         display:flex the moment one arrives, so this costs nothing — but
-         without it the HUD permanently carries two rows of placeholder
-         ("Locating…" / "Compass waiting") that read as a stuck state on a
-         phone that simply has no GPS lock indoors, which is the common case. */
+         display:flex the moment one arrives, so this costs nothing. The chip
+         used to carry two rows of placeholder ("Locating…" / "Compass
+         waiting"), which read as a stuck state on a phone with no GPS lock
+         indoors, the common case. They were never visible behind this rule, so
+         the markup no longer has them (FN-017). */
       #geo-chip {
         display: none;
         align-items: center;
@@ -753,11 +754,6 @@
         white-space: nowrap;
       }
       #geo-coords.debug-armed { display: block; }
-      #geo-accuracy {
-        font-size: 11px;
-        opacity: 0.6;
-        color: rgba(255, 255, 255, 0.6);
-      }
 
       /* ── Unified top-left HUD panel ──
          Sized against the occlusion budget in mock-scanner-startup-budget,
@@ -2861,10 +2857,13 @@
         font-size: 14px; cursor: pointer; min-height: 44px; padding: 12px 20px;
         -webkit-tap-highlight-color: transparent;
       }
-      /* ── Persistent help button ── */
+      /* ── Persistent help button ──
+         Above #start-screen (20) and below the onboarding overlay (25) it opens: the start screen is
+         where a phone app whose boot gave up waits, and the overlay is where its Server row and Legal
+         notices are (src/main.ts wireOnboarding). Under the start screen it could not be tapped there. */
       #help-btn {
         position: fixed; top: calc(env(safe-area-inset-top, 0px) + 10px);
-        right: 14px; z-index: 17;
+        right: 14px; z-index: 21;
         width: 44px; height: 44px; border-radius: 50%;
         background: var(--ci-bg-elevated); border: 1px solid var(--ci-line);
         color: var(--ci-muted); font-size: 16px; font-weight: 700;
@@ -3157,9 +3156,11 @@
               <div id="pose-readout" aria-hidden="true"></div>
               <div id="geo-chip">
                 <div id="geo-text">
-                  <span id="geo-address">Locating…</span>
+                  <!-- Empty until updateGeoIndicator() fills both lines and shows the chip: a placeholder here
+                       could never be seen, because #geo-chip stays hidden until there is a fix (FN-017). -->
+                  <span id="geo-address"></span>
                   <span id="geo-frame" style="display:none; font-size:10px; font-weight:600; color:#ffd166; white-space:nowrap"></span>
-                  <span id="geo-coords">Compass waiting</span>
+                  <span id="geo-coords"></span>
                 </div>
               </div>
             </div>

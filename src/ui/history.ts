@@ -8,6 +8,8 @@
 import type { DetectionStore, StoredDetection } from '../scene/store'
 import { icon } from './icons'
 import { PREVIOUS_RUN_LABEL } from './previous-run'
+import { categoryColor } from './category-color.ts'
+import { buildDetectionEditForm } from './detection-edit-form.ts'
 
 /** Delete's title on a read-only page (MAIN10-5). The delete is refused there, so the control says where to do it. */
 const READ_ONLY_DELETE_TITLE = 'The scan is open in another tab, so sessions can be deleted only from there.'
@@ -332,11 +334,9 @@ export class SessionHistory {
     const conf = Math.round(det.confidence * 100)
     const p = det.worldPos
 
-    // Colour dot
+    // Colour dot, in the colour the pin and the panel draw this label in (./category-color.ts)
     const dot = document.createElement('div')
-    const COLORS: Record<string, string> = { chair: '#72ddd4', table: '#81c784', sofa: '#ff8a65', lamp: '#fff176', door: '#fbbf24', window: '#80deea', default: '#b0bec5' }
-    const color = COLORS[det.label.toLowerCase()] ?? COLORS['default']
-    dot.style.cssText = `width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;`
+    dot.style.cssText = `width:8px;height:8px;border-radius:50%;background:${categoryColor(det.label)};flex-shrink:0;`
 
     // Info
     const info = document.createElement('div')
@@ -390,35 +390,25 @@ export class SessionHistory {
       editBtn.className = 'ci-icon-btn ci-icon-btn--sm'
       editBtn.setAttribute('aria-label', `Edit ${det.label}`)
 
-      const editForm = document.createElement('div')
+      // The panel's form (./detection-edit-form.ts), here as a popover over the row.
+      const form = buildDetectionEditForm({
+        initial: { label: det.label, description: det.description },
+        stored: { label: det.label, description: det.description },
+        onSave: async (text) => {
+          editForm.style.display = 'none'
+          await this.store.updateDetection(key, text)
+          labelEl.textContent = text.label
+        },
+        onCancel: () => {
+          editForm.style.display = 'none'
+        },
+      })
+      const editForm = form.element
       editForm.style.cssText = 'display:none;position:absolute;inset-x:24px;background:rgba(8,28,38,0.98);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px;z-index:1;margin-top:4px;'
-      // Structure only — label/description are assigned as DOM properties below so
-      // a quote in the text cannot terminate the value="" attribute and truncate it.
-      editForm.innerHTML = `
-        <input type="text"
-          class="ci-field" style="margin-bottom:5px;" />
-        <textarea rows="2" class="ci-field ci-textarea"></textarea>
-        <div style="display:flex;gap:6px;margin-top:6px;">
-          <button class="ef-save ci-inline-btn ci-inline-btn--primary" style="flex:1;">Save</button>
-          <button class="ef-cancel ci-inline-btn ci-inline-btn--muted" style="flex:1;">Cancel</button>
-        </div>
-      `
-      editForm.querySelector<HTMLInputElement>('input')!.value = det.label
-      editForm.querySelector<HTMLTextAreaElement>('textarea')!.value = det.description
       row.style.position = 'relative'
 
       editBtn.addEventListener('click', () => {
         editForm.style.display = editForm.style.display === 'none' ? 'block' : 'none'
-      })
-      editForm.querySelector<HTMLButtonElement>('.ef-save')!.addEventListener('click', async () => {
-        const newLabel = (editForm.querySelector<HTMLInputElement>('input')!.value || det.label).trim()
-        const newDesc = (editForm.querySelector<HTMLTextAreaElement>('textarea')!.value || det.description).trim()
-        editForm.style.display = 'none'
-        await this.store.updateDetection(key, { label: newLabel, description: newDesc })
-        labelEl.textContent = newLabel
-      })
-      editForm.querySelector<HTMLButtonElement>('.ef-cancel')!.addEventListener('click', () => {
-        editForm.style.display = 'none'
       })
 
       btns.appendChild(editBtn)

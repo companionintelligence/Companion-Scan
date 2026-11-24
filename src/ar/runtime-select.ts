@@ -74,3 +74,20 @@ export function chooseNativeRuntime(forced: string | null, probe: NativeARCapabi
   const note = why && preferNativeRuntime({ forced, nativeSupported: true }) ? `${why}, using 8th Wall` : null
   return { native, note }
 }
+
+/**
+ * Where the scanner's runtime switch (#xr-mode-link) goes: the scanner, with every query parameter this page
+ * has except `ar`, and `ar=webxr` when it switches to WebXR. Switching back to the default runtime drops `ar`,
+ * which is what '/' always did.
+ *
+ * The switch used to go to '/?ar=webxr' or '/', so `?debug=pose`, `?project=`, `?world=` and the rest were lost
+ * on the way, while webxr.html, the other entry to WebXR, carries them (its scannerUrl()) (FN-013). `ar` is set
+ * last, as webxr.html sets it, so the switch always wins over an `ar` the page already had.
+ */
+export function runtimeSwitchHref(search: string, target: 'webxr' | 'default'): string {
+  const params = new URLSearchParams(search)
+  params.delete('ar')
+  if (target === 'webxr') params.set('ar', 'webxr')
+  const query = params.toString()
+  return query ? `/?${query}` : '/'
+}

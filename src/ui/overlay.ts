@@ -1,19 +1,27 @@
 /**
- * AR overlay — 3D-projected label pins + capture button + status bar.
+ * AR overlay — 3D-projected label pins + the capture button.
  *
  * Each detected object gets a pin that:
  *  - Builds a live Three.js PerspectiveCamera from the SLAM pose + camera intrinsics
  *    (since XR8.Threejs pipeline module is not loaded, we reconstruct the camera ourselves)
  *  - Projects world position → screen via frustum raycasting every render frame
  *  - Shows a coloured category dot + label + confidence + live distance
- *  - Scales with distance, hides when behind camera or >15 m away
+ *  - Scales with distance, hides when behind camera or more than 20 m away (MAX_PIN_DISTANCE_M)
  *  - Pulses briefly when newly added
+ *
+ * What draws a frame: on 8th Wall, a camera pipeline module, in step with the engine's render. On every
+ * runtime, src/main.ts's frame loop (./frame-loop.ts) calls frame(), which draws whenever that module
+ * has not drawn recently. So WebXR and native ARKit or ARCore sessions get pins too (F-13).
+ *
+ * The status line is not this class's. Every write to it goes through src/main.ts's
+ * setupStatusOverlay(), and from there through ./status-line.ts.
  */
 import * as THREE from 'three'
 import type { ARProvider } from '../ar/provider'
 import type { DetectionStore } from '../scene/store'
-import { writeStatus, type StatusPriority } from './status-line'
 import { cameraViewRect, ndcToScreen } from './pin-geometry'
+import { categoryColor, categoryTextColor } from './category-color.ts'
+import { pipelineDrewRecently } from './frame-loop.ts'
 
 declare const XR8: {
   addCameraPipelineModule(mod: object): void
@@ -21,39 +29,17 @@ declare const XR8: {
 
 export type CaptureButtonCallback = () => Promise<void>
 
-const CATEGORY_COLORS: Record<string, string> = {
-  chair:    '#72ddd4',
-  table:    '#81c784',
-  sofa:     '#ff8a65',
-  couch:    '#ff8a65',
-  bed:      '#ce93d8',
-  desk:     '#a5d6a7',
-  monitor:  '#80cbc4',
-  tv:       '#80cbc4',
-  door:     '#ffcc80',
-  window:   '#80deea',
-  shelf:    '#c5e1a5',
-  bookcase: '#c5e1a5',
-  lamp:     '#fff176',
-  plant:    '#66bb6a',
-}
-function categoryColor(label: string): string {
-  const l = label.toLowerCase()
-  for (const [k, c] of Object.entries(CATEGORY_COLORS)) {
-    if (l.includes(k)) return c
-  }
-  return '#b0bec5'
-}
+/** A pin further than this from the camera is hidden. */
+const MAX_PIN_DISTANCE_M = 20
 
 export class AROverlay {
   private container: HTMLElement
-  private statusText: HTMLElement
-  private progressWrap: HTMLElement
-  private progressFill: HTMLElement
   private captureBtn: HTMLButtonElement
   private pinMap = new Map<string, HTMLDivElement>()
   /** Reused Three.js camera — updated every frame from the SLAM pose */
   private _projCam: THREE.PerspectiveCamera | null = null
+  /** performance.now() of the 8th Wall pipeline's last draw. Null until it has drawn, and on every other runtime. */
+  private _lastPipelineMs: number | null = null
 
   constructor(
     private readonly store: DetectionStore,
@@ -61,9 +47,6 @@ export class AROverlay {
     private readonly provider: ARProvider,
   ) {
     this.container = document.getElementById('ar-overlay')!
-    this.statusText = document.getElementById('status-text')!
-    this.progressWrap = document.getElementById('progress-bar-wrap')!
-    this.progressFill = document.getElementById('progress-bar-fill')!
     this.captureBtn = document.getElementById('capture-btn') as HTMLButtonElement
 
     store.subscribe(() => this.syncPins())
@@ -87,6 +70,7 @@ export class AROverlay {
       XR8.addCameraPipelineModule({
         name: 'ci-scan-overlay-tick',
         onRender: () => {
+          self._lastPipelineMs = performance.now()
           const cam = self._buildCameraFromProvider()
           if (cam) self.tickPins(cam)
         },
@@ -94,30 +78,20 @@ export class AROverlay {
     }
   }
 
-  /** For WebXR — call every XR frame with the viewer's Three.js camera */
+  /**
+   * One frame of src/main.ts's frame loop, on every runtime. Draws the pins from the provider's pose,
+   * unless the 8th Wall pipeline drew them within the last PIPELINE_GRACE_MS (./frame-loop.ts). With no
+   * pin to place, it does nothing, so an empty scan costs nothing per frame.
+   */
+  frame(nowMs: number = performance.now()): void {
+    if (this.pinMap.size === 0 || pipelineDrewRecently(this._lastPipelineMs, nowMs)) return
+    const cam = this._buildCameraFromProvider()
+    if (cam) this.tickPins(cam)
+  }
+
+  /** Draw the pins through `camera`. frame() is the per-frame caller. This takes a camera a caller already has. */
   tick(camera: THREE.Camera): void {
     this.tickPins(camera)
-  }
-
-  /**
-   * Write the status line. Pass `'sticky'` for a message the user must be able
-   * to read — a capture result or failure — so a per-tick writer cannot stomp
-   * it inside 750 ms. See ./status-line.ts.
-   */
-  setStatus(text: string, priority: StatusPriority = 'normal'): void {
-    writeStatus(this.statusText, text, priority)
-  }
-
-  setProgress(pct: number | null, label?: string): void {
-    if (pct === null) {
-      this.progressWrap.classList.remove('visible')
-    } else {
-      this.progressWrap.classList.add('visible')
-      this.progressFill.style.width = `${Math.round(pct * 100)}%`
-      // Normal priority: a progress stage is state, and must not displace a
-      // held message reporting what just happened.
-      if (label) writeStatus(this.statusText, label)
-    }
   }
 
   /**
@@ -163,6 +137,7 @@ export class AROverlay {
       if (this.pinMap.has(key)) continue
 
       const color = categoryColor(det.label)
+      const textColor = categoryTextColor(det.label)
 
       const wrap = document.createElement('div')
       wrap.className = 'ar-pin-wrap'
@@ -197,7 +172,7 @@ export class AROverlay {
 
       const distSpan = document.createElement('span')
       distSpan.className = 'ar-pin-dist'
-      distSpan.style.cssText = `color:${color};font-size:11px;margin-left:1px;`
+      distSpan.style.cssText = `color:${textColor};font-size:11px;margin-left:1px;`
 
       pill.append(dot, labelSpan, confSpan, distSpan)
 
@@ -262,7 +237,7 @@ export class AROverlay {
       const sy = screen.y
       const dist = camPos.distanceTo(new THREE.Vector3(x, y, z))
 
-      if (sx < -100 || sx > w + 100 || sy < -100 || sy > h + 100 || dist > 20) {
+      if (sx < -100 || sx > w + 100 || sy < -100 || sy > h + 100 || dist > MAX_PIN_DISTANCE_M) {
         wrap.style.display = 'none'
         continue
       }
