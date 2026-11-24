@@ -124,7 +124,7 @@ test('a bundle with the module whose header lost its notice is not made: the dat
   // The hook: bundleNotices adds it with the other components, so every bundle goes through it.
   const source = readFileSync(join(ROOT, 'scripts/native/third-party-notices.mjs'), 'utf8').replace(/\r\n/g, '\n')
   const build = source.slice(source.indexOf('export function bundleNotices'))
-  assert.match(build, /addVendored\(notices, shell, targets\)\n {2}addBundledData\(notices, bundledModules\)\n {2}addNpmPackages\(notices, bundledModules\)/)
+  assert.match(build, /addVendored\(notices, shell, targets, engineBundled\)\n {2}addBundledData\(notices, bundledModules\)\n {2}addNpmPackages\(notices, bundledModules\)/)
 })
 
 test('NOTICE.md and THIRD_PARTY.md say the apps carry the notice with the data', () => {

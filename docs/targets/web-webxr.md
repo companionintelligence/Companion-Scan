@@ -51,6 +51,10 @@ opened inside a WebXR-enabled iOS browser such as HelloXR.
   ([AR_DEVICE_SUPPORT.md](../operations/AR_DEVICE_SUPPORT.md#runtime-anchors-where-they-exist-and-what-the-app-does-with-them)).
   The headset editor has three Playwright tests on the iwer Quest 3 emulator and no run on a Quest
   ([DEVICE_TEST_KIT.md](../testing/DEVICE_TEST_KIT.md#surfaces)).
+- **Chrome on XREAL Aura and PICO Browser: documented claims only.** Google documents WebXR
+  `immersive-ar` with hit test and anchors for Chrome on Android XR, and PICO documents it, with
+  passthrough, hit test, anchors and plane detection, for every web runtime of PICO OS 6. Neither
+  has run here ([xreal-aura.md](xreal-aura.md), [pico.md](pico.md)).
 - **iOS through HelloXR: no run is recorded.**
 - **Build.** The same web bundle as the 8th Wall target built at commit `81e437c`, the tree `main`
   merged as `e897380` (#282) ([Builds of the merged tree](README.md#builds-of-the-merged-tree)).
