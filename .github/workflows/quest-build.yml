@@ -1,0 +1,54 @@
+name: Quest Build
+
+# The Quest app (meta/): its JVM unit tests, and a debug APK for headset QA, kept for 14 days and
+# signed with the runner's own debug key. It publishes nothing. The app has not run on a headset
+# (docs/targets/meta-quest.md). No server address, key or secret is built in: the person types their
+# own Scan server's address on the app's panel.
+#
+# Run by hand, as every workflow here is: deno-ci.yml keeps its push and pull request triggers gated.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quest-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quest:
+    name: Quest app (unit tests and debug APK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Android SDK packages (the runner's own SDK)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" > /dev/null
+      # Among them CoordinateConversionsTest, which holds the app's pose maths to the poseToMatrix
+      # fixture (app/src/test/resources); tests/unit/deno/native_quest_pose_fixture.test.ts holds the
+      # same file to the server's function, in deno task test.
+      - name: Unit tests
+        working-directory: meta
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+      - name: Build debug APK
+        working-directory: meta
+        run: ./gradlew :app:assembleDebug --no-daemon
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: quest-test-reports
+          path: meta/app/build/reports/tests/
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scan-quest-debug-apk
+          path: meta/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

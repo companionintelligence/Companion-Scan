@@ -3,8 +3,8 @@
 <plist version="1.0">
 <dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Companion Scan uses the camera when you start a supported capture.</string>
+	<string>The desktop app does not record from the camera: scans are made with the phone and headset apps. macOS asks only if a scanner page in the app requests the camera, and the editor works the same if you refuse.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Companion Scan uses your location to place a scan when you request it.</string>
+	<string>The scanner start page in the app asks for your location to note where a scan was made. The desktop editor works the same if you refuse.</string>
 </dict>
 </plist>

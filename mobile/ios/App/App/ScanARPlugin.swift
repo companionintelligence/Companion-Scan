@@ -29,6 +29,22 @@ import simd
 /// ARKit world space is in metres, gravity-aligned and Y-up. Its yaw is arbitrary, so heading still
 /// comes from the editor's calibration.
 ///
+/// Poses are display-oriented. `ARCamera.transform` is "constant with respect to device orientation": its x-axis
+/// lies along the long axis of the phone, which is a quarter turn from this portrait app's image. So pose events
+/// and captureFrame() send the inverse of `viewMatrix(for: .portrait)`, whose +Y is the top of the portrait JPEG,
+/// the same orientation as `projectionMatrix(for: .portrait, …)`. The Android plugin sends ARCore's
+/// getDisplayOrientedPose() for the same reason.
+///
+/// Camera permission: ARKit asks for the camera itself, with NSCameraUsageDescription, the first time the session
+/// runs. A refusal arrives as session(_:didFailWithError:) and goes to the web side as the `error` event, which the
+/// page reads as a refused camera (src/ar/native.ts, onNativeError). There is no permission step in start().
+///
+/// Resume: ARKit resumes an interrupted session by itself (sessionInterruptionEnded). Left to its default, it then
+/// "spends a few seconds trying to relocalize before restarting your session", and a restart is a new coordinate
+/// frame (ARSessionObserver, sessionShouldAttemptRelocalization). A named Place's session asks ARKit to keep
+/// relocalizing into the session's own map instead, so the scan stays in the Place's frame; any other session
+/// restarts at once, which the page reads as a new epoch either way.
+///
 /// The mobile-build workflow compiles this file when it is run by hand (workflow_dispatch). It is not a push or
 /// pull request check. ARKit behaviour (tracking, interruptions, relocalization, depth, autosave) runs only on a
 /// device, so verify it there before relying on it.
@@ -259,7 +275,7 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
                 "width": width,
                 "height": height,
                 "jpegBase64": jpeg.base64EncodedString(),
-                "transform": self.matrixArray(frame.camera.transform),
+                "transform": self.matrixArray(self.displayOrientedTransform(of: frame.camera)),
                 "projection": self.matrixArray(self.projection(for: frame.camera)),
             ]
             if wantDepth, let depth = frame.sceneDepth, let depthPayload = self.portraitDepth(from: depth.depthMap) {
@@ -456,13 +472,27 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
         notifyListeners("tracking", data: ["state": "notAvailable"])
     }
 
+    /// ARKit resumes by itself: "it continues tracking from its last known state". The next pose event carries the
+    /// tracking state, as after any other change, so nothing is sent from here.
+    public func sessionInterruptionEnded(_ session: ARSession) {
+        print("[ScanAR] interruption ended; \(autosaveName != nil ? "relocalizing into the Place's map" : "the session restarts")")
+    }
+
+    /// True for a named Place: ARKit keeps relocalizing into the session's map, which began as the Place's saved map, so
+    /// the scan stays in the Place's coordinates. Apple: if the person does not go back, "the app stays in relocalizing
+    /// state indefinitely", and stopping and starting the scan again starts from the saved map. False for any other
+    /// session: "the session restarts immediately" in a new frame, rather than after ARKit's default few seconds.
+    public func sessionShouldAttemptRelocalization(_ session: ARSession) -> Bool {
+        return autosaveName != nil
+    }
+
     public func session(_ session: ARSession, didUpdate frame: ARFrame) {
         let now = frame.timestamp
         if now - lastPoseAt >= poseInterval {
             lastPoseAt = now
             notifyListeners("pose", data: [
                 "timestamp": now,
-                "transform": matrixArray(frame.camera.transform),
+                "transform": matrixArray(displayOrientedTransform(of: frame.camera)),
                 "projection": matrixArray(projection(for: frame.camera)),
                 "tracking": ScanARPlugin.describe(frame.camera.trackingState),
             ])
@@ -505,6 +535,13 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
     private func projection(for camera: ARCamera) -> simd_float4x4 {
         let size = cameraRect.size
         return camera.projectionMatrix(for: .portrait, viewportSize: size, zNear: nearM, zFar: farM)
+    }
+
+    /// The camera-to-world transform in the portrait display's orientation, the one the projection and the JPEG are in:
+    /// the inverse of the portrait view matrix. `camera.transform` is the sensor's, a quarter turn about the view axis
+    /// from it. Same position, so a distance can still read `camera.transform`.
+    private func displayOrientedTransform(of camera: ARCamera) -> simd_float4x4 {
+        return simd_inverse(camera.viewMatrix(for: .portrait))
     }
 
     /// Column-major, so the web side can read it straight into a three.js matrix.

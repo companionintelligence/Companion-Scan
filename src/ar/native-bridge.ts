@@ -27,6 +27,12 @@ export interface NativeARCapabilities {
   reason?: string
   /** True while the native layer is still checking the device (ARCore, at boot). That answer is not final: ask again. */
   checking?: boolean
+  /**
+   * True when the AR runtime can run here but is missing or too old, so `start()` would first ask the store to install or
+   * update it (ARCore through Google Play). `supported` stays false until it is installed: this says what `start()` would do,
+   * and the page's choice of runtime does not read it.
+   */
+  installable?: boolean
 }
 
 /** A rectangle in CSS pixels, relative to the WebView. */
@@ -79,7 +85,7 @@ export interface NativeFrame {
   height: number
   /** The full camera image as JPEG, in display orientation, so its aspect matches the overlay rect. */
   jpegBase64: string
-  /** Camera-to-world transform, 16 numbers, column-major. */
+  /** Camera-to-world transform, 16 numbers, column-major, in display orientation: see NativePoseEvent.transform. */
   transform: number[]
   /** Perspective projection for the overlay rect, 16 numbers, column-major. */
   projection: number[]
@@ -94,7 +100,14 @@ export interface NativePoseEvent {
    * `points`, `hits` and a captured frame. tests/unit/node/wp-09b-native-provider.test.ts reads both sources to keep this true.
    */
   timestamp: number
-  /** Camera-to-world, 16 numbers, column-major. */
+  /**
+   * Camera-to-world, 16 numbers, column-major, in display orientation: the camera looks down its -Z, and its +X and +Y are
+   * the right and the top of the portrait display, which are the right and the top of the captured JPEG and the axes the
+   * projection maps. That is the orientation WebXR and 8th Wall poses have. The SDKs' own camera poses are the sensor's
+   * (ARCore `getPose()`, "relative to the image readout"; ARKit `camera.transform`, along the phone's long axis), a quarter
+   * turn about the view axis from it, so the plugins send ARCore's `getDisplayOrientedPose()` and the inverse of ARKit's
+   * `viewMatrix(for: .portrait)`. Not yet checked on a device.
+   */
   transform: number[]
   /** Perspective projection for the overlay rect, 16 numbers, column-major. */
   projection: number[]

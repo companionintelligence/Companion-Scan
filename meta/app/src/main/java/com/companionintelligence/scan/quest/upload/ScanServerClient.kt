@@ -20,15 +20,18 @@ sealed interface CallResult<out T> {
     /** Worth another try: no response, a timeout, 408, 429 or a 5xx. */
     data class Retry(val reason: String) : CallResult<Nothing>
 
-    /** Not worth another try. */
-    data class Fail(val reason: String, val httpCode: Int?, val kind: FailKind) : CallResult<Nothing>
+    /**
+     * Not worth another try. [maxBytes] is the limit a 413 names (server/main.ts sends `maxBytes` with each one), or null:
+     * the uploader reads it to tell a frame over the per-frame cap from a session over its byte budget.
+     */
+    data class Fail(val reason: String, val httpCode: Int?, val kind: FailKind, val maxBytes: Long? = null) : CallResult<Nothing>
 }
 
 enum class FailKind {
-    /** 401 or 403: the server has sign-in on, which this app does not do yet. */
+    /** 401 or 403: the server has sign-in on and wants a Companion Account session (auth/QuestSignIn), or refused this one. */
     SIGN_IN_REQUIRED,
 
-    /** 413: the frame is over UPLOAD_MAX_FRAME_BYTES or the session over KEYFRAME_SESSION_MAX_BYTES. */
+    /** 413: the frame is over UPLOAD_MAX_FRAME_BYTES, or the session over KEYFRAME_SESSION_MAX_BYTES; `maxBytes` says which limit. */
     TOO_LARGE,
 
     /** 404: the session is gone (deleted, or a different server). */
@@ -50,6 +53,9 @@ enum class FailKind {
  *
  * Finalizing starts nothing new: the server's existing reconstruction and splat-train WorldJobs work from the
  * session's keyframes. All calls block, so they run on the uploader's own thread, never the render thread.
+ *
+ * A server with sign-in on needs a Companion Account session on these routes. The [http] client the app builds carries
+ * auth/SessionBearer, which adds the session's Bearer token to every request to the server it was issued by.
  */
 class ScanServerClient(val baseUrl: HttpUrl, private val http: OkHttpClient) {
     init {
@@ -105,20 +111,37 @@ class ScanServerClient(val baseUrl: HttpUrl, private val http: OkHttpClient) {
         private val JPEG = "image/jpeg".toMediaType()
         private const val EMPTY_JSON = "{}"
 
-        /** Sign-in is out of scope for this pass; this is what the panel says when a server asks for it. */
+        /** What the panel says when the server wants a sign-in (401): none was made, or the one made has ended. */
         const val SIGN_IN_MESSAGE =
-            "The server has sign-in on (HTTP 401/403). This app has no sign-in yet, so that server refuses its uploads."
+            "The server asks for sign-in (HTTP 401). Sign in with your Companion Account on the panel, then start again."
 
+        /** What the panel says when the server refuses the account that signed in (403). */
+        const val NOT_ALLOWED_MESSAGE =
+            "The server refused this Companion Account (HTTP 403). It may not be on the server's list of allowed accounts."
+
+        /**
+         * 408 and 429 are retried, and every other 4xx is final. The retry is HTTP's own meaning of the two codes (RFC 9110
+         * §15.5.9, RFC 6585 §4), not a device reason; the web client (src/capture/keyframes.ts) treats every 4xx as final.
+         */
         fun classify(code: Int, body: String): CallResult<Nothing> {
             val detail = errorText(body)
             return when {
-                code == 401 || code == 403 -> CallResult.Fail(SIGN_IN_MESSAGE, code, FailKind.SIGN_IN_REQUIRED)
+                code == 401 -> CallResult.Fail(SIGN_IN_MESSAGE, code, FailKind.SIGN_IN_REQUIRED)
+                code == 403 -> CallResult.Fail(NOT_ALLOWED_MESSAGE, code, FailKind.SIGN_IN_REQUIRED)
                 code == 408 || code == 429 || code >= 500 -> CallResult.Retry("HTTP $code${detail?.let { ": $it" } ?: ""}")
-                code == 413 -> CallResult.Fail("HTTP 413: ${detail ?: "too large"}", code, FailKind.TOO_LARGE)
+                code == 413 -> CallResult.Fail("HTTP 413: ${detail ?: "too large"}", code, FailKind.TOO_LARGE, maxBytes(body))
                 code == 404 -> CallResult.Fail("HTTP 404: ${detail ?: "not found"}", code, FailKind.NOT_FOUND)
                 else -> CallResult.Fail("HTTP $code${detail?.let { ": $it" } ?: ""}", code, FailKind.REJECTED)
             }
         }
+
+        /** The `maxBytes` number of a JSON error body, if there is one. */
+        private fun maxBytes(body: String): Long? =
+            ((runCatching { Json.parseToJsonElement(body) }.getOrNull() as? JsonObject)?.get("maxBytes") as? JsonPrimitive)
+                ?.takeIf { !it.isString }
+                ?.content
+                ?.toLongOrNull()
+                ?.takeIf { it > 0 }
 
         /** The `error` string of a JSON error body, if there is one. */
         private fun errorText(body: String): String? =

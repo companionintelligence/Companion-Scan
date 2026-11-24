@@ -26,8 +26,8 @@ class KeyframeUploaderTest {
         https.close()
     }
 
-    private fun newUploader(maxQueued: Int = 4) =
-        KeyframeUploader(maxQueuedFrames = maxQueued, sleeper = { sleeps.add(it) }).also { uploader = it }
+    private fun newUploader(maxQueued: Int = 4, drainMs: Long = 5_000) =
+        KeyframeUploader(maxQueuedFrames = maxQueued, drainTimeoutMs = drainMs, sleeper = { sleeps.add(it) }).also { uploader = it }
 
     private fun json(code: Int, body: String = "{}") =
         MockResponse().setResponseCode(code).setHeader("Content-Type", "application/json").setBody(body)
@@ -106,9 +106,69 @@ class KeyframeUploaderTest {
     }
 
     @Test
+    fun theWebClientsNumbersAreTheDefaults() {
+        // src/capture/keyframes.ts: maxQueue 3, UPLOAD_RETRIES 3. A fourth frame offered while three wait is skipped.
+        val u = KeyframeUploader(sleeper = { sleeps.add(it) }).also { uploader = it }
+        https.server.enqueue(json(201, """{"sessionId":"sess-7"}""").setBodyDelay(2, java.util.concurrent.TimeUnit.SECONDS))
+        u.start(https.scanClient())
+        repeat(3) { assertTrue(u.offer(byteArrayOf(1)) { i -> """{"index":$i}""" }) }
+        assertFalse(u.hasRoom())
+        assertFalse(u.offer(byteArrayOf(1)) { i -> """{"index":$i}""" })
+        assertEquals(1, u.status().skipped)
+    }
+
+    @Test
+    fun aFrameOverTheFrameCapIsSkippedAndTheCaptureGoesOn() {
+        // The server names the cap it hit: a body this size cannot be under a 1000-byte cap, so it was this frame (FN-168).
+        https.server.enqueue(json(201, """{"sessionId":"sess-8"}"""))
+        https.server.enqueue(json(413, """{"error":"keyframe exceeds 1000 bytes","maxBytes":1000}"""))
+        https.server.enqueue(json(200, """{"ok":true,"index":1}"""))
+        https.server.enqueue(json(200))
+        val u = newUploader()
+        u.start(https.scanClient())
+        u.offer(byteArrayOf(1)) { i -> """{"index":$i}""" }
+        val deadline = System.currentTimeMillis() + 15_000
+        while (u.status().failed == 0 && System.currentTimeMillis() < deadline) Thread.sleep(10)
+        assertTrue("the next frame is still taken", u.hasRoom())
+        assertTrue(u.offer(byteArrayOf(2)) { i -> """{"index":$i}""" })
+        u.finish()
+        val status = awaitState(u, KeyframeUploader.State.FINISHED, KeyframeUploader.State.FAILED)
+        assertEquals(KeyframeUploader.State.FINISHED, status.state)
+        assertEquals(1, status.sent)
+        assertEquals(1, status.failed)
+        assertEquals(4, https.server.requestCount)
+    }
+
+    @Test
+    fun threeRefusedFramesInARowEndTheOffersEvenWithoutALimitNamed() {
+        https.server.enqueue(json(201, """{"sessionId":"sess-9"}"""))
+        repeat(3) { https.server.enqueue(json(413, """{"error":"too large"}""")) }
+        https.server.enqueue(json(200))
+        val u = newUploader()
+        u.start(https.scanClient())
+        repeat(3) { assertTrue(u.offer(byteArrayOf(1)) { i -> """{"index":$i}""" }) }
+        val deadline = System.currentTimeMillis() + 15_000
+        while (u.status().failed < 3 && System.currentTimeMillis() < deadline) Thread.sleep(10)
+        assertFalse(u.hasRoom())
+        u.finish()
+        assertEquals(KeyframeUploader.State.FINISHED, awaitState(u, KeyframeUploader.State.FINISHED, KeyframeUploader.State.FAILED).state)
+    }
+
+    @Test
+    fun aRefusedAccountIsSaidSo() {
+        https.server.enqueue(json(403, """{"error":"Not authorized for this scanner"}"""))
+        val u = newUploader()
+        u.start(https.scanClient())
+        val status = awaitState(u, KeyframeUploader.State.FAILED)
+        assertTrue(status.signInRequired)
+        assertEquals(ScanServerClient.NOT_ALLOWED_MESSAGE, status.lastError)
+    }
+
+    @Test
     fun aFullSessionStopsOfferingButStillFinalizes() {
+        // The session's byte budget names its own limit, which a one-byte frame is far under: nothing later would fit.
         https.server.enqueue(json(201, """{"sessionId":"sess-3"}"""))
-        https.server.enqueue(json(413, """{"error":"session keyframes would exceed 2147483648 bytes"}"""))
+        https.server.enqueue(json(413, """{"error":"session keyframes would exceed 2147483648 bytes","maxBytes":2147483648}"""))
         https.server.enqueue(json(200))
         val u = newUploader()
         u.start(https.scanClient())
@@ -130,7 +190,8 @@ class KeyframeUploaderTest {
             override fun dispatch(request: RecordedRequest): MockResponse =
                 if (request.path == "/sessions") json(201, """{"sessionId":"sess-4"}""") else json(200)
         }
-        val u = newUploader(maxQueued = 2_100)
+        // 2000 frames queued at once drain for longer than a capture's 5 s: this test is of the index, so its drain is long.
+        val u = newUploader(maxQueued = 2_100, drainMs = 120_000)
         u.start(https.scanClient())
         val indexes = ArrayList<Int>()
         repeat(KeyframeMeta.MAX_INDEX + 1) {

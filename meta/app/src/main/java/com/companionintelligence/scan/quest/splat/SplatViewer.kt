@@ -22,7 +22,8 @@ import java.util.concurrent.Executors
 /**
  * Shows one Gaussian splat with meta-spatial-sdk-splat's `Splat(path: Uri)` component.
  *
- * A remote splat is downloaded here, over HTTPS only (the client is ScanServerClient.httpsOnlyClientBuilder's),
+ * A remote splat is downloaded here, over HTTPS only (the client is ScanServerClient.httpsOnlyClientBuilder's, with
+ * auth/SessionBearer, so a download from the signed-in server carries its session and one from any other host does not),
  * into the app's files directory, and the component is given a file:// Uri. The SDK's SplatSystem would also
  * fetch an http:// or https:// Uri itself (`loadFileFromUri`: "file://, apk://, http://, https://"), which is why
  * it is never handed one. A local splat is the newest .ply or .spz in the app's external files directory,
@@ -137,8 +138,11 @@ class SplatViewer(
 
     private fun fetchTo(url: HttpUrl, partial: File) {
         http.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
-            if (response.code == 401 || response.code == 403) {
-                throw IOException("the server has sign-in on (HTTP ${response.code}); this app has no sign-in yet")
+            if (response.code == 401) {
+                throw IOException("the server asks for sign-in (HTTP 401); sign in with your Companion Account on the panel")
+            }
+            if (response.code == 403) {
+                throw IOException("the server refused this Companion Account (HTTP 403)")
             }
             if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
             val body = response.body ?: throw IOException("empty response")

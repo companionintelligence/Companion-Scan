@@ -10,19 +10,29 @@ import java.util.concurrent.LinkedBlockingQueue
  * - a bounded queue: a keyframe offered while [maxQueuedFrames] are waiting is skipped, not buffered;
  * - one request in flight, retried with exponential backoff, and a pause after a frame fails every attempt;
  * - a 4xx is final (a same-index retry would be safe, the server overwrites, but a 4xx will not change);
- *   408 and 429 are retried like a 5xx;
+ *   408 and 429 are retried like a 5xx (ScanServerClient.classify says why);
+ * - a 413 skips that frame and the capture goes on. Only a session over its byte budget, which a 413 whose `maxBytes`
+ *   the frame is well under says, or [TOO_LARGE_IN_A_ROW] 413s in a row, stop the offers; the session is still finalized;
  * - a frame belongs to the capture it was taken in and is never sent to a later one.
+ *
+ * The numbers are the web client's (src/capture/keyframes.ts): three frames queued, three attempts, a 10 s pause after
+ * a frame that failed every attempt (OFFLINE_RETRY_MS) and a 5 s drain when the capture stops. The headset gives no reason
+ * to differ: it uploads over the same Wi-Fi, to the same routes.
  *
  * Nothing here runs on the render thread: [offer], [start], [finish] and [status] only touch the queue and a
  * lock. The listener-free design is deliberate: the panel polls [status].
  */
 class KeyframeUploader(
-    private val maxQueuedFrames: Int = 4,
-    private val maxAttempts: Int = 4,
+    /** The web's `maxQueue`. */
+    private val maxQueuedFrames: Int = 3,
+    /** The web's `UPLOAD_RETRIES`: one try and two retries. */
+    private val maxAttempts: Int = 3,
     private val baseBackoffMs: Long = 500,
     private val maxBackoffMs: Long = 8_000,
+    /** The web's `OFFLINE_RETRY_MS`. */
     private val pauseAfterFailureMs: Long = 10_000,
-    private val drainTimeoutMs: Long = 20_000,
+    /** The web's bounded drain in `stop()`. */
+    private val drainTimeoutMs: Long = 5_000,
     private val sleeper: (Long) -> Unit = { Thread.sleep(it) },
     private val clockMs: () -> Long = { System.currentTimeMillis() },
 ) : Closeable {
@@ -69,6 +79,7 @@ class KeyframeUploader(
     private var signInRequired = false
     private var finalized = false
     private var sessionFull = false
+    private var tooLargeInARow = 0
     private var pausedUntilMs = 0L
     private var drainDeadlineMs = Long.MAX_VALUE
 
@@ -93,6 +104,7 @@ class KeyframeUploader(
         signInRequired = false
         finalized = false
         sessionFull = false
+        tooLargeInARow = 0
         pausedUntilMs = 0
         drainDeadlineMs = Long.MAX_VALUE
         jobs.add(Open(generation, client))
@@ -211,6 +223,7 @@ class KeyframeUploader(
         val result = withRetries { target.postKeyframe(id, job.index, job.jpeg, job.meta) }
         synchronized(lock) {
             if (job.generation != generation) return
+            if (!(result is CallResult.Fail && result.kind == FailKind.TOO_LARGE)) tooLargeInARow = 0
             when (result) {
                 is CallResult.Ok -> sent++
                 is CallResult.Retry -> {
@@ -227,9 +240,11 @@ class KeyframeUploader(
                             state = State.FAILED
                         }
                         FailKind.NOT_FOUND -> state = State.FAILED
-                        // The server says the session is over its byte budget (or this frame is over the cap):
-                        // nothing later would fit either, so stop offering and still finalize.
-                        FailKind.TOO_LARGE -> sessionFull = true
+                        FailKind.TOO_LARGE -> {
+                            tooLargeInARow++
+                            // This frame is skipped. Only a full session stops the offers: nothing later would fit it.
+                            if (sessionOverBudget(job, result.maxBytes) || tooLargeInARow >= TOO_LARGE_IN_A_ROW) sessionFull = true
+                        }
                         FailKind.REJECTED, FailKind.BAD_RESPONSE -> Unit
                     }
                 }
@@ -275,6 +290,15 @@ class KeyframeUploader(
         if (signIn) signInRequired = true
     }
 
+    /**
+     * True when the 413 is the session's byte budget (KEYFRAME_SESSION_MAX_BYTES) and not this frame. The server names the
+     * limit it hit as `maxBytes`. The per-frame cap (UPLOAD_MAX_FRAME_BYTES) counts the whole multipart body, so a body
+     * well under the limit named cannot have hit that cap: the session's budget is what refused it. No `maxBytes` says
+     * nothing, and the frame is only skipped.
+     */
+    private fun sessionOverBudget(job: Frame, maxBytes: Long?): Boolean =
+        maxBytes != null && job.jpeg.size.toLong() + job.meta.length + MULTIPART_ALLOWANCE_BYTES < maxBytes
+
     /** Runs [attempt] up to [maxAttempts] times while it says Retry, sleeping 0.5 s, 1 s, 2 s … (capped) between. */
     private fun <T> withRetries(attempt: () -> CallResult<T>): CallResult<T> {
         var result = attempt()
@@ -285,5 +309,13 @@ class KeyframeUploader(
             n++
         }
         return result
+    }
+
+    companion object {
+        /** More than the multipart envelope around a frame and its meta, so a body under this much slack is under the cap. */
+        const val MULTIPART_ALLOWANCE_BYTES = 4_096L
+
+        /** 413s in a row that end the offers even without a `maxBytes`: a server that refuses every frame is full. */
+        const val TOO_LARGE_IN_A_ROW = 3
     }
 }

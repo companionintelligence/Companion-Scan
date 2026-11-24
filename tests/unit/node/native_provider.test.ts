@@ -1293,7 +1293,8 @@ test('the Android build takes ARCore from its pinned version, and the manifest k
   // it is a second place the version is written, which a bump of the first leaves behind. Both plugins (ScanAR, which the shells
   // register, and ArSession, which they do not) compile against this one dependency.
   assert.equal([...withoutComments(app).matchAll(/com\.google\.ar:core/g)].length, 1, 'build.gradle declares ARCore once')
-  // Optional, so the app installs on a device without ARCore. ArCoreApk.requestInstall installs it when the session starts.
+  // Optional, so the app installs on a device without ARCore. ScanARPlugin.start() asks Google Play to install or update it
+  // (ArCoreApk.requestInstall) when a session starts on a phone where it is missing or too old.
   assert.match(manifest, /<meta-data\s+android:name="com\.google\.ar\.core"\s+android:value="optional"\s*\/>/)
   assert.match(manifest, /<uses-feature\s+android:name="android\.hardware\.camera\.ar"\s+android:required="false"\s*\/>/)
 })

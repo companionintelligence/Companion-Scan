@@ -96,8 +96,11 @@ The shell runs AR natively, with ARKit on iOS and ARCore on Android, through the
 
 **The plugin.** Native code: `ios/App/App/ScanARPlugin.swift` and `android/app/src/main/java/com/companionintelligence/scan/ScanARPlugin.java`, with the GL frame loop in `ScanARRenderer.java`. The JavaScript shape is in `src/ar/native-bridge.ts`.
 
-- `capabilities()` returns `platform`, `engine`, `supported`, `depth`, and a `reason` when unsupported.
-- `start({ depth, hitGrid })` returns `rect` (CSS pixels, where the overlay canvas goes) and `cameraAspect`.
+- `capabilities()` returns `platform`, `engine`, `supported`, `depth`, and a `reason` when unsupported. iOS adds `worldMap`, true when the platform keeps world maps. Android adds `checking`, true while ARCore is still checking the device, so the page asks again. Android also adds `installable`, true when ARCore can run here but is missing or too old. `supported` stays false then, and `start()` would ask Google Play to install it.
+- `start({ depth, hitGrid, worldMap })` returns `rect` (CSS pixels, where the overlay canvas goes) and `cameraAspect`.
+  - `worldMap` is iOS only: the name of a saved map. The reply's `worldMap` says whether it was `loaded`, `missing` or `unreadable`.
+  - On both platforms, the same options answer with the running session, and a new `hitGrid` is applied to it. A different `depth`, or on iOS a different `worldMap`, starts the session again.
+  - Depth the device cannot give is refused, not dropped.
 - `stop()` ends the session and gives the WebView back its background.
 - `captureFrame({ depth })` returns the full camera frame as a JPEG in portrait, the camera-to-world transform, the projection, and optionally depth in metres.
 - `hitTest({ x, y })` returns an exact hit at normalised coordinates of the rect.
@@ -109,18 +112,30 @@ The shell runs AR natively, with ARKit on iOS and ARCore on Android, through the
 - The camera is fitted whole inside the WebView ("contain"), the same as the 8th Wall provider. A keyframe is then the full frame, and its lens matches the overlay (see the `CameraFit` note in `src/ar/eighthwall.ts`).
 - The overlay renders the scanner's Three.js scene from the native pose and projection every frame. The page is transparent while a session runs, and `<html>` carries the `native-ar` class.
 - Depth is optional and sent only when asked for: LiDAR on iOS, the ARCore depth API on Android.
+- **Poses are display-oriented.** Pose events and `captureFrame()` send the camera-to-world transform in the portrait display's orientation, the orientation the projection and the JPEG are in. On Android that is ARCore's `getDisplayOrientedPose()`, and on iOS the inverse of `viewMatrix(for: .portrait)`. The SDKs' own camera poses, ARCore's `getPose()` and ARKit's `camera.transform`, are the sensor's, a quarter turn about the view axis from that. `src/ar/native-bridge.ts` states the convention. Not yet checked on a device.
+- **Camera permission.**
+  - Android: `start()` asks for `android.permission.CAMERA` through Capacitor's `camera` permission alias before it opens the session. A refusal rejects `start()`, and the page starts the web runtime.
+  - iOS: ARKit asks itself, with `NSCameraUsageDescription`, the first time the session runs. A refusal arrives as the `error` event, and the page shows it as a refused camera.
+- **Installing ARCore (Android).** On a phone where ARCore can run but is missing or too old, `start()` asks Google Play to install or update it (`ArCoreApk.requestInstall`). The call waits while Google Play has the screen, and finishes when the app comes back. Today the page starts the native runtime only when `supported` is true, so it never calls `start()` on such a phone. It starts 8th Wall there, with a note, as before. Choosing native for an `installable` phone is an owner decision.
 - **Backgrounding (Android).** Capacitor calls the plugin's `handleOnPause()` and `handleOnResume()` with the activity. Pausing stops the GL loop and pauses the ARCore session, which releases the camera, and `tracking` reports `notAvailable`. Resuming lets the next frame resume the session, and the pose events carry the tracking state again. `handleOnDestroy()` releases the session.
 - **The origin anchor (Android).** `setOriginAnchor` places an ARCore anchor on the first feature point or plane under a point of the rect, and saves its pose and the caller's heading to `scan-origin-anchor.json` in the app's files directory. That directory is left out of backup and device-to-device transfer, like the rest of the app's data. The anchor follows ARCore's refinements while the session runs. `getOriginAnchor` returns the origin this session placed, as `{ anchor }`, or `{ anchor: null }`. v1 does not restore an origin across sessions: the file is written, nothing reads it back, and the origin is set again each session. No cloud anchors are used.
 
 **Verification status.**
 
-- Android: the debug build compiled (`./gradlew assembleDebug`, JDK 21 and SDK 36), and `./gradlew testDebugUnitTest` passed the origin file's round trip (`OriginAnchorStoreTest`), as recorded with #268 (`f6b993d`), before the branches were merged. The merged tree compiles one more plugin class (the unregistered `ArSessionPlugin.java`) and differs in `variables.gradle`, `colors.xml` and the ARCore line of `app/build.gradle`, and no Gradle run has been made on it. It has **not run on a device**, so the pause, resume and destroy hooks, and the origin anchor, are unverified there.
-- iOS: **compiled, not run on a device.** The mobile-build workflow's iOS Simulator job compiled the Swift and passed, as recorded with #266 (`1f1e913`, run 44013563826), before the branches were merged. The merged tree differs from that one in the iOS target's `Info.plist` and in the unregistered `ArSessionPlugin.swift`, which is in the tree and not in the target, and no job ran on the merged commit. On 2026-11-23 the same job compiled the tree with the camera drawn in RealityKit's `ARView` instead of SceneKit's `ARSCNView` (ADR 0012), on commit `20b2e46` (run 45247696203). The workflow runs only when someone starts it by hand. This build host has no Xcode.
+- Android: the debug build compiled (`./gradlew assembleDebug`, JDK 21 and SDK 36), and `./gradlew testDebugUnitTest` passed the origin file's round trip (`OriginAnchorStoreTest`), as recorded with #268 (`f6b993d`), before the branches were merged. Mobile Build run 45260987425 then built the Android debug APK from `81e437c`, whose tree is the merged tree (`e897380`'s).
+  - On 2026-11-23, wave 14's native-apps branch, not yet merged, built the merged tree with its changes: `assembleDebug`, `testDebugUnitTest` (19 JVM tests: `ScanARRules` and the origin file) and `:app:assembleDebugAndroidTest`.
+  - The mobile-build workflow now runs the same, and builds the 8th Wall variant too.
+  - It has **not run on a device**. The pause, resume and destroy hooks, the ARCore install, the display-oriented pose and the origin anchor are unverified there.
+- iOS: **compiled, not run on a device.** The mobile-build workflow's iOS Simulator job compiled the Swift and passed, as recorded with #266 (`1f1e913`, run 44013563826), before the branches were merged. The merged tree differs from that one in the iOS target's `Info.plist` and in the unregistered `ArSessionPlugin.swift`, which is in the tree and not in the target. Mobile Build run 45260987425 compiled the merged tree and built the Simulator app, from `81e437c`, whose tree is `e897380`'s. On 2026-11-23 the same job compiled the tree with the camera drawn in RealityKit's `ARView` instead of SceneKit's `ARSCNView` (ADR 0012), on commit `20b2e46` (run 45247696203). The workflow runs only when someone starts it by hand. This build host has no Xcode.
+  - Wave 14's native-apps branch changed `ScanARPlugin.swift` (the display-oriented pose, and the relocalization answer) and `Info.plist` (portrait only, `arkit` required). Nothing has compiled those changes yet: they are not compiled until the workflow runs on a push.
 - Web: `npm run test:native-ar` covers the codec, the provider against a fake plugin (including the fallback), and the runtime choice. `tests/mock-native-ar.spec.ts` runs the scanner in Chromium on a stand-in plugin, and checks the handover to the 8th Wall mock.
 
 **Known gaps.**
 
 - iOS: ARKit stops the session when the app is backgrounded. The plugin reports the interruption as tracking `notAvailable`, and autosaves the map of a named Place (ADR 0010). The pose events carry the state again after the app returns.
+  - For a named Place, the plugin asks ARKit to keep relocalizing into the session's map, so the scan stays in the Place's coordinates (`sessionShouldAttemptRelocalization`). If the person never goes back, tracking stays `limited.relocalizing` until they stop and start the scan.
+  - Any other session restarts at once, in a new frame, which the page reads as a new epoch.
+  - Not yet run on a device.
 - The keyframe upload does not send the depth map yet (`FrameObservation.depthUrl` in `src/world/types.ts` is the slot for it).
 
 ## Publishing

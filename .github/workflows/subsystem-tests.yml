@@ -1,0 +1,58 @@
+name: Subsystem Tests
+
+# The gimbal (subsystems/osmo-ble) and 4D capture (subsystems/4d-capture) tests. npm run verify runs
+# only some of them: the root's three gimbal unit tests and three of the gimbal's protocol tests. The
+# rest run only through each subsystem's own script, and this is where those run. None needs a gimbal,
+# Bluetooth, a GPU or a model.
+#
+# Run by hand, as every workflow here is: deno-ci.yml keeps its push and pull request triggers gated.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: subsystem-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gimbal:
+    name: Gimbal (osmo-ble)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+      # The tests load the backend and its protocol code, never the Bluetooth stack: server/ble-transport.mjs
+      # imports @stoprocent/noble only when it connects. So the native addons' install scripts (noble's HCI
+      # socket, usb, serialport) are not run, and nothing they would build is loaded.
+      - name: Install the gimbal subsystem's dependencies
+        run: npm ci --ignore-scripts --prefix subsystems/osmo-ble
+      - name: The subsystem's protocol and server tests
+        run: npm run test:protocol --prefix subsystems/osmo-ble
+      # These read the subsystem's files from the root, and need no root install.
+      - name: The root's gimbal tests
+        run: |
+          npm run test:gimbal:stall
+          npm run test:gimbal:control
+          npm run test:gimbal:link
+
+  four-d:
+    name: 4D capture service (4d-capture)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+      # Node's built-ins only: the service has no dependencies to install.
+      - name: The service's tests
+        run: npm test --prefix subsystems/4d-capture

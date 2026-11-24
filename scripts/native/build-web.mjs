@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The web build a native shell ships: `node scripts/native/build-web.mjs desktop|mobile`.
+ * The web build a native shell ships: `node scripts/native/build-web.mjs desktop|mobile [--ar-runtime=8thwall]`.
  *
  * Both shells bundle the Scan web app rather than loading a page from a server. This is that
  * build, run by desktop/src-tauri/tauri.conf.json (beforeBuildCommand) and mobile/package.json
@@ -16,7 +16,12 @@
  *      8th Wall engine: xr.js, xr-slam.js, xr-face.js and resources/.
  *   5. No app bundles what NATIVE_EXCLUDED lists. public/ is copied whole, and a developer's
  *      public/models (the on-device model weights, whose licence is unchecked) would otherwise
- *      ride along into an installer or an APK.
+ *      ride along into an installer or an APK. Nor the DEV_PAGES: device-test pages that no page of
+ *      the app links to, served by the dev server for a phone's browser.
+ *   5a. `--ar-runtime=8thwall` builds the Android app's 8th Wall variant: VITE_AR_RUNTIME=8thwall for
+ *      the vite step (src/ar/runtime-select.ts, buildForcedRuntime), so the scanner starts on the 8th
+ *      Wall engine and never on the native runtime. Mobile only: the desktop app has no AR. The
+ *      variable may also come from the environment, as before; the build says which runtime it bakes.
  *   6. The bundle gets THIRD-PARTY-NOTICES.txt, generated from the lockfiles for exactly what it
  *      contains (scripts/native/third-party-notices.mjs), and LICENSE.txt. The app's Legal notices
  *      view shows both. The same notices go to <shell>/build/third-party-notices.json, which the
@@ -63,6 +68,41 @@ export const NATIVE_EXCLUDED = {
   'test-fixtures': 'the XR8 mock and a synthetic test image, used only by automated tests.',
 }
 
+/**
+ * Pages of the web build that no app bundles: device-test and dev-server pages no page of the app links
+ * to (FN-164). Keys are paths in the bundle; values say why. The two AR pages are Vite inputs
+ * (vite.config.ts); their script chunks stay in assets/, unreferenced, until the config leaves them out
+ * of a native build.
+ */
+export const DEV_PAGES = {
+  'ar-hittest-sphere.html': 'an 8th Wall hit-test diagnostic. It loads the engine and three.js from jsDelivr, which the desktop CSP refuses and the shells never load.',
+  'ar-ground-anchor.html': 'an 8th Wall ground-anchor diagnostic, loading from jsDelivr like ar-hittest-sphere.html.',
+  'camera-check.html': 'a camera check for a phone browser, opened from the dev server.',
+  'compass-bench.html': "the compass survey page of docs/testing/DEVICE_TESTING.md, opened in a phone's browser.",
+  'smoke.html': "the dev server's triage page. It calls server routes on its own origin, which in a shell is the app, and posts a fixture the shell bundle leaves out.",
+  '404.html': "the static site's not-found page. A shell serves its own bundle and never shows it.",
+}
+
+/** The AR runtimes a native build may force, as VITE_AR_RUNTIME (src/ar/runtime-select.ts, buildForcedRuntime). */
+export const AR_RUNTIMES = ['8thwall']
+
+/**
+ * The shell and options from the command line: `desktop|mobile [--ar-runtime=<name>]`. Throws on an
+ * argument it does not know, so a misspelt option never builds the default variant under the wrong name.
+ */
+export function parseBuildArgs(argv) {
+  const [shell, ...rest] = argv
+  const options = { shell, arRuntime: null }
+  for (const arg of rest) {
+    const match = /^--ar-runtime=(.*)$/.exec(arg)
+    if (!match) throw new Error(`unknown argument "${arg}": the only option is --ar-runtime=<${AR_RUNTIMES.join('|')}>`)
+    if (!AR_RUNTIMES.includes(match[1])) throw new Error(`--ar-runtime=${match[1]}: the runtimes a build can force are ${AR_RUNTIMES.join(', ')}`)
+    if (shell !== 'mobile') throw new Error('--ar-runtime is for the mobile shell only: the desktop app has no AR')
+    options.arRuntime = match[1]
+  }
+  return options
+}
+
 /** The .env files `vite build` reads (mode production). */
 const ENV_FILES = ['.env', '.env.local', '.env.production', '.env.production.local']
 
@@ -81,7 +121,7 @@ export function viteVariablesInEnvFiles(dir = ROOT) {
 
 /** What a finished bundle must not contain, as relative paths that exist in it. */
 export function forbiddenInBundle(outDir, shell) {
-  const names = [...PWA_FILES, ...Object.keys(NATIVE_EXCLUDED), ...(shell === 'desktop' ? ENGINE_FILES : [])]
+  const names = [...PWA_FILES, ...Object.keys(NATIVE_EXCLUDED), ...Object.keys(DEV_PAGES), ...(shell === 'desktop' ? ENGINE_FILES : [])]
   return names.filter((name) => existsSync(join(outDir, name)))
 }
 
@@ -113,10 +153,12 @@ function node(script, args, env) {
   if (run.status !== 0) fail(`${script} ${args.join(' ')} exited with ${run.status}`)
 }
 
-export function buildShellWeb(shell) {
+export function buildShellWeb(shell, { arRuntime = null } = {}) {
   const outRel = OUT_DIRS[shell]
   if (!outRel) fail(`unknown shell "${shell}": use one of ${Object.keys(OUT_DIRS).join(', ')}`)
   const outDir = join(ROOT, outRel)
+  const runtime = arRuntime ?? process.env.VITE_AR_RUNTIME ?? null
+  console.log(`[native web build] ${shell}: AR runtime ${runtime ? `forced to ${runtime} (VITE_AR_RUNTIME)` : 'chosen at run time (native first in the shell)'}`)
 
   const problem = apiBaseProblem(process.env.VITE_API_BASE)
   if (problem) fail(problem)
@@ -138,6 +180,7 @@ export function buildShellWeb(shell) {
   node('node_modules/vite/bin/vite.js', ['build', '--outDir', outRel, '--emptyOutDir'], {
     VITE_DISABLE_PWA: '1',
     NATIVE_BUNDLE_REPORT: report,
+    ...(arRuntime ? { VITE_AR_RUNTIME: arRuntime } : {}),
   })
 
   for (const [name, why] of Object.entries(NATIVE_EXCLUDED)) {
@@ -145,6 +188,7 @@ export function buildShellWeb(shell) {
     rmSync(join(outDir, name), { recursive: true, force: true })
     console.warn(`[native web build] left out ${name}/: ${why}`)
   }
+  for (const name of Object.keys(DEV_PAGES)) rmSync(join(outDir, name), { force: true })
   if (shell === 'desktop') {
     for (const name of ENGINE_FILES) rmSync(join(outDir, name), { recursive: true, force: true })
   }
@@ -173,5 +217,11 @@ export function buildShellWeb(shell) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  buildShellWeb(process.argv[2])
+  let options
+  try {
+    options = parseBuildArgs(process.argv.slice(2))
+  } catch (err) {
+    fail(err.message)
+  }
+  buildShellWeb(options.shell, { arRuntime: options.arRuntime })
 }

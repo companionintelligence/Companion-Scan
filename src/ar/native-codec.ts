@@ -127,7 +127,7 @@ export function trackingStatusFromNative(state: string): TrackingStatus {
  * the reason is what says a relocalization is under way, which is a discontinuity by itself however short it is.
  *
  * Only the reasons the two native layers send are named, each as that layer spells it (ScanARPlugin.swift `describe()`,
- * ScanARRenderer.java `trackingName()`). `relocalizing` is ARKit's alone: ARCore has no relocalization state, so a session on
+ * ScanARRules.java `trackingName()`). `relocalizing` is ARKit's alone: ARCore has no relocalization state, so a session on
  * Android never reports one, and nothing here makes one up. A `limited.` state this build does not know reads as no reason, as
  * trackingStatusFromNative() reads it as UNKNOWN: a layer that adds a state cannot make the app believe more than it said.
  */

@@ -6,8 +6,10 @@
   "description": "Scan native iOS + Android shell (Capacitor 8). SCAFFOLD, NOT FOR STORE SUBMISSION. Standalone npm project, deliberately NOT a root workspace: it ships the PWA-off web build from www/ via webDir and never imports the web code.",
   "scripts": {
     "build:web": "node ../scripts/native/build-web.mjs mobile",
+    "build:web:8thwall": "node ../scripts/native/build-web.mjs mobile --ar-runtime=8thwall",
     "sync": "cap sync",
     "build": "npm run build:web && npm run sync",
+    "build:8thwall": "npm run build:web:8thwall && npm run sync",
     "open:ios": "cap open ios",
     "open:android": "cap open android",
     "test:native": "node --test tests/*.test.mjs"

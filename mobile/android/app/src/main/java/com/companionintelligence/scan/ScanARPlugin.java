@@ -27,6 +27,7 @@ import com.google.ar.core.CameraConfig;
 import com.google.ar.core.Config;
 import com.google.ar.core.Session;
 import com.google.ar.core.exceptions.UnavailableException;
+import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -45,6 +46,28 @@ import java.util.Arrays;
  * ("contain"), the same rect the web overlay covers. Frames, hits and depth are answered from the
  * GL thread, which is the only thread that may call session.update().
  *
+ * start() keeps the iOS plugin's contract (ScanARRules.startPlan): the same options answer with the
+ * running session, a new hit grid is applied to it, and a different depth setting starts the session
+ * again, so the reply describes the session the caller asked for. Depth the device cannot give is
+ * refused, not dropped. start() and everything that changes the session run on the UI thread, so no
+ * two of them overlap.
+ *
+ * ARCore that can run here but is missing or too old is installed through Google Play
+ * (ArCoreApk.requestInstall). Google Play pauses the activity; the start() call waits, and
+ * handleOnResume() asks again and finishes it. Each call is resolved or rejected exactly once: on a
+ * decline, on stop() and on handleOnDestroy() as well. capabilities() says so with `installable`, and
+ * keeps `supported` for "a session can start right now", so the page's choice of runtime is as before.
+ *
+ * Camera permission: start() asks for android.permission.CAMERA through Capacitor's permission
+ * alias "camera" before it opens the session. A refusal rejects start() with "Camera permission was
+ * not granted", and the page then starts the web runtime. (On iOS there is no such step: ARKit asks for
+ * the camera itself when the session runs, and a refusal arrives as the `error` event.)
+ *
+ * Poses are display-oriented: pose events and captureFrame() send camera.getDisplayOrientedPose(),
+ * whose +X and +Y are the right and the top of the portrait display, the same orientation as the
+ * projection (getProjectionMatrix follows setDisplayGeometry) and the portrait JPEG. getPose() is the
+ * sensor's pose, "relative to the image readout", and differs from it by a multiple of 90° about Z.
+ *
  * Capacitor calls handleOnPause(), handleOnResume() and handleOnDestroy() with the activity, and the
  * AR session follows them. Not yet run on a device. The Gradle build compiles it; a real ARCore phone
  * has not exercised it.
@@ -62,7 +85,10 @@ public class ScanARPlugin extends Plugin {
     private GLSurfaceView glView;
     private ScanARRenderer renderer;
     private Session session;
-    private boolean depthEnabled;
+    /** The depth setting the running session was started with. Refused depth is never started, so it is also what runs. */
+    private boolean depthRequested;
+    /** The start() call waiting for Google Play to finish installing ARCore, or null. Touched on the UI thread only. */
+    private PluginCall installCall;
     private WebView savedWebView;
     private Drawable savedWebBackground;
     /** Whether the activity is in front. Starts false, and the first handleOnResume() sets it. */
@@ -78,15 +104,25 @@ public class ScanARPlugin extends Plugin {
         pauseAR();
     }
 
-    /** The activity is back in front: the GL loop runs again, and the next frame resumes the session. */
+    /**
+     * The activity is back in front: the GL loop runs again, and the next frame resumes the session. A start() that sent
+     * the person to Google Play for ARCore is finished here: ARCore's documentation says the next requestInstall() after
+     * INSTALL_REQUESTED either returns INSTALLED or throws.
+     */
     @Override
     protected void handleOnResume() {
         resumeAR();
+        PluginCall waiting = installCall;
+        if (waiting != null) {
+            installCall = null;
+            askToInstall(waiting, false);
+        }
     }
 
-    /** The activity is being destroyed: the AR session is released for good. */
+    /** The activity is being destroyed: the AR session is released for good, and a start() still waiting for ARCore is answered. */
     @Override
     protected void handleOnDestroy() {
+        rejectWaitingInstall("The app closed before ARCore finished installing.");
         releaseAR();
     }
 
@@ -127,6 +163,8 @@ public class ScanARPlugin extends Plugin {
             result.put("reason", reasonFor(availability));
         }
         result.put("checking", stillChecking(availability));
+        // start() would ask Google Play to install or update ARCore first. `supported` stays false until it is installed.
+        result.put("installable", ScanARRules.installStep(availability) == ScanARRules.InstallStep.REQUEST_INSTALL);
         call.resolve(result);
     }
 
@@ -171,15 +209,88 @@ public class ScanARPlugin extends Plugin {
 
     @PluginMethod
     public void start(PluginCall call) {
-        if (renderer != null) {
-            call.resolve(startResult());
+        final boolean wantDepth = Boolean.TRUE.equals(call.getBoolean("depth", false));
+        final int hitGrid = ScanARRules.clampHitGrid(call.getInt("hitGrid", ScanARRules.DEFAULT_HIT_GRID));
+        getActivity().runOnUiThread(() -> startOnUiThread(call, wantDepth, hitGrid));
+    }
+
+    /** start() on the UI thread, where begin(), stop() and the lifecycle hooks run too, so a start never races a stop. */
+    private void startOnUiThread(PluginCall call, boolean wantDepth, int hitGrid) {
+        ScanARRenderer current = renderer;
+        int runningGrid = current != null ? current.hitGrid() : hitGrid;
+        switch (ScanARRules.startPlan(current != null, depthRequested, runningGrid, wantDepth, hitGrid)) {
+            case REUSE:
+                call.resolve(startResult());
+                return;
+            case REUSE_WITH_NEW_GRID:
+                current.setHitGrid(hitGrid);
+                call.resolve(startResult());
+                return;
+            case RESTART:
+                // Depth is part of the ARCore config, so the running session cannot take the new setting: it stops, and one
+                // with the options asked for starts.
+                releaseAR();
+                break;
+            case START:
+                break;
+        }
+        if (installCall != null) {
+            call.reject("AR is waiting for ARCore to finish installing. Start again once it has.", "INSTALL_PENDING");
             return;
         }
         ArCoreApk.Availability availability = ArCoreApk.getInstance().checkAvailability(getContext());
-        if (availability != ArCoreApk.Availability.SUPPORTED_INSTALLED) {
-            call.reject(reasonFor(availability));
+        switch (ScanARRules.installStep(availability)) {
+            case READY:
+                openWithCamera(call);
+                return;
+            case REQUEST_INSTALL:
+                askToInstall(call, true);
+                return;
+            case CHECKING:
+            case UNSUPPORTED:
+            default:
+                call.reject(reasonFor(availability));
+        }
+    }
+
+    /**
+     * Asks Google Play to install or update ARCore (ARCore's own install flow). `userRequestedInstall` is true for the
+     * page's start() and false for the ask again in handleOnResume(), as ARCore's documentation has it. The call is finished
+     * here, or kept for handleOnResume() while Google Play has the screen. Runs on the UI thread.
+     */
+    private void askToInstall(PluginCall call, boolean userRequestedInstall) {
+        ArCoreApk.InstallStatus status;
+        try {
+            status = ArCoreApk.getInstance().requestInstall(getActivity(), userRequestedInstall);
+        } catch (UnavailableUserDeclinedInstallationException e) {
+            call.reject("ARCore was not installed, so AR cannot start. Install Google Play Services for AR to scan with ARCore.", "INSTALL_DECLINED");
+            return;
+        } catch (UnavailableException e) {
+            call.reject("ARCore could not be installed: " + e.getMessage(), "INSTALL_FAILED");
+            return;
+        } catch (RuntimeException e) {
+            call.reject("ARCore could not be installed: " + e.getMessage(), "INSTALL_FAILED");
             return;
         }
+        if (status == ArCoreApk.InstallStatus.INSTALL_REQUESTED) {
+            // Google Play takes the screen and this activity pauses; handleOnResume() asks again and finishes the call.
+            installCall = call;
+            return;
+        }
+        openWithCamera(call);
+    }
+
+    /** Rejects the start() that is waiting for ARCore to install, if there is one. Runs on the UI thread. */
+    private void rejectWaitingInstall(String message) {
+        PluginCall waiting = installCall;
+        installCall = null;
+        if (waiting != null) {
+            waiting.reject(message, "INSTALL_INTERRUPTED");
+        }
+    }
+
+    /** ARCore is installed: asks for the camera if the app does not hold it yet, then opens the session. */
+    private void openWithCamera(PluginCall call) {
         if (getPermissionState(CAMERA_ALIAS) != PermissionState.GRANTED) {
             requestPermissionForAlias(CAMERA_ALIAS, call, "cameraPermissionCallback");
             return;
@@ -197,21 +308,31 @@ public class ScanARPlugin extends Plugin {
     }
 
     private void begin(PluginCall call) {
-        final boolean wantDepth = call.getBoolean("depth", false);
-        final int hitGrid = call.getInt("hitGrid", 20);
+        final boolean wantDepth = Boolean.TRUE.equals(call.getBoolean("depth", false));
+        final int hitGrid = ScanARRules.clampHitGrid(call.getInt("hitGrid", ScanARRules.DEFAULT_HIT_GRID));
         getActivity().runOnUiThread(() -> {
+            if (renderer != null) {
+                // A start that raced this one through the permission prompt already opened a session.
+                call.resolve(startResult());
+                return;
+            }
             try {
                 Session created = new Session(getContext());
+                if (wantDepth && !created.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
+                    // Refused, as iOS refuses depth without LiDAR, rather than started without it.
+                    created.close();
+                    call.reject("This device has no ARCore depth support, so depth capture is unavailable.");
+                    return;
+                }
                 Config config = new Config(created);
                 config.setFocusMode(Config.FocusMode.AUTO);
                 config.setUpdateMode(Config.UpdateMode.LATEST_CAMERA_IMAGE);
                 config.setPlaneFindingMode(Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL);
-                if (wantDepth && created.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
+                if (wantDepth) {
                     config.setDepthMode(Config.DepthMode.AUTOMATIC);
                 }
                 created.configure(config);
-                depthEnabled = created.isDepthModeSupported(Config.DepthMode.AUTOMATIC)
-                    && config.getDepthMode() == Config.DepthMode.AUTOMATIC;
+                depthRequested = wantDepth;
 
                 CameraConfig cameraConfig = created.getCameraConfig();
                 Size image = cameraConfig.getImageSize();
@@ -228,7 +349,7 @@ public class ScanARPlugin extends Plugin {
                 view.setEGLContextClientVersion(2);
                 view.setPreserveEGLContextOnPause(true);
                 view.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
-                renderer = new ScanARRenderer(this, view, created, depthEnabled, hitGrid, sensorOrientation, fitted[2], fitted[3]);
+                renderer = new ScanARRenderer(this, view, created, wantDepth, hitGrid, sensorOrientation, fitted[2], fitted[3]);
                 view.setRenderer(renderer);
                 view.setX(fitted[0]);
                 view.setY(fitted[1]);
@@ -282,6 +403,7 @@ public class ScanARPlugin extends Plugin {
     @PluginMethod
     public void stop(PluginCall call) {
         getActivity().runOnUiThread(() -> {
+            rejectWaitingInstall("AR was stopped before ARCore finished installing.");
             releaseAR();
             call.resolve();
         });

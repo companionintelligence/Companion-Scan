@@ -31,12 +31,18 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Joins camera frames to head poses and hands them on: JPEG keyframes to the uploader, raw frames to the local
- * mq3drecon dataset, and an occasional frame to the vision hook.
+ * mq3drecon dataset, and, while a capture runs, an occasional frame to the vision hook.
  *
- * Threads: [onCameraFrame] runs on the camera thread and only decides whether a frame is wanted and copies it;
- * the JPEG encode and pose lookup run on a processing thread, file writes on a dataset thread, the model on a
+ * Threads: [onCameraFrame] runs on the camera thread and only decides whether a frame is wanted ([FramePlan]) and
+ * copies it; the JPEG encode and pose lookup run on a processing thread, file writes on a dataset thread, the model on a
  * vision thread and HTTP on the uploader's thread. The render thread only writes head poses into the ring buffer
- * (ImmersiveActivity.onSceneTick). Each worker has a short queue and drops work rather than pile it up.
+ * (ImmersiveActivity.onSceneTick). Each worker has a short queue and drops frames rather than pile them up: the
+ * keyframe and vision executors hold 2 and 1, and the dataset thread, a scheduled executor whose queue cannot be
+ * bounded, is handed at most [DATASET_QUEUE] frames at a time. Its pose drain and its open and close are not frames,
+ * and are never dropped.
+ *
+ * The vision hook's output stays on the headset: a line on the panel and in the log (VisionModel). Nothing it finds is
+ * added to the keyframe meta or mapped onto a WorldDetection.
  */
 class CaptureController(
     private val poses: PoseRingBuffer,
@@ -55,6 +61,8 @@ class CaptureController(
         val keyframesTaken: Int,
         val framesWithoutPose: Int,
         val framesDropped: Int,
+        /** Dataset frames dropped because the writer had [DATASET_QUEUE] frames waiting. */
+        val datasetFramesDropped: Int,
         val epoch: Int,
         val dataset: String?,
         val vision: String,
@@ -80,6 +88,10 @@ class CaptureController(
     private val keyframesTaken = AtomicInteger()
     private val framesWithoutPose = AtomicInteger()
     private val framesDropped = AtomicInteger()
+    private val datasetFramesDropped = AtomicInteger()
+
+    /** Frames handed to the dataset thread and not yet written. */
+    private val datasetBacklog = AtomicInteger()
 
     private val processing = singleThread("keyframe-processing", 2)
     private val visionThread = singleThread("vision", 1)
@@ -110,18 +122,41 @@ class CaptureController(
     override fun onCameraFrame(image: Image, clock: CameraClock) {
         val realtime = clock.toRealtimeNs(image.timestamp)
         framesSeen.incrementAndGet()
-        val active = capturing
         val writer = dataset
-        val wantKeyframe = active && uploading && selector.intervalElapsed(realtime) && uploader.hasRoom()
-        val wantDataset = active && writer != null && datasetGate.due(realtime)
-        val wantVision = vision.status is VisionStatus.Ready && visionIdle.get() && visionGate.due(realtime)
-        if (!wantKeyframe && !wantDataset && !wantVision) return
+        val plan = FramePlan.of(
+            capturing = capturing,
+            uploading = uploading,
+            keyframeDue = { selector.intervalElapsed(realtime) && uploader.hasRoom() },
+            hasWriter = writer != null,
+            datasetDue = { datasetGate.due(realtime) },
+            datasetBacklog = datasetBacklog.get(),
+            visionReady = vision.status is VisionStatus.Ready && visionIdle.get(),
+            visionDue = { visionGate.due(realtime) },
+        )
+        if (plan.datasetDropped) datasetFramesDropped.incrementAndGet()
+        if (!plan.any) return
 
         val frame = image.toYuvFrame(realtime)
-        if (wantDataset) datasetThread.execute { writeDatasetFrame(writer, frame) }
-        if (wantKeyframe && !submit(processing) { processKeyframe(frame) }) framesDropped.incrementAndGet()
-        if (wantVision && visionIdle.compareAndSet(true, false)) {
+        if (plan.dataset && writer != null) handToDataset(writer, frame)
+        if (plan.keyframe && !submit(processing) { processKeyframe(frame) }) framesDropped.incrementAndGet()
+        if (plan.vision && visionIdle.compareAndSet(true, false)) {
             if (!submit(visionThread) { runVision(frame) }) visionIdle.set(true)
+        }
+    }
+
+    /** Hands one frame to the dataset thread, counted until it is written, so the backlog bound holds. */
+    private fun handToDataset(writer: Mq3dreconDatasetWriter, frame: YuvFrame) {
+        datasetBacklog.incrementAndGet()
+        try {
+            datasetThread.execute {
+                try {
+                    writeDatasetFrame(writer, frame)
+                } finally {
+                    datasetBacklog.decrementAndGet()
+                }
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            datasetBacklog.decrementAndGet() // shutting down
         }
     }
 
@@ -140,6 +175,7 @@ class CaptureController(
         keyframesTaken.set(0)
         framesWithoutPose.set(0)
         framesDropped.set(0)
+        datasetFramesDropped.set(0)
         val generation = ++captureGeneration
         if (datasetDir != null) {
             val baseRealtime = SystemClock.elapsedRealtimeNanos()
@@ -251,6 +287,7 @@ class CaptureController(
             keyframesTaken = keyframesTaken.get(),
             framesWithoutPose = framesWithoutPose.get(),
             framesDropped = framesDropped.get(),
+            datasetFramesDropped = datasetFramesDropped.get(),
             epoch = epochs.current(),
             dataset = datasetError ?: writer?.let {
                 "${it.directory.name}: ${it.framesWritten} frames, ${it.bytesWritten / 1_000_000} MB, ${it.poseRowsWritten} pose rows" +
@@ -366,7 +403,41 @@ class CaptureController(
         return out.toByteArray()
     }
 
+    /**
+     * What one camera frame is wanted for. Pure, so the gates are tested on the JVM (CaptureGatesTest). Each `due` gate is
+     * asked only when the frame could be used for it, so a rate gate is not spent on a frame no worker takes.
+     */
+    class FramePlan(val keyframe: Boolean, val dataset: Boolean, val datasetDropped: Boolean, val vision: Boolean) {
+        val any: Boolean get() = keyframe || dataset || vision
+
+        companion object {
+            fun of(
+                capturing: Boolean,
+                uploading: Boolean,
+                keyframeDue: () -> Boolean,
+                hasWriter: Boolean,
+                datasetDue: () -> Boolean,
+                datasetBacklog: Int,
+                visionReady: Boolean,
+                visionDue: () -> Boolean,
+            ): FramePlan {
+                val keyframe = capturing && uploading && keyframeDue()
+                val datasetIsDue = capturing && hasWriter && datasetDue()
+                val dataset = datasetIsDue && datasetBacklog < DATASET_QUEUE
+                // Only a capture's frames: outside one the hook would analyse the room with nothing asked of it (FN-176).
+                val vision = capturing && visionReady && visionDue()
+                return FramePlan(keyframe, dataset, datasetIsDue && !dataset, vision)
+            }
+        }
+    }
+
     companion object {
+        /**
+         * Frames waiting for the dataset writer, at most. A frame is a full YUV copy, about 1.8 MB at 1280×960, so this
+         * holds about 7 MB, and at the dataset's 3 frames a second the writer is more than a second behind before one drops.
+         */
+        const val DATASET_QUEUE = 4
+
         private const val TAG = "CaptureController"
 
         /** 3 frames a second, OpenQuestCapture's default capture rate. */

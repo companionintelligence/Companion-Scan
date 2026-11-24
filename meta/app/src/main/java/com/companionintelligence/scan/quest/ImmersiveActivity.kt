@@ -1,11 +1,17 @@
 package com.companionintelligence.scan.quest
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import com.companionintelligence.scan.quest.auth.QuestSignIn
+import com.companionintelligence.scan.quest.auth.SessionBearer
+import com.companionintelligence.scan.quest.auth.SignInReturn
 import com.companionintelligence.scan.quest.capture.CaptureController
 import com.companionintelligence.scan.quest.capture.PassthroughCamera
 import com.companionintelligence.scan.quest.pose.CoordinateConversions
@@ -46,6 +52,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 
 /**
  * The immersive activity: passthrough on, one panel, and the capture pipeline.
@@ -57,6 +64,11 @@ import java.util.Locale
  *
  * Locomotion is switched off and the reference space is STAGE, so the scene stays fixed to the room and the
  * viewer pose is a physical head pose; thumbstick movement would otherwise shift every later pose.
+ *
+ * Sign-in (auth/QuestSignIn): the panel opens the server's sign-in in the system browser, and the server's return,
+ * com.companionintelligence.scan.quest://auth?code=…, comes back here through the manifest's intent filter. The activity
+ * is singleTask, so a return while it runs arrives in [onNewIntent], and one that starts the app from cold in the intent
+ * [onCreate] sees. Not yet run on a headset.
  */
 class ImmersiveActivity : AppSystemActivity(), ControlPanel.Actions {
     private lateinit var settings: AppSettings
@@ -65,7 +77,10 @@ class ImmersiveActivity : AppSystemActivity(), ControlPanel.Actions {
     private val uploader = KeyframeUploader()
     private val panel = ControlPanel(this)
     private val main = Handler(Looper.getMainLooper())
-    private val http by lazy { ScanServerClient.httpsOnlyClientBuilder().build() }
+    /** Every request to the signed-in server carries its session (SessionBearer); a request to another host never does. */
+    private val http by lazy { ScanServerClient.httpsOnlyClientBuilder().addInterceptor(SessionBearer(settings)).build() }
+    private val signIn by lazy { QuestSignIn(settings, http) }
+    private val signInIo = Executors.newSingleThreadExecutor { r -> Thread(r, "sign-in") }
     private lateinit var vision: OnnxVisionModel
     private lateinit var capture: CaptureController
     private lateinit var camera: PassthroughCamera
@@ -102,6 +117,13 @@ class ImmersiveActivity : AppSystemActivity(), ControlPanel.Actions {
         capture = CaptureController(poses, epochs, uploader, vision)
         camera = PassthroughCamera(this, capture)
         splats = SplatViewer(File(filesDir, "splats"), getExternalFilesDir("splats"), http, main)
+        finishSignIn(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        finishSignIn(intent)
     }
 
     override fun onSceneReady() {
@@ -150,6 +172,7 @@ class ImmersiveActivity : AppSystemActivity(), ControlPanel.Actions {
             vision.close()
         }
         uploader.close()
+        signInIo.shutdownNow()
         super.onDestroy()
     }
 
@@ -179,6 +202,48 @@ class ImmersiveActivity : AppSystemActivity(), ControlPanel.Actions {
                 "Saved ${parsed.baseUrl}"
             }
             is ServerAddress.Parsed.Refused -> parsed.reason
+        }
+    }
+
+    override fun onSignIn() {
+        val server = (ServerAddress.parse(settings.serverAddress) as? ServerAddress.Parsed.Ok)?.baseUrl
+        if (server == null) {
+            message = "Save your server's https:// address first, then sign in"
+            return
+        }
+        val url = signIn.begin(server)
+        message = try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url.toString())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            "Sign in in the browser. The app finishes the sign-in when the browser hands back."
+        } catch (e: ActivityNotFoundException) {
+            "No browser on this headset opens the sign-in page"
+        }
+    }
+
+    /** Finishes a sign-in whose return is [intent]'s address, on a background thread (one HTTPS call). Any other intent is ignored. */
+    private fun finishSignIn(intent: Intent?) {
+        val url = intent?.dataString ?: return
+        if (!url.startsWith(SignInReturn.PREFIX)) return
+        signInIo.execute {
+            val text = when (val result = signIn.finish(url)) {
+                is QuestSignIn.Finished.SignedIn -> "Signed in${result.email?.let { " as $it" } ?: ""}"
+                is QuestSignIn.Finished.Failed -> result.reason
+                QuestSignIn.Finished.Ignored -> null
+            }
+            if (text != null) main.post { message = text }
+        }
+    }
+
+    /** The sign-in line on the panel: whether the app holds a session for the saved server, and for whom. */
+    private fun signInText(): String {
+        val session = settings.session
+        val saved = (ServerAddress.parse(settings.serverAddress) as? ServerAddress.Parsed.Ok)?.baseUrl
+        return when {
+            session != null && saved != null && SessionBearer.sameOrigin(saved, session.server) ->
+                "signed in${session.email?.let { " as $it" } ?: ""}"
+            session != null -> "signed in to another server than the saved one; sign in again for this one"
+            signIn.waiting() -> "waiting for the browser"
+            else -> "not signed in (needed only when the server has sign-in on)"
         }
     }
 
@@ -283,7 +348,7 @@ class ImmersiveActivity : AppSystemActivity(), ControlPanel.Actions {
         if (!pose.isFinite() || pose.rotation.norm() < 0.5) return
         val previous = lastPose
         if (previous != null && EpochTracker.isTrackingJump(previous, pose, stamp.realtimeNs - lastPoseNs)) {
-            epochs.bump(stamp.realtimeNs)
+            epochs.noteJump(stamp.realtimeNs)
         }
         if (poses.add(stamp.realtimeNs, pose, stamp.xrTimeNs, stamp.source)) {
             lastPose = pose
@@ -349,6 +414,7 @@ class ImmersiveActivity : AppSystemActivity(), ControlPanel.Actions {
             append(" — frames seen ${c.framesSeen}, keyframes ${c.keyframesTaken}, epoch ${c.epoch}")
             if (c.framesWithoutPose > 0) append(", no pose for ${c.framesWithoutPose}")
             if (c.framesDropped > 0) append(", dropped ${c.framesDropped}")
+            if (c.datasetFramesDropped > 0) append(", dataset frames dropped ${c.datasetFramesDropped} (the writer fell behind)")
             c.clock?.let { append("\nCamera clock: $it") }
         }
         val uploadText = buildString {
@@ -362,6 +428,7 @@ class ImmersiveActivity : AppSystemActivity(), ControlPanel.Actions {
             message = message,
             camera = c.camera,
             cameraError = c.cameraError,
+            signIn = signInText(),
             headPose = pose,
             capture = captureText,
             upload = uploadText,

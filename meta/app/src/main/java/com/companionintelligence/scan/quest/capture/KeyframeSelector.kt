@@ -4,18 +4,26 @@ import com.companionintelligence.scan.quest.pose.RigidPose
 import com.companionintelligence.scan.quest.pose.angleBetween
 
 /**
- * Picks keyframes the way the web client's KeyframeStreamer does (src/capture/keyframes.ts): no more often than
- * [minIntervalNs], and only once the camera has moved [minTranslationM] or turned [minRotationDeg] since the last
- * keyframe. The defaults give at most two keyframes a second; a head turns and moves more than a phone held out
- * in front, so the thresholds are lower than the web client's 0.30 m and 20°.
+ * Picks keyframes the way the web client's KeyframeStreamer does (src/capture/keyframes.ts), with its numbers: no more
+ * often than [minIntervalNs] (1200 ms), and only once the camera has moved [minTranslationM] (0.30 m) or turned
+ * [minRotationDeg] (20°) since the last keyframe, by the same rotation measure (angleBetween, 2·acos|q1·q2|).
+ *
+ * The headset used 500 ms, 0.08 m and 8° until wave 14, on the reasoning that a head moves more than a phone. That
+ * argues for the opposite: a camera that moves more crosses the same thresholds sooner. At two keyframes a second a
+ * capture reached the server's 2000-keyframe cap (server/main.ts MAX_KEYFRAMES_PER_SESSION) in under 17 minutes.
+ *
+ * Two web gates have no counterpart here. The web skips frames while its AR runtime says tracking is unusable; the
+ * Spatial SDK gives the app no tracking state, only the viewer pose. The web scales a frame down to a 1280-pixel long
+ * edge; the passthrough stream is chosen at 1280×960 (PassthroughCamera.WANTED_WIDTH), so a frame already is that, and a
+ * camera that offers only a larger size sends it as it is, with the warning the panel shows.
  *
  * Thread-safe: the camera thread asks [intervalElapsed] before copying a frame, and the processing thread makes
  * the decision with the frame's own interpolated pose.
  */
 class KeyframeSelector(
-    private val minIntervalNs: Long = 500_000_000L,
-    private val minTranslationM: Double = 0.08,
-    private val minRotationDeg: Double = 8.0,
+    private val minIntervalNs: Long = 1_200_000_000L,
+    private val minTranslationM: Double = 0.30,
+    private val minRotationDeg: Double = 20.0,
 ) {
     private var lastTimeNs: Long? = null
     private var lastPose: RigidPose? = null

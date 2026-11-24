@@ -405,9 +405,14 @@ test('the device kit and the AR support matrix name the plugin the shells run, a
   assert.ok(matrix.includes('src/ar/native.ts'), 'the matrix does not point at the provider the shells run')
 })
 
-test('NOTICE.md names ScanAR and does not say Google Play installs ARCore for the app: no registered plugin asks it to', () => {
-  const asksPlayToInstall = /requestInstall/.test(read('mobile/android/app/src/main/java/com/companionintelligence/scan/ScanARPlugin.java'))
-  assert.equal(asksPlayToInstall, false, 'the premise is gone: the registered Android plugin asks Google Play to install ARCore')
+test('NOTICE.md names ScanAR and does not say Google Play installs ARCore for the app: the page never reaches the install', () => {
+  // Until wave 14 no registered plugin called requestInstall. ScanARPlugin.start() now can (F-31), but the page never calls start()
+  // on a phone without ARCore: capabilities() says `supported` only once ARCore is installed, and the page picks the native runtime
+  // from `supported` alone (runtime-select.ts). So the shipped app still never asks Google Play, and NOTICE.md must not say it does.
+  // If the owner has the page choose native for an `installable` phone, this premise goes, and NOTICE.md may then say so.
+  const scanAr = read('mobile/android/app/src/main/java/com/companionintelligence/scan/ScanARPlugin.java')
+  assert.match(scanAr, /result\.put\("supported", installed\)/, 'the premise is gone: capabilities() reports supported before ARCore is installed')
+  assert.match(read('src/ar/runtime-select.ts'), /nativeSupported: probe\.supported/, 'the premise is gone: the page chooses native from something other than supported')
   const notice = flat(read('NOTICE.md'))
   assert.ok(notice.includes('`ScanAR`'), 'NOTICE.md never names the plugin that calls ARCore and ARKit')
   assert.doesNotMatch(notice, /installs or updates when an AR session starts/, 'NOTICE.md says Google Play installs ARCore when a session starts')

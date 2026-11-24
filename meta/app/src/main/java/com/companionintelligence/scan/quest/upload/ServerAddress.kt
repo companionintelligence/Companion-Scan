@@ -8,8 +8,9 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  * person's home, so an `http://` address is refused rather than upgraded or tried. No address, host name, token
  * or key is built into the app; the address lives only in the app's private preferences (AppSettings).
  *
- * Sign-in is not implemented in this app. A server with sign-in on (or SCAN_REQUIRE_AUTH=1) guards /sessions
- * (server/main.ts, SESSION_GUARDED_PATHS) and answers 401, which the uploader reports as "sign-in is on".
+ * A server with sign-in on (or SCAN_REQUIRE_AUTH=1) guards /sessions and /scans (server/main.ts, SESSION_GUARDED_PATHS)
+ * and answers 401 without a Companion Account session. The panel's sign-in (auth/QuestSignIn) gets one for the saved
+ * address, and auth/SessionBearer sends it with every request to that server.
  */
 object ServerAddress {
     sealed interface Parsed {

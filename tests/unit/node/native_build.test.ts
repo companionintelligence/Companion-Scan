@@ -7,10 +7,12 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  AR_RUNTIMES,
+  DEV_PAGES,
   ENGINE_FILES,
   NATIVE_EXCLUDED,
   OUT_DIRS,
@@ -18,6 +20,7 @@ import {
   ROOT,
   engineProblemsInBundle,
   forbiddenInBundle,
+  parseBuildArgs,
   viteVariablesInEnvFiles,
 } from '../../../scripts/native/build-web.mjs'
 import { ENGINE_SHA256 } from '../../../scripts/native/check-xr-engine.mjs'
@@ -95,4 +98,39 @@ test("the mobile build stops on an XR Engine that is not Niantic's bytes, as a c
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('no shell bundle carries the dev pages, which no page of the app links to (FN-164)', () => {
+  assert.deepEqual(Object.keys(DEV_PAGES).sort(), ['404.html', 'ar-ground-anchor.html', 'ar-hittest-sphere.html', 'camera-check.html', 'compass-bench.html', 'smoke.html'])
+  // Each is a page of the tree the web build can copy or make: a root page (a Vite input) or a file of public/.
+  for (const page of Object.keys(DEV_PAGES)) {
+    assert.ok(existsSync(join(ROOT, page)) || existsSync(join(ROOT, 'public', page)), `${page} is neither a root page nor a file of public/`)
+  }
+  // And no page the app ships links to one.
+  for (const entry of ['index.html', 'scanner.html', 'viewer.html', 'webxr.html', 'xr-world.html']) {
+    const html = readFileSync(join(ROOT, entry), 'utf8')
+    for (const page of Object.keys(DEV_PAGES)) assert.ok(!html.includes(`href="/${page}"`) && !html.includes(`href="${page}"`), `${entry} links to ${page}`)
+  }
+  const dir = scratch({ 'index.html': '', 'smoke.html': '', 'ar-hittest-sphere.html': '', '404.html': '' })
+  try {
+    for (const shell of ['desktop', 'mobile'] as const) {
+      assert.deepEqual(forbiddenInBundle(dir, shell), ['ar-hittest-sphere.html', 'smoke.html', '404.html'], shell)
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('the 8th Wall variant is a mobile build with --ar-runtime=8thwall, and a misspelt option stops the build (FN-163)', () => {
+  assert.deepEqual(AR_RUNTIMES, ['8thwall'], 'the one value buildForcedRuntime (src/ar/runtime-select.ts) acts on')
+  assert.deepEqual(parseBuildArgs(['mobile']), { shell: 'mobile', arRuntime: null })
+  assert.deepEqual(parseBuildArgs(['mobile', '--ar-runtime=8thwall']), { shell: 'mobile', arRuntime: '8thwall' })
+  assert.throws(() => parseBuildArgs(['mobile', '--ar-runtime=webxr']), /runtimes a build can force are 8thwall/)
+  assert.throws(() => parseBuildArgs(['mobile', '--ar=8thwall']), /unknown argument/)
+  assert.throws(() => parseBuildArgs(['desktop', '--ar-runtime=8thwall']), /mobile shell only/)
+  // The mobile shell's scripts build it, and the mobile workflow builds its APK.
+  const scripts = JSON.parse(readFileSync(join(ROOT, 'mobile/package.json'), 'utf8')).scripts
+  assert.equal(scripts['build:web:8thwall'], 'node ../scripts/native/build-web.mjs mobile --ar-runtime=8thwall')
+  assert.equal(scripts['build:8thwall'], 'npm run build:web:8thwall && npm run sync')
+  assert.match(readFileSync(join(ROOT, '.github/workflows/mobile-build.yml'), 'utf8'), /npm run build:web:8thwall --prefix mobile/)
 })
