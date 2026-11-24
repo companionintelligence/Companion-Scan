@@ -1,8 +1,8 @@
 /**
  * Wave 14, ticket 0003 (scanner-ui), F-44: the scanner UI's one colour lookup and its one detection edit form.
  *
- *  - src/ui/category-color.ts: pins, the side panel and the history drawer draw a label in its CV_PALETTE colour
- *    (src/shared/cv-palette.ts), through one alias list, and an unknown label in the palette's default grey.
+ *  - src/ui/category-color.ts: pins, the side panel and the history drawer draw a label in the colour of the one
+ *    display table, labelDisplayRgb / labelDisplayCss in src/shared/cv-palette.ts, which the GLB export uses too.
  *  - src/ui/detection-edit-form.ts: the panel and the drawer build the same form, and save by the same rule.
  *
  * Run: node --experimental-strip-types --no-warnings --test tests/unit/node/wp-14-scanner-ui-shared-ui.test.ts
@@ -11,8 +11,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { CV_PALETTE, paletteColorFor } from '../../../src/shared/cv-palette.ts'
-import { MATCH_ORDER, PALETTE_ALIASES, categoryColor, categoryTextColor, paletteLabelOf } from '../../../src/ui/category-color.ts'
+import { CV_PALETTE, LABEL_DISPLAY_DEFAULT_RGB, labelDisplayCss, labelDisplayRgb } from '../../../src/shared/cv-palette.ts'
+import { categoryColor, categoryTextColor } from '../../../src/ui/category-color.ts'
 import { buildDetectionEditForm, editedText } from '../../../src/ui/detection-edit-form.ts'
 
 const read = (path: string) => readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8')
@@ -24,40 +24,32 @@ test('every palette label is drawn in its palette colour', () => {
   for (const entry of CV_PALETTE) assert.equal(categoryColor(entry.label), hex(entry.rgb), entry.label)
 })
 
-test('a label no table knows gets the palette default, the grey the three old tables shared', () => {
-  // 'mug', not 'door': door has a key, and a colour of its own once capture-core's display table is merged.
-  assert.equal(categoryColor('mug'), hex(paletteColorFor('')))
+test('a label no table knows gets the default grey, the grey the three old tables shared', () => {
+  assert.equal(categoryColor('mug'), hex(LABEL_DISPLAY_DEFAULT_RGB))
   assert.equal(categoryColor('mug'), '#b0bec5')
   assert.equal(categoryColor(''), '#b0bec5')
 })
 
-test('every alias points at a palette label, and every palette label is a key', () => {
-  const labels = new Set(CV_PALETTE.map((entry) => entry.label))
-  for (const [word, target] of Object.entries(PALETTE_ALIASES)) assert.ok(labels.has(target), `${word} → ${target}`)
-  for (const label of labels) assert.ok(MATCH_ORDER.includes(label), `${label} can be matched`)
+test('every label is drawn in the display table\'s colour, the one the GLB export takes (F-44)', () => {
+  for (const label of [
+    ...CV_PALETTE.map((entry) => entry.label),
+    'couch', 'computer monitor', 'bookcase', 'desk', 'door', 'window', 'wall', 'floor', 'ceiling',
+    'Office Chair', 'bedside table', 'table lamp', 'desk lamp', 'potted plant', 'mug', '',
+  ]) assert.equal(categoryColor(label), labelDisplayCss(label), label)
 })
 
-test('a label is matched as the old tables and the GLB export match it: the first key it contains, in order', () => {
-  // The order capture-core's labelDisplayRgb (src/shared/cv-palette.ts, ticket 0004) uses, so the pins and the
-  // GLB agree once both are merged. See the header of src/ui/category-color.ts.
-  assert.deepEqual([...MATCH_ORDER], [
-    'chair', 'table', 'sofa', 'couch', 'bed', 'desk', 'monitor', 'tv', 'door', 'window',
-    'shelf', 'bookcase', 'lamp', 'plant', 'wall', 'floor', 'ceiling',
-  ])
-  assert.equal(paletteLabelOf('Office Chair'), 'chair')
-  assert.equal(paletteLabelOf('bedside table'), 'table', 'table comes before bed')
-  assert.equal(paletteLabelOf('table lamp'), 'table', 'the first key in the order wins, as in the GLB')
-  assert.equal(paletteLabelOf('couch'), 'sofa')
-  assert.equal(paletteLabelOf('computer monitor'), 'tv')
-  assert.equal(paletteLabelOf('bookcase'), 'shelf')
-  assert.equal(paletteLabelOf('potted plant'), 'plant')
-  assert.equal(paletteLabelOf('desk'), null, 'a key with no palette colour')
-  assert.equal(paletteLabelOf('desk lamp'), null, 'desk is found first, and has no palette colour')
-  assert.equal(paletteLabelOf('mug'), null)
+test('the labels the palette has no entry for keep their own colour, not the default grey', () => {
+  for (const label of ['desk', 'door', 'window', 'wall', 'floor', 'ceiling']) {
+    assert.notEqual(categoryColor(label), '#b0bec5', label)
+  }
+  assert.equal(categoryColor('couch'), categoryColor('sofa'))
+  assert.equal(categoryColor('monitor'), categoryColor('tv'))
+  assert.equal(categoryColor('bookcase'), categoryColor('shelf'))
 })
 
-test('text gets the colour mixed halfway to white, so a dark palette colour stays readable', () => {
-  assert.equal(categoryTextColor('table'), hex(paletteColorFor('table').map((c) => Math.round(c + (255 - c) / 2))))
+test('text gets the colour mixed halfway to white, so a dark colour stays readable', () => {
+  assert.equal(categoryTextColor('table'), hex(labelDisplayRgb('table').map((c) => Math.round(c + (255 - c) / 2))))
+  assert.equal(categoryTextColor('door'), hex(labelDisplayRgb('door').map((c) => Math.round(c + (255 - c) / 2))))
   // walnut, rgb(109, 76, 65), is the darkest entry: its text colour is light enough for near-black panels.
   const [r, g, b] = categoryTextColor('table').slice(1).match(/../g)!.map((pair) => parseInt(pair, 16))
   assert.ok(Math.min(r!, g!, b!) >= 150, `walnut text is ${categoryTextColor('table')}`)
@@ -70,7 +62,9 @@ test('source shape: the pins, the panel and the history drawer have no colour ta
     assert.doesNotMatch(source, /CATEGORY_COLORS|const COLORS\b/, `${path} has no table`)
     assert.doesNotMatch(source, /'#72ddd4', table|chair: '#/, `${path} has no colour literal per label`)
   }
-  assert.doesNotMatch(read('src/ui/category-color.ts'), /rgb: \[|#[0-9a-f]{6}'|\[\d+, \d+, \d+\]/i, 'the lookup holds no colours, only keys and aliases')
+  const lookup = read('src/ui/category-color.ts')
+  assert.match(lookup, /import \{ labelDisplayCss, labelDisplayRgb \} from '\.\.\/shared\/cv-palette\.ts'/, 'the one display table')
+  assert.doesNotMatch(lookup, /#[0-9a-f]{6}'|\[\d+, \d+, \d+\]|'chair'|'sofa'/i, 'no colours, keys or aliases of its own')
 })
 
 // ── The edit form ────────────────────────────────────────────────────────────────────────────────
