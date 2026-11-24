@@ -6,7 +6,7 @@
  *   - World and Place events carry a `scope` ({ worldId, slug, projectId }), so a client can keep the ones of the world
  *     it shows; `/events?world=<slug>` keeps a socket to that world's events and the ones with no scope.
  *
- * Over a real socket against the spawned server (server_core_harness.ts). Needs `npm run test:server`'s permissions.
+ * Over a real socket against the spawned server (server_core_harness.ts).
  */
 import { assert, assertEquals } from './assert.ts'
 import { type RunningServer, startServer } from './server_core_harness.ts'

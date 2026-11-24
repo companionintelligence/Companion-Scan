@@ -65,9 +65,13 @@ Counted on main at `0de2afa`, before this wave changed anything:
 | 0005 | [CLAUDE.md, the docs and the atlas](0005-docs-and-atlas.md) | in this wave's PR | 0001–0004 |
 
 The tickets cannot merge apart. Once the server stops importing `npm:` specifiers, Deno can no longer
-run it, and the Deno suite stops type-checking. So the wave lands as one PR of three commits: this
-plan, then the move itself (0001 to 0004, which share `package.json` and cannot build apart), then
-the docs and the atlas (0005). The tickets run in order:
+run it, and the Deno suite stops type-checking. So the wave lands as one PR. Its commits are:
+- this plan;
+- the move itself (0001 to 0004, which share `package.json` and cannot build apart);
+- the docs and the atlas (0005);
+- the fixes that the full gate on Node 26 and a review found after them.
+
+The tickets run in order:
 
 1. 0001 and 0002 touch the same files, because the suite's fakes stand in for the server's
    subprocess and file APIs.
@@ -76,13 +80,14 @@ the docs and the atlas (0005). The tickets run in order:
 
 ## What changes in behaviour
 
-The aim is the same server on another runtime. Five things differ, and ADR 0016 records each:
+The aim is the same server on another runtime. These things differ, and ADR 0016 records each:
 
 1. **No permission flags.** Deno ran the server with `--allow-net --allow-read --allow-write
    --allow-env --allow-ffi --allow-run`, so it held every permission. Node has no per-run grants.
-   - The code paths that guarded against a missing grant stay, and simply no longer trigger. One is
-     `budgetFromEnv`'s catch; another is `capabilities.ts`'s `Deno.permissions.querySync`.
-   - Their comments are corrected.
+   - The guards written for a missing grant are gone: the catches around the environment reads
+     (`budgetFromEnv` and its siblings), and the capability report's `networkPermitted`.
+   - So `node server/capabilities.ts` now probes the services it lists, within
+     `SERVICE_PROBE_TIMEOUT_MS`. The Deno CLI, run without `--allow-net`, did not.
 2. **Responses are not compressed.** `Deno.serve` compressed bodies by itself when a client sent
    `Accept-Encoding`. `@hono/node-server` does not. This wave adds no compression; see "Deferred".
 3. **No request timeout.** Node's HTTP server ends a request after 300 s by default
@@ -94,6 +99,18 @@ The aim is the same server on another runtime. Five things differ, and ADR 0016 
    so a child keeps finding `PATH`.
 5. **Exit codes and signals.** A child killed by a signal reports `code` 128 + the signal number and
    the signal's name, as Deno did. For SIGKILL that is 137. Node alone reports `code: null`.
+6. **WebSocket keepalive, kept.** `Deno.upgradeWebSocket` pinged each socket and closed one that had
+   not answered within its 30-second `idleTimeout`. `ws` does neither, so `server/ws_heartbeat.ts`
+   keeps the rule. Without it, a phone that went to sleep would hold its slot in a take room (at
+   most 8 members) and its place in the /events fan-out until TCP noticed.
+7. **Outbound requests.** Node's `fetch` (undici) stops waiting for a reply's headers, or between
+   chunks of its body, after 300 s; Deno's had no such limit. Every request the server makes has a
+   shorter budget of its own by default: the longest are memory-push's 120 s and the 4D host's
+   2 minutes. A budget raised past 300 s with `MEMORY_PUSH_TIMEOUT_MS` or
+   `FDANYONE_REQUEST_TIMEOUT_MS` is cut to 300 s, and fails as `fetch failed`, not as a timeout.
+8. **Error logs.** The lines that name an error's kind without its message (a message can hold a
+   path) say the system code, `EACCES` or `ENOENT`, where Deno's said its class, `PermissionDenied`
+   or `NotFound`.
 
 ## Decisions for the owner
 

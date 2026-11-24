@@ -2,13 +2,13 @@
  * File helpers the server and its tests share (ADR 0016). Everything else uses `node:fs/promises`
  * directly, as `fs`.
  *
- * - `readBytes` returns a plain `Uint8Array`, as `Deno.readFile` did. `fs.readFile` returns a
+ * - `readBytes` returns a plain `Uint8Array`, as Deno's `readFile` did. `fs.readFile` returns a
  *   `Buffer`, whose `slice()` is a view rather than a copy, and which compares unequal to a
  *   `Uint8Array` of the same bytes.
  * - `makeTempDir` makes a fresh directory under the system temp folder, or under `dir`, named
  *   `prefix` plus random characters.
- * - `isNotFound` and its siblings read an error's `code`. They stand for the
- *   `Deno.errors.NotFound`, `AlreadyExists`, `PermissionDenied` and `IsADirectory` classes.
+ * - `isNotFound` and its siblings read an error's `code`. They stand for
+ *   Deno's `errors.NotFound`, `AlreadyExists`, `PermissionDenied` and `IsADirectory` classes.
  */
 import { mkdtempSync, readFileSync } from 'node:fs'
 import * as fs from 'node:fs/promises'

@@ -61,14 +61,25 @@ None.
 
 ## Definition of Done
 
-- [ ] `git grep -n -i deno -- . ':!history' ':!docs/audits' ':!docs/factory/0*' ':!docs/factory/1[0-7]-*' ':!docs/factory/foundation-updates' ':!docs/adr/000[0-9]-*' ':!docs/adr/001[0-5]-*'`
-  finds only this wave's own account of the move: `docs/factory/18-node26-runtime/`, ADR 0016, and
-  the atlas's wave card and diffs.
-- [ ] `npm run verify` passes, since some of its tests read the docs.
+- [x] `git grep -n -i deno -- . ':!history' ':!docs/audits' ':!docs/factory/0*' ':!docs/factory/1[0-7]-*' ':!docs/factory/foundation-updates' ':!docs/adr/000[0-9]-*' ':!docs/adr/001[0-5]-*'`
+  finds only accounts of the move and dated records:
+  - this wave's own files, ADR 0016, and the atlas's wave card and diffs;
+  - the past-tense "until wave 18 the server ran on Deno" notes in CLAUDE.md, the README,
+    `architecture.md`, `TEST_INFRA.md` and `DEPLOY.md`;
+  - two dated records (PLATFORM_SUPPORT's 2026-08-30 probe and COLMAP_SETUP's 2026-08-29
+    commands), and a CI run's old name in `targets/README.md`;
+  - ADR 0002's title in the index;
+  - the `@std/assert` licence notice;
+  - the comments in `server/fs_util.ts`, `server/ws_heartbeat.ts`, `server/main.ts` and the
+    suite's `http_server.ts`, `ws_heartbeat.test.ts` and `ws_upgrade_routes.test.ts` that say which
+    Deno behaviour the Node code keeps;
+  - one guard regex in `wp-docs-config-honesty.test.ts` that keeps an old sentence about
+    `deno.json` from coming back.
+- [x] `npm run verify` passes, since some of its tests read the docs.
 
 ## Tests
 
-- [ ] `npm run verify`
+- [x] `npm run verify`
 
 ```
 npm run verify
@@ -76,7 +87,7 @@ npm run verify
 
 ## Acceptance Criteria
 
-- [ ] A new contributor who follows CLAUDE.md and the README on a clean machine installs Node 26,
+- [x] A new contributor who follows CLAUDE.md and the README on a clean machine installs Node 26,
   runs `npm ci` and `npm start`, and never meets a `deno` command.
 
 ## Risks / potential issues
@@ -86,7 +97,7 @@ npm run verify
 
 ## Subtasks
 
-1. [ ] CLAUDE.md, the README and `.env.example`.
-2. [ ] The living docs, and the code comments.
-3. [ ] ADR 0016, ADR 0002's status line, and the ADR index.
-4. [ ] The atlas.
+1. [x] CLAUDE.md, the README and `.env.example`.
+2. [x] The living docs, and the code comments.
+3. [x] ADR 0016, ADR 0002's status line, and the ADR index.
+4. [x] The atlas.

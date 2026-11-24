@@ -106,15 +106,15 @@ Nothing under `src/` or `scripts/` reads it, which was checked with a grep for `
 
 ## Definition of Done
 
-- [ ] `git grep -n 'Deno\.' -- server` finds nothing.
-- [ ] `npm run typecheck:server` passes.
-- [ ] `node server/main.ts` boots with the mock engine and answers `GET /health`.
-- [ ] `/events` and `/rtc-signal` upgrade, and refuse a foreign origin with 403.
+- [x] `git grep -n 'Deno\.' -- server` finds nothing.
+- [x] `npm run typecheck:server` passes.
+- [x] `node server/main.ts` boots with the mock engine and answers `GET /health`.
+- [x] `/events` and `/rtc-signal` upgrade, and refuse a foreign origin with 403.
 
 ## Tests
 
-- [ ] The server suite (0002) passes on Node 26.
-- [ ] The browser box (0003) shows only main's known failures.
+- [x] The server suite (0002) passes on Node 26.
+- [x] The browser box (0003) shows only main's known failures.
 
 ```
 npm run typecheck:server
@@ -123,7 +123,7 @@ PORT=8123 INFERENCE_MODE=mock node server/main.ts   # then curl :8123/health
 
 ## Acceptance Criteria
 
-- [ ] Given the same environment, `node server/main.ts` and the old `deno run …` give the same
+- [x] Given the same environment, `node server/main.ts` and the old `deno run …` give the same
   replies to the API suite (`playwright test --project=api`) and to the box.
 
 ## Risks / potential issues
@@ -139,11 +139,11 @@ PORT=8123 INFERENCE_MODE=mock node server/main.ts   # then curl :8123/health
 
 ## Subtasks
 
-1. [ ] Add `@hono/node-server`, `@hono/node-ws`, `hono`, `jose` and `onnxruntime-node` as
+1. [x] Add `@hono/node-server`, `@hono/node-ws`, `hono`, `jose` and `onnxruntime-node` as
    dependencies. Move the server's runtime packages from devDependencies to dependencies. Add
    `@types/node` 26.
-2. [ ] Write `server/subprocess.ts` and `server/fs_util.ts`, and move `runWithDeadline` and
+2. [x] Write `server/subprocess.ts` and `server/fs_util.ts`, and move `runWithDeadline` and
    `runCapture` onto them.
-3. [ ] Convert every `Deno` call under `server/`.
-4. [ ] Serve with `@hono/node-server`, and upgrade with `@hono/node-ws`.
-5. [ ] `tsconfig.server.json` and the `typecheck:server` script.
+3. [x] Convert every `Deno` call under `server/`.
+4. [x] Serve with `@hono/node-server`, and upgrade with `@hono/node-ws`.
+5. [x] `tsconfig.server.json` and the `typecheck:server` script.

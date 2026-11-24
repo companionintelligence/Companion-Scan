@@ -69,13 +69,13 @@ None.
 
 ## Definition of Done
 
-- [ ] `docker build .` succeeds here, and the image answers `GET /health` with the mock engine.
-- [ ] `git grep -n -i deno -- .github Dockerfile deploy` finds nothing.
+- [x] `docker build .` succeeds here, and the image answers `GET /health` with the mock engine.
+- [x] `git grep -n -i deno -- .github Dockerfile deploy` finds nothing.
 
 ## Tests
 
-- [ ] A local image build and boot, as `docker-publish.yml`'s smoke step does.
-- [ ] `npm run test:native-release` and the other source-shape tests that read the workflows
+- [x] A local image build and boot, as `docker-publish.yml`'s smoke step does.
+- [x] `npm run test:native-release` and the other source-shape tests that read the workflows
   still pass (they run in `verify`).
 
 ```
@@ -85,7 +85,7 @@ docker run --rm -d -p 8124:8000 -e INFERENCE_MODE=mock cscan-node26   # then cur
 
 ## Acceptance Criteria
 
-- [ ] The image boots, serves `/health`, and serves the bundle at `/`.
+- [x] The image boots, serves `/health`, and serves the bundle at `/`.
 
 ## Risks / potential issues
 
@@ -97,6 +97,6 @@ docker run --rm -d -p 8124:8000 -e INFERENCE_MODE=mock cscan-node26   # then cur
 
 ## Subtasks
 
-1. [ ] Rename and rewrite the workflow.
-2. [ ] Rewrite the Dockerfile's server stage, and build and boot it here.
-3. [ ] Move the systemd unit and its installer to Node.
+1. [x] Rename and rewrite the workflow.
+2. [x] Rewrite the Dockerfile's server stage, and build and boot it here.
+3. [x] Move the systemd unit and its installer to Node.

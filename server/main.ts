@@ -73,6 +73,7 @@
  */
 import { serve } from '@hono/node-server'
 import { createNodeWebSocket } from '@hono/node-ws'
+import { startWsHeartbeat } from './ws_heartbeat.ts'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { REPO_ROOT } from './repo-root.ts'
@@ -578,7 +579,7 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 const app = new Hono()
 // /events and /rtc-signal upgrade through @hono/node-ws, which runs the upgrade request through the routes and their
 // middleware first; injectWebSocket, at the end of this file, attaches it to the server.
-const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
+const { injectWebSocket, upgradeWebSocket, wss } = createNodeWebSocket({ app })
 // Gates the phone and viewer roles of /rtc-signal (the experimental live preview). The server reads the client build's
 // own variable on purpose (FN-121): the client bundle reads VITE_ENABLE_WEBRTC_LIVE at build time (src/rtc/feature.ts),
 // and one name in one .env means the page that offers the preview and the server that relays it cannot disagree.
@@ -7830,3 +7831,5 @@ const server = serve({
   console.log(`Listening on http://0.0.0.0:${info.port}/ (http://localhost:${info.port}/)`)
 })
 injectWebSocket(server)
+// Deno pinged idle WebSockets and closed the ones that stopped answering; ws does not (server/ws_heartbeat.ts).
+startWsHeartbeat(wss)

@@ -26,7 +26,9 @@ Nothing a developer or the gate runs needs a `deno` binary:
 - **npm scripts:**
   - `server`: `node --env-file-if-exists=.env --watch server/main.ts`. Deno's `--env-file` read
     `.env` when it was there and went on when it was not; `--env-file-if-exists` does the same.
-  - `typecheck:server`: `tsc --noEmit -p tsconfig.server.json`.
+  - `typecheck:server`: `tsc --noEmit -p tsconfig.server.json && tsc --noEmit -p tests/unit/server`.
+    Two programs, so that the DOM lib two of the suite's files reference cannot hide a browser
+    global in server code.
   - `test:server`: `node --test --test-concurrency=1 'tests/unit/server/*.test.ts'`.
   - `migrate:jobs` and `migrate:scan-ids` replace the `deno task migrate-*` entries.
 - **The gate.** `verify` begins `npm run typecheck:server && npm run test:viewport && npm run
@@ -69,14 +71,14 @@ None.
 
 ## Definition of Done
 
-- [ ] `git grep -n -w deno -- package.json scripts .githooks` finds no command.
-- [ ] `npm run verify` passes on Node 26.
-- [ ] `node scripts/test-box.mjs --workers=6 --retries=0` shows only main's known failures.
+- [x] `git grep -n -w deno -- package.json scripts .githooks` finds no command.
+- [x] `npm run verify` passes on Node 26.
+- [x] `node scripts/test-box.mjs --workers=6 --retries=0` shows only main's known failures.
 
 ## Tests
 
-- [ ] `npm run verify`
-- [ ] `node scripts/test-box.mjs --workers=6 --retries=0`
+- [x] `npm run verify`
+- [x] `node scripts/test-box.mjs --workers=6 --retries=0`
 
 ```
 ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci
@@ -86,7 +88,7 @@ ONNXRUNTIME_NODE_INSTALL_CUDA=skip TEST_BOX_API_PORT=<free> TEST_BOX_VITE_PORT=<
 
 ## Acceptance Criteria
 
-- [ ] On a machine with no `deno` on PATH, `npm ci`, `npm start`, `npm run verify` and the box all
+- [x] On a machine with no `deno` on PATH, `npm ci`, `npm start`, `npm run verify` and the box all
   work.
 
 ## Risks / potential issues
@@ -96,7 +98,7 @@ ONNXRUNTIME_NODE_INSTALL_CUDA=skip TEST_BOX_API_PORT=<free> TEST_BOX_VITE_PORT=<
 
 ## Subtasks
 
-1. [ ] Rewrite the npm scripts and the gate.
-2. [ ] Move each script that booted Deno onto Node.
-3. [ ] Delete `deno.json` and `deno.lock`. Set `.node-version` and `engines`.
-4. [ ] Regenerate `package-lock.json` with npm 11.
+1. [x] Rewrite the npm scripts and the gate.
+2. [x] Move each script that booted Deno onto Node.
+3. [x] Delete `deno.json` and `deno.lock`. Set `.node-version` and `engines`.
+4. [x] Regenerate `package-lock.json` with npm 11.

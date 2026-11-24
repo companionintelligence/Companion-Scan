@@ -39,8 +39,10 @@ We will run the server on Node 26, and remove Deno from the repo.
   - `/events` and `/rtc-signal` upgrade through `@hono/node-ws`.
   - There is no build step and no transpiler.
 - **TypeScript.** The server is written in erasable TypeScript only, and every type-only import
-  says `type`. `npm run typecheck:server` (`tsc -p tsconfig.server.json`, with
-  `verbatimModuleSyntax` and `erasableSyntaxOnly`) holds it there.
+  says `type`. `npm run typecheck:server` holds it there, with `verbatimModuleSyntax` and
+  `erasableSyntaxOnly`. It runs two programs: `tsconfig.server.json` checks the server and the
+  scripts with no DOM lib, and `tests/unit/server/tsconfig.json` checks the suite, two of whose
+  files need the DOM lib.
 - **One subprocess module.** `server/subprocess.ts` keeps two of `Deno.Command`'s rules that
   `child_process` alone does not:
   - a child inherits the server's environment plus the call's `env`, unless the call asks for a
@@ -74,10 +76,17 @@ We will run the server on Node 26, and remove Deno from the repo.
     import fails at load rather than at check. `typecheck:server` catches both, so run it after any
     server change.
 - **Behaviour that changed:**
-  - Deno's per-run permission flags are gone. The guards written for a missing grant stay, and no
-    longer trigger.
+  - Deno's per-run permission flags are gone, and so are the guards written for a missing grant.
+    The capability CLI now probes the services it lists, which Deno, run without `--allow-net`, did
+    not.
   - Responses are no longer compressed by the runtime. `Deno.serve` did that unasked.
   - Node's default 300-second request timeout is turned off, to match Deno.
+  - Deno's WebSocket keepalive (a ping, and a close after 30 s without a pong) is kept by
+    `server/ws_heartbeat.ts`, because `ws` has none.
+  - Node's `fetch` stops waiting after 300 s for a reply's headers or body. Every default budget is
+    shorter, and a budget raised past that is cut to it.
+  - The path-free error logs name the system code (`EACCES`) where they named Deno's class
+    (`PermissionDenied`).
 - **Follow-up:**
   - Optional compression with `hono/compress`.
   - A lean server image, by moving the browser libraries out of `dependencies`.

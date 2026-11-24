@@ -13,7 +13,7 @@
  *
  * server/main.ts starts listening at import and exports nothing, so, as in scan_manifest_calibration_server.test.ts,
  * the real server is spawned on a free port with every directory it writes in a temp folder and the mock inference
- * engine, and spoken to over HTTP. Needs `npm run test:server`'s permissions (run, net, read, write, env).
+ * engine, and spoken to over HTTP.
  */
 import { assert, assertEquals, assertFalse } from './assert.ts'
 import { REPO_ROOT } from '../../../server/repo-root.ts'

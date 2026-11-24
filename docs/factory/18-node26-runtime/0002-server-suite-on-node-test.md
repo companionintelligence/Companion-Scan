@@ -81,14 +81,14 @@ None.
 
 ## Definition of Done
 
-- [ ] `git grep -n 'Deno\.' -- tests` finds nothing.
-- [ ] `npm run test:server` passes on Node 26.
-- [ ] The number of tests is at least the 2,526 the Deno suite ran, less any removed with a stated
+- [x] `git grep -n 'Deno\.' -- tests` finds nothing.
+- [x] `npm run test:server` passes on Node 26.
+- [x] The number of tests is at least the 2,526 the Deno suite ran, less any removed with a stated
   reason.
 
 ## Tests
 
-- [ ] `npm run test:server`
+- [x] `npm run test:server`
 
 ```
 npm run test:server
@@ -96,7 +96,7 @@ npm run test:server
 
 ## Acceptance Criteria
 
-- [ ] Each test file still asserts what it asserted under Deno. The diff of a test body is limited
+- [x] Each test file still asserts what it asserted under Deno. The diff of a test body is limited
   to runtime calls.
 
 ## Risks / potential issues
@@ -113,7 +113,7 @@ npm run test:server
 
 ## Subtasks
 
-1. [ ] `git mv tests/unit/deno tests/unit/server`.
-2. [ ] Write `assert.ts` and `http_server.ts`.
-3. [ ] Convert `Deno.test`, the imports and the runtime calls.
-4. [ ] Run the suite and fix each failure at its cause.
+1. [x] `git mv tests/unit/deno tests/unit/server`.
+2. [x] Write `assert.ts` and `http_server.ts`.
+3. [x] Convert `Deno.test`, the imports and the runtime calls.
+4. [x] Run the suite and fix each failure at its cause.

@@ -1,6 +1,6 @@
 /**
  * A fetch-style HTTP server for a test's fake upstream (ADR 0016, wave 18 ticket 0002): an OIDC
- * issuer, CI-Server, a PhysAg3D controller, the 4D appliance. It stands where `Deno.serve` stood.
+ * issuer, CI-Server, a PhysAg3D controller, the 4D appliance. It stands where Deno's `serve` stood.
  *
  * It listens on 127.0.0.1 on a free port, and `close()` drops every connection, including the idle
  * keep-alive ones `fetch` holds, so a test does not wait out Node's keep-alive timeout.

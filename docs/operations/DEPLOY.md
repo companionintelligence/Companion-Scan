@@ -49,6 +49,12 @@ The installer:
   if the LingBot-Map setup produced one
 - enables `cscan-server`, `cscan-web`, and the weekly `cscan-cert.timer`
 
+**A box installed before wave 18** (when the server ran on Deno) still has a `cscan-server` unit
+that starts the `deno` binary, and that unit fails on its next restart. Re-run the installer under
+Node 26 (`nvm use 26.13.1`, then `scripts/install-services.sh`), after `npm ci`. It rewrites the
+units in `~/.config/systemd/user/`, reloads systemd and keeps the existing `~/.config/cscan/env`. A unit
+that is already running is not restarted by it: `systemctl --user restart cscan-server`.
+
 ## Configuration
 
 All box-local config lives in `~/.config/cscan/env` (never in the repo):

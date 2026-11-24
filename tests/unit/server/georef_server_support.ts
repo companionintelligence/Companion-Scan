@@ -6,7 +6,7 @@
  * server/main.ts starts listening at import and exports nothing, so a route cannot be called from a test in-process
  * (tests/unit/server/place_frame_route.test.ts says the same). Each test that needs the route as wired spawns the
  * real file, so the middleware, the guard, the handler, the serialised mutation queue and the temp-file-and-rename
- * save are all in the loop. Needs `npm run test:server`'s permissions (run, net, read, write, env).
+ * save are all in the loop.
  */
 import { REPO_ROOT } from '../../../server/repo-root.ts'
 import type { Project, WorldProject } from '../../../src/world/types.ts'

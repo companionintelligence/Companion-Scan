@@ -18,7 +18,7 @@
  *
  * server/main.ts starts listening at import and exports nothing, so, like export_route_guard.test.ts, this
  * spawns the real server on a free port with every directory it writes in a temp folder and the mock inference
- * engine, and talks to it over HTTP. Needs `npm run test:server`'s permissions (run, net, read, write, env).
+ * engine, and talks to it over HTTP.
  */
 import { assert, assertEquals, assertNotEquals } from './assert.ts'
 import { REPO_ROOT } from '../../../server/repo-root.ts'
