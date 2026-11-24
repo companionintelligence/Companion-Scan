@@ -864,7 +864,8 @@ Deno.test('main.ts accepts thing-interactive-asset on the job route and dispatch
   const rules = await Deno.readTextFile(new URL('../../../server/world/job_request.ts', import.meta.url))
   assertMatch(rules, /'thing-interactive-asset': \{ needsScan: true, startedBy: \['jobs-api'\]/)
   assertMatch(MAIN, /parseJobRequest\(await jsonBody\(c\)\)/)
-  assertMatch(MAIN, /if \(job\.type === 'thing-interactive-asset'\) \{\s*await _runThingInteractiveAssetJob\(slug, jobId\)/)
+  // The pump's signal goes with it since wave 14 (F-27): physag3d.ts's driver takes one.
+  assertMatch(MAIN, /if \(job\.type === 'thing-interactive-asset'\) \{\s*await _runThingInteractiveAssetJob\(slug, jobId, signal\)/)
   assertMatch(MAIN, /job\.type === 'thing-interactive-asset'\s*\?\s*'physag3d'/)
   assertMatch(MAIN, /if \(jobNeedsScan\(job\.type\) && !scan\)/)
 })
