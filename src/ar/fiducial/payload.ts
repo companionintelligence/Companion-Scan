@@ -19,18 +19,25 @@ import type { TagPayload } from './types.ts'
 
 /** Longest id string accepted for a Place or room. Adopted, not measured: ids in the repo are UUIDs and slugs, well under this. */
 const MAX_ID_LENGTH = 200
-/** Largest printed size accepted, millimetres. A sheet bigger than a poster is a typo. Adopted, not measured. */
+/** Largest printed size accepted, millimetres. A sheet bigger than a poster is a typo. Adopted, not measured. It also bounds a partner's offset: a second tag farther than a poster is wide is a typo. */
 const MAX_PRINTED_SIZE_MM = 5000
+/** Tallest mount height accepted, millimetres: the same 4 m `tag-frame.ts` allows a tag centre above the floor. Adopted, not measured. */
+const MAX_MOUNT_HEIGHT_MM = 4000
 
 export function serializeTagPayload(payload: TagPayload): string {
-  return JSON.stringify({
+  // The base keys in their fixed order, then the optional ones in theirs: a payload without them is byte-for-byte what it always was.
+  const out: Record<string, unknown> = {
     v: payload.v,
     family: payload.family,
     tagId: payload.tagId,
     placeId: payload.placeId,
     roomId: payload.roomId,
     printedSizeMm: payload.printedSizeMm,
-  })
+  }
+  if (payload.mount !== undefined) out['mount'] = payload.mount
+  if (payload.mountHeightMm !== undefined) out['mountHeightMm'] = payload.mountHeightMm
+  if (payload.partner !== undefined) out['partner'] = { tagId: payload.partner.tagId, dxMm: payload.partner.dxMm, dyMm: payload.partner.dyMm }
+  return JSON.stringify(out)
 }
 
 function idText(value: unknown): string | null {
@@ -58,5 +65,30 @@ export function parseTagPayload(text: string): TagPayload | null {
   const roomRaw = o['roomId']
   const roomId = roomRaw === null || roomRaw === undefined ? null : idText(roomRaw)
   if (roomRaw !== null && roomRaw !== undefined && roomId === null) return null
-  return { v: 1, family, tagId, placeId, roomId, printedSizeMm }
+  const payload: TagPayload = { v: 1, family, tagId, placeId, roomId, printedSizeMm }
+
+  // The optional members: absent is fine, present and wrong is not (the text came from the world).
+  const mount = o['mount']
+  if (mount !== undefined) {
+    if (mount !== 'wall' && mount !== 'horizontal') return null
+    payload.mount = mount
+  }
+  const height = o['mountHeightMm']
+  if (height !== undefined) {
+    if (payload.mount === undefined || typeof height !== 'number' || !Number.isFinite(height) || height < 0 || height > MAX_MOUNT_HEIGHT_MM) return null
+    payload.mountHeightMm = height
+  }
+  const partner = o['partner']
+  if (partner !== undefined) {
+    if (typeof partner !== 'object' || partner === null || Array.isArray(partner)) return null
+    const p = partner as Record<string, unknown>
+    const partnerId = p['tagId']
+    const dx = p['dxMm']
+    const dy = p['dyMm']
+    if (typeof partnerId !== 'number' || !Number.isInteger(partnerId) || partnerId < 0 || partnerId === tagId) return null
+    if (typeof dx !== 'number' || typeof dy !== 'number' || !Number.isFinite(dx) || !Number.isFinite(dy)) return null
+    if (Math.abs(dx) > MAX_PRINTED_SIZE_MM || Math.abs(dy) > MAX_PRINTED_SIZE_MM || (dx === 0 && dy === 0)) return null
+    payload.partner = { tagId: partnerId, dxMm: dx, dyMm: dy }
+  }
+  return payload
 }

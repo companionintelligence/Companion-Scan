@@ -1,18 +1,20 @@
 /**
  * PoseHistory: pairing a camera image with the pose it was taken at.
  *
- * The last test puts a number on why it exists. A tag seen from a phone that is walking at 0.3 m/s
+ * One test puts a number on why it exists. A tag seen from a phone that is walking at 0.3 m/s
  * lands about a centimetre from where it is if the image is paired with the pose of the NEXT frame
- * (33 ms later), which is what the vendored 8th Wall `CameraPixelArray` hands over (see the header
- * of `src/ar/fiducial/pose-history.ts`). That is the same size as the accuracy the pose is meant to
- * have, so it is not a detail.
+ * (33 ms later), which is the error a pixel array one frame older than its pose would make if it
+ * were paired with the latest pose. Whether a runtime's pixels are older at all is a hypothesis for
+ * DX8 to fit (see the header of `src/ar/fiducial/pose-history.ts`), and `lagFrames` is how it is
+ * stated; the tests at the end are about that option. The error is the same size as the accuracy
+ * the pose is meant to have, so it is not a detail.
  *
  * Run: node --experimental-strip-types --no-warnings --test tests/unit/node/fiducial_pose_history.test.ts
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import * as THREE from 'three'
-import { PoseHistory } from '../../../src/ar/fiducial/pose-history.ts'
+import { DEFAULT_PIXEL_LAG_FRAMES, PoseHistory } from '../../../src/ar/fiducial/pose-history.ts'
 import { fuseTagObservations } from '../../../src/ar/fiducial/tag-pose.ts'
 import type { Pose } from '../../../src/ar/provider.ts'
 import type { TagObservation } from '../../../src/ar/fiducial/types.ts'
@@ -137,4 +139,56 @@ test('pairing an image with the pose of the NEXT frame costs about a centimetre 
     assert.ok(unsynced > 0.6 * (expectedCm / 100) && unsynced < 1.6 * (expectedCm / 100), `${name}: pairing with the next frame's pose moved the tag ${(unsynced * 100).toFixed(2)} cm (expected about ${expectedCm} cm)`)
     assert.ok(synced < 0.002, `${name}: with the history it is ${(synced * 100).toFixed(2)} cm off`)
   }
+})
+
+test('lagFrames names the pose to pair with the newest pixels: 0 is the newest, 1 the one before, and a history not that deep refuses', () => {
+  const h = new PoseHistory(8, { lagFrames: 2 })
+  assert.equal(h.lagFrames, 2)
+  assert.equal(h.pairedSample(), null, 'an empty history has nothing to pair')
+  h.push(pose(0), 100)
+  h.push(pose(1), 133)
+  assert.equal(h.pairedSample(), null, 'two samples are not two frames deep')
+  h.push(pose(2), 166)
+  assert.deepEqual(h.pairedSample(), { pose: pose(0), timestampMs: 100 }, 'lag 2 of three samples is the first')
+  assert.deepEqual(h.pairedSample(0), { pose: pose(2), timestampMs: 166 })
+  assert.deepEqual(h.pairedSample(1), { pose: pose(1), timestampMs: 133 })
+  assert.equal(h.pairedSample(3), null)
+  assert.equal(h.pairedSample(-1), null)
+  assert.equal(h.pairedSample(0.5), null)
+  h.push(pose(3), 200)
+  assert.deepEqual(h.pairedSample(), { pose: pose(1), timestampMs: 133 }, 'the pairing follows the newest sample')
+  // The default is the documented starting guess, one frame, and a lag that does not fit the history is refused at construction.
+  assert.equal(new PoseHistory().lagFrames, DEFAULT_PIXEL_LAG_FRAMES)
+  assert.equal(DEFAULT_PIXEL_LAG_FRAMES, 1)
+  assert.throws(() => new PoseHistory(4, { lagFrames: 4 }), /lagFrames 4/)
+  assert.throws(() => new PoseHistory(4, { lagFrames: -1 }), /lagFrames -1/)
+  assert.throws(() => new PoseHistory(4, { lagFrames: 0.5 }), /lagFrames 0.5/)
+  // What comes back is a copy.
+  const got = h.pairedSample(0)!
+  got.pose.position.x = 99
+  assert.equal(h.pairedSample(0)!.pose.position.x, 3)
+})
+
+test('newest(n) lists the newest n poses, newest first, and the camera\'s turning speed is read from the last two', () => {
+  const h = new PoseHistory(8)
+  assert.deepEqual(h.newest(3), [])
+  assert.equal(h.angularSpeedDegPerS(), null)
+  h.push(pose(0, 0), 0)
+  assert.equal(h.angularSpeedDegPerS(), null, 'one sample has no speed')
+  h.push(pose(0, 0.5), 50)
+  h.push(pose(0, 1.5), 100)
+  assert.deepEqual(h.newest(2).map((s) => s.timestampMs), [100, 50])
+  assert.equal(h.newest(10).length, 3)
+  // 1 degree in 50 ms is 20 degrees per second, whichever way round the quaternion's sign falls.
+  assert.ok(Math.abs(h.angularSpeedDegPerS()! - 20) < 1e-6, `${h.angularSpeedDegPerS()}`)
+  const flipped = new PoseHistory(8)
+  flipped.push(pose(0, 0), 0)
+  const q = pose(0, 2).rotation
+  flipped.push({ position: { x: 0, y: 1, z: 0 }, rotation: { x: -q.x, y: -q.y, z: -q.z, w: -q.w } }, 100)
+  assert.ok(Math.abs(flipped.angularSpeedDegPerS()! - 20) < 1e-6)
+  // A turn is a turn whatever the camera does about its position.
+  const moved = new PoseHistory(8)
+  moved.push(pose(0, 0), 0)
+  moved.push(pose(5, 0), 100)
+  assert.equal(moved.angularSpeedDegPerS(), 0)
 })

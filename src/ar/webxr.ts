@@ -50,6 +50,7 @@ import {
   withPoseAge,
   type PendingCapture,
 } from './provider-plumbing.ts'
+import { unsupportedCameraFeed, type CameraFrame, type CameraFrameOptions, type CameraFrameSubscription } from './camera-frame-feed.ts'
 
 /**
  * Probe grid subscribed against the viewer space, N x N. Imported rather than
@@ -585,6 +586,17 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
     } finally {
       this._recoveringStream = false
     }
+  }
+
+  /**
+   * No camera frames, and it says why. The session asks for `hit-test`, `dom-overlay`, `local-floor` and `anchors`, never
+   * `camera-access`, which is the only way a WebXR page is given the image the session tracks against (Chrome on Android, with
+   * its own consent; https://immersive-web.github.io/raw-camera-access/). The companion `getUserMedia` stream below is a
+   * different image, with intrinsics nothing here knows and no clock shared with the XR frames, so pairing it with a viewer
+   * pose would put the marker where the camera was. A flow that wants a marker reads the answer and offers taps.
+   */
+  onCameraFrame(_cb: (frame: CameraFrame) => void, _options: CameraFrameOptions): CameraFrameSubscription {
+    return unsupportedCameraFeed('webxr-no-camera-access')
   }
 
   captureFrame(timeoutMs = 4000): Promise<RawFrame> {

@@ -29,7 +29,7 @@ import {
   DEFAULT_MAX_RANGE_M,
   DEFAULT_MIN_EDGE_INLIER_FRACTION,
   estimateSessionScale,
-  fuseTagObservations,
+  fuseTagObservations as fuseWithGates,
   intrinsicsFromFovY,
   intrinsicsFromProjection,
   intrinsicsFromXRView,
@@ -70,6 +70,12 @@ import { mulberry32 } from '../../../src/shared/test-homes.ts'
 
 const K = INTRINSICS_640
 const SIZE_M = 0.2
+/**
+ * These tests are about frames at every range the solver can read, and the 640x480 camera here (f = 500 px) shows a
+ * 0.2 m tag under 40 px beyond 2.5 m. The pose-grade size gate (`POSE_GRADE_MIN_SIDE_PX`) is therefore off in this
+ * file unless a test says otherwise; `fiducial_pose_gates.test.ts` is where it is tested, with the gate on.
+ */
+const fuseTagObservations: typeof fuseWithGates = (observations, options) => fuseWithGates(observations, { minSidePx: 0, ...options })
 /** Measured with the consensus: 4.7 deg median spread, 3.5 deg p90 error; without it 8.3 and 7.1. The bounds sit between. */
 const SPREAD_BOUND_DEG = 6.5
 const ERROR_BOUND_DEG = 5.3
@@ -787,7 +793,7 @@ test('observationFromDetection carries the fit fields with the corners, and the 
   assert.equal(allUnfitted.reason, 'corner-fit')
   assert.equal(allUnfitted.nFrames, 0)
   assert.equal(allUnfitted.pose, null)
-  assert.deepEqual(allUnfitted.dropped, { intrinsics: 0, cornerFit: 12, range: 0, viewAngle: 0, reprojection: 0, unsolved: 0 })
+  assert.deepEqual(allUnfitted.dropped, { intrinsics: 0, tooSmall: 0, cornerFit: 12, range: 0, viewAngle: 0, reprojection: 0, unsolved: 0 })
   // The same frames with a good fit, and the same frames with no fit stated at all (corners from elsewhere), are fused.
   assert.equal(fuseTagObservations(w.observations.map((x) => ({ ...x, cornerFit: GOOD_FIT })), { tagSizeM: SIZE_M }).status, 'ok')
   assert.equal(fuseTagObservations(w.observations, { tagSizeM: SIZE_M }).status, 'ok')

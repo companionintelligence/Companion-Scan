@@ -33,6 +33,7 @@ import {
 import {
   INTRINSICS_1280,
   INTRINSICS_640,
+  castShadowAcrossHalf,
   dictionaryTagArtwork,
   mat3Apply,
   noiseOnlyFrame,
@@ -752,14 +753,8 @@ test('grouping candidates by place gives the groups the all-pairs comparison giv
   assert.ok(ms < 100, `grouping 6000 candidates took ${ms.toFixed(0)} ms`)
 })
 
-/** Lighting that falls from 1 at one side of the tag to `1 / ratio` at the other over `edgePx` pixels, across a line through the tag's centre at `angle`. */
-function lightAcrossTag(centre: { x: number; y: number }, ratio: number, angle: number, edgePx: number): (x: number, y: number) => number {
-  return (x, y) => {
-    const s = (x - centre.x) * Math.cos(angle) + (y - centre.y) * Math.sin(angle)
-    const t = Math.max(0, Math.min(1, (s + edgePx / 2) / edgePx))
-    return 1 - (1 - 1 / ratio) * t
-  }
-}
+/** Lighting that falls from 1 at one side of the tag to `1 / ratio` at the other over `edgePx` pixels, across a line through the tag's centre at `angle`: the harness's cast shadow. */
+const lightAcrossTag = castShadowAcrossHalf
 
 function litTagReads(det: FiducialDetector, ratio: number, edgeOf: (tagPx: number) => number, trials: number, seed: number): { read: number; wrong: number; refined: number } {
   const rand = mulberry32(seed)

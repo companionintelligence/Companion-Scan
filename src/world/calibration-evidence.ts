@@ -9,8 +9,8 @@
  * the DOM, ADR 0002). `frame-fit.ts` declaring them would be no better the other way round: it imports
  * `Vec3` from ./types.ts, so ./types.ts importing it back would make the hub part of an import cycle. A
  * leaf with no imports is below both, as ./scale-mode.ts and ./manifests.ts are. The evidence a fiducial
- * calibration keeps (WP-14b) belongs here for the same reason: the detector that builds it imports the AR
- * provider.
+ * calibration keeps (WP-14b) is a leaf of its own for the same reason, ./fiducial-evidence.ts: the detector that
+ * builds it imports the AR provider.
  *
  * Pure data and no values: no Deno, no DOM, nothing to import (ADR 0002).
  */

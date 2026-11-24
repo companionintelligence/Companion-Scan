@@ -46,6 +46,7 @@
 import type { Pose } from '../provider.ts'
 import type { Quat, Vec3 } from '../../world/types.ts'
 import { quatFromRotationMatrix } from '../../shared/pose-math.ts'
+import { axisBearingDeg, classifyMount, tagHeadingAxis, wrapDeg } from './tag-mount.ts'
 import type {
   CameraIntrinsics,
   CornerFit,
@@ -76,6 +77,18 @@ export const MAX_ASPECT_MISMATCH = 0.02
 export const DEFAULT_MAX_EDGE_RMS_PX = 1
 /** A frame in which fewer than this share of an edge's samples lay on its fitted line is dropped. The detector's own acceptance is the same number. Adopted, not measured. */
 export const DEFAULT_MIN_EDGE_INLIER_FRACTION = 0.6
+/**
+ * A frame whose detected quad is smaller than this, in pixels (mean side), is left out of a pose: the corners of a
+ * smaller quad are too few pixels apart to fix the tag's tilt. A range gate expressed in the unit the error is
+ * actually in, not in metres: at a focal length of 720 px a tag seen FACE-ON reaches 2.9 m if it is 160 mm, 3.6 m if it
+ * is 200 mm, 4.1 m if it is 230 mm and 5.4 m if it is 300 mm, and the same tag on a phone with another lens reaches
+ * another distance. Seen from the side the quad's mean side is shorter (the side across the view foreshortens), so the
+ * reach is shorter: 12% shorter at 40 degrees to the side (a 200 mm tag reaches 3.2 m there, and 2.7 m at 60 degrees). The
+ * face-on figures are R1's (see the WP-14b spec); the side-on ones are computed from the pinhole model. Adopted, not measured (ADR 0005 rule 5): DX8 sets it, from pose scatter against range
+ * on three phones. A quad that is still large enough to be named (`minIdentitySidePx` in `tag-session.ts`) is read for its
+ * id and counted, and is not used for a pose.
+ */
+export const POSE_GRADE_MIN_SIDE_PX = 40
 /** Frames nearer than this are dropped: the tag then fills the frame and its border is cut off. Adopted, not measured. */
 export const DEFAULT_MIN_RANGE_M = 0.3
 /**
@@ -663,6 +676,39 @@ export function tagCornersInSession(pose: Pose, tagSizeInSessionUnits: number): 
 }
 
 /**
+ * The inverse of {@link poseToSession}: a tag pose in session coordinates seen from a camera pose, as the OpenCV-style
+ * camera-frame pose the solver works in. Lengths are brought from session units back to METRES by
+ * `sessionUnitsPerMetre` (1 for a metric runtime), so the translation can be handed to {@link projectTagCorners}
+ * with the tag's printed size.
+ */
+export function sessionPoseToCamera(tag: Pose, cameraPose: Pose, sessionUnitsPerMetre = 1): { rotation: number[]; translation: Vec3 } {
+  const rc = mmul(quatToMatrix(cameraPose.rotation), CV_TO_THREE)
+  const rct = mtranspose(rc)
+  const d: V3 = [
+    (tag.position.x - cameraPose.position.x) / sessionUnitsPerMetre,
+    (tag.position.y - cameraPose.position.y) / sessionUnitsPerMetre,
+    (tag.position.z - cameraPose.position.z) / sessionUnitsPerMetre,
+  ]
+  const t = mapply(rct, d)
+  return { rotation: mmul(rct, quatToMatrix(tag.rotation)), translation: { x: t[0], y: t[1], z: t[2] } }
+}
+
+/**
+ * Where a tag fixed at `tag` in the session shows up in a camera at `cameraPose`: the four corners in pixels (printed
+ * top-left, top-right, bottom-right, bottom-left). `tagSizeM` is the printed edge in metres.
+ */
+export function reprojectSessionTag(tag: Pose, cameraPose: Pose, intrinsics: CameraIntrinsics, tagSizeM: number, sessionUnitsPerMetre = 1): Array<{ x: number; y: number }> {
+  return projectTagCorners(sessionPoseToCamera(tag, cameraPose, sessionUnitsPerMetre), intrinsics, tagSizeM)
+}
+
+/** RMS distance between two sets of four corner positions, in pixels. */
+export function cornerRmsPx(a: ReadonlyArray<{ x: number; y: number }>, b: ReadonlyArray<{ x: number; y: number }>): number {
+  let sum = 0
+  for (let i = 0; i < 4; i++) sum += (a[i]!.x - b[i]!.x) ** 2 + (a[i]!.y - b[i]!.y) ** 2
+  return Math.sqrt(sum / 4)
+}
+
+/**
  * The column-major 4x4 that carries session coordinates into the tag's own frame (origin at the
  * tag centre, +x right, +y up, +z out of the paper), with lengths converted to METRES:
  * `sessionUnitsPerMetre` is how many session units make a metre. It is the inverse of the fused pose
@@ -695,11 +741,35 @@ export function observationFromDetection(detection: Pick<FiducialDetection, 'cor
   return timestampMs === undefined ? { corners: detection.corners, intrinsics, cameraPose, cornerFit } : { corners: detection.corners, intrinsics, cameraPose, timestampMs, cornerFit }
 }
 
-/** Whether an observation's corners were fitted well enough to be used for a pose. Observations that carry no fit (corners from elsewhere) pass. */
-function cornersUsable(o: TagObservation, maxEdgeRmsPx: number, minInlierFraction: number): boolean {
+/**
+ * Whether an observation's corners were fitted well enough to be used for a pose. Observations that carry no fit (corners from elsewhere) pass.
+ * The one place this is decided: the fusion applies it to every frame, and a session applies it to each frame as it arrives, so a frame the session
+ * counts as read is a frame the fusion keeps.
+ */
+export function cornersUsable(o: Pick<TagObservation, 'cornerFit'>, maxEdgeRmsPx: number, minInlierFraction: number): boolean {
   const q = o.cornerFit
   if (!q) return true
   return q.refined && q.edgeRmsPx !== null && q.edgeRmsPx <= maxEdgeRmsPx && q.edgeInlierFraction !== null && q.edgeInlierFraction >= minInlierFraction
+}
+
+/** The limits on one frame's best solution: how near and how far a tag may read, how far off its face, and how well its corners fit the square. */
+export interface SolutionLimits {
+  minRangeM: number
+  maxRangeM: number
+  maxViewAngleDeg: number
+  maxReprojectionRmsPx: number
+}
+
+/**
+ * Why one frame's best solution is not used for a pose, or null when it is: the range outside `minRangeM` to `maxRangeM`, the tag seen more than
+ * `maxViewAngleDeg` off its face, or corners that fit the square worse than `maxReprojectionRmsPx`. The one place this is decided, for the same reason as
+ * {@link cornersUsable}.
+ */
+export function solutionRefusal(best: Pick<TagPoseCandidate, 'rangeM' | 'viewAngleDeg' | 'reprojectionRmsPx'>, limits: SolutionLimits): 'range' | 'view-angle' | 'reprojection' | null {
+  if (best.rangeM < limits.minRangeM || best.rangeM > limits.maxRangeM) return 'range'
+  if (best.viewAngleDeg > limits.maxViewAngleDeg) return 'view-angle'
+  if (best.reprojectionRmsPx > limits.maxReprojectionRmsPx) return 'reprojection'
+  return null
 }
 
 export interface FusionOptions {
@@ -715,9 +785,26 @@ export interface FusionOptions {
   maxEdgeRmsPx?: number
   /** See {@link DEFAULT_MIN_EDGE_INLIER_FRACTION}. */
   minEdgeInlierFraction?: number
+  /** Smallest detected quad, as its mean side in pixels, a frame may have to be used. Default {@link POSE_GRADE_MIN_SIDE_PX}; 0 turns the gate off. */
+  minSidePx?: number
+  /**
+   * Frames whose tag normal is more than this many degrees from the consensus normal are left out after the frames
+   * have agreed on a pose (they are not counted in `dropped`, as no other consensus drop is). Off by default: a
+   * caller that wants it names it (the WP-14b flow says 8). It is a second look at the same frames the position
+   * consensus has already seen, aimed at a tilt that moves the corners too little to be an outlier by position.
+   */
+  maxNormalDeviationDeg?: number
   minFrames?: number
   maxPoseSpreadM?: number
+  /** Largest robust scatter of the whole orientation across frames, degrees (tilt as well as heading). Default {@link DEFAULT_MAX_ROTATION_SPREAD_DEG}. */
   maxRotationSpreadDeg?: number
+  /**
+   * Largest robust scatter of the HEADING across frames, degrees: the bearing of the axis the Place frame is built on (`tagHeadingAxis`), which is the one
+   * rotation a tag fixes for the frame, since roll and pitch come from gravity. The scatter is `1.4826 x` the median absolute deviation from the fused
+   * heading, which is the standard deviation for Gaussian scatter in one dimension (R1's "1.48 x MAD"). Off by default, as `maxNormalDeviationDeg` is: a
+   * caller that wants it names it (the WP-14b flow says 1). It does not apply to a tag whose normal is between the wall and horizontal limits, which has no frame.
+   */
+  maxHeadingSpreadDeg?: number
 }
 
 interface FrameCandidate {
@@ -730,7 +817,6 @@ interface FrameRecord {
   candidates: FrameCandidate[]
   ratio: number
   rangeM: number
-  rms: number
   chosen: number
 }
 
@@ -753,8 +839,45 @@ function robustRms(distances: readonly number[]): number {
   return MAXWELL_RMS_PER_MEDIAN * median(distances)
 }
 
+/**
+ * For Gaussian scatter in ONE dimension the median absolute deviation is 0.67449 of the standard deviation, so `1.4826 x` the median of the absolute
+ * deviations IS the standard deviation (R1's "1.48 x MAD"), and is not dragged by a frame that went wrong. The heading is one angle; the 1.126 of
+ * {@link MAXWELL_RMS_PER_MEDIAN} is for a distance in three dimensions and would understate it by a quarter.
+ */
+const HEADING_RMS_PER_MEDIAN = 1 / 0.6744897501960817
+
+/**
+ * The robust scatter, degrees, of the headings of `rotations` (tag frame to session, row-major) about the heading of `centre`, where the heading of a
+ * rotation is the bearing of the axis `mount` names (`tagHeadingAxis`): the angle the Place frame is built from, and nothing else of the pose.
+ */
+function headingSpreadDeg(rotations: ReadonlyArray<readonly number[]>, centre: readonly number[], mount: 'wall' | 'horizontal'): number {
+  const about = axisBearingDeg(tagHeadingAxis(centre, mount))
+  return HEADING_RMS_PER_MEDIAN * median(rotations.map((r) => Math.abs(wrapDeg(axisBearingDeg(tagHeadingAxis(r, mount)) - about))))
+}
+
 /** A frame is an outlier when it is this many median distances from the consensus (about 6 sigma for Gaussian scatter). Adopted, not measured. */
 const OUTLIER_MEDIANS = 4
+
+/** The mean length of the quad's four sides, in pixels: the apparent size of the tag. The same number the detector reports as `sidePx`. */
+export function meanSidePx(corners: Quad): number {
+  let sum = 0
+  for (let i = 0; i < 4; i++) {
+    const a = corners[i]!
+    const b = corners[(i + 1) % 4]!
+    sum += Math.hypot(b.x - a.x, b.y - a.y)
+  }
+  return sum / 4
+}
+
+/** The tag's outward normal (its +z) in the frame a row-major rotation maps it into. */
+function normalOf(rotation: readonly number[]): V3 {
+  return [rotation[2]!, rotation[5]!, rotation[8]!]
+}
+
+function normalAngleDeg(a: V3, b: V3): number {
+  const d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+  return (Math.acos(Math.max(-1, Math.min(1, d))) * 180) / Math.PI
+}
 
 /** RMS distance between the four corners of two poses, in session units: one number that mixes position and tilt at the tag's own extent. */
 function cornerDistance(a: SessionPose, b: SessionPose, halfSize: number): number {
@@ -802,7 +925,7 @@ function medianPosition(poses: readonly SessionPose[]): V3 {
   return [median(poses.map((p) => p.position[0])), median(poses.map((p) => p.position[1])), median(poses.map((p) => p.position[2]))]
 }
 
-const NO_DROPS: FusedTagPose['dropped'] = { intrinsics: 0, cornerFit: 0, range: 0, viewAngle: 0, reprojection: 0, unsolved: 0 }
+const NO_DROPS: FusedTagPose['dropped'] = { intrinsics: 0, tooSmall: 0, cornerFit: 0, range: 0, viewAngle: 0, reprojection: 0, unsolved: 0 }
 
 function rejected(reason: FusionRejection, offered: number, partial: Partial<FusedTagPose> = {}): FusedTagPose {
   return {
@@ -811,6 +934,7 @@ function rejected(reason: FusionRejection, offered: number, partial: Partial<Fus
     pose: null,
     poseSpreadM: NaN,
     rotationSpreadDeg: NaN,
+    headingSpreadDeg: NaN,
     reprojectionRmsPx: NaN,
     rangeM: NaN,
     nFrames: 0,
@@ -846,16 +970,24 @@ export function fuseTagObservations(observations: readonly TagObservation[], opt
   const maxView = options.maxViewAngleDeg ?? DEFAULT_MAX_VIEW_ANGLE_DEG
   const maxEdgeRms = options.maxEdgeRmsPx ?? DEFAULT_MAX_EDGE_RMS_PX
   const minInlier = options.minEdgeInlierFraction ?? DEFAULT_MIN_EDGE_INLIER_FRACTION
+  const minSide = options.minSidePx ?? POSE_GRADE_MIN_SIDE_PX
+  const maxNormalDev = options.maxNormalDeviationDeg ?? Infinity
   const minFrames = options.minFrames ?? DEFAULT_MIN_FRAMES
   const maxSpreadM = options.maxPoseSpreadM ?? DEFAULT_MAX_POSE_SPREAD_M
   const maxRotSpread = options.maxRotationSpreadDeg ?? DEFAULT_MAX_ROTATION_SPREAD_DEG
+  const maxHeadingSpread = options.maxHeadingSpreadDeg ?? Infinity
   const halfSession = (options.tagSizeM * unitsPerMetre) / 2
 
-  const dropped = { intrinsics: 0, cornerFit: 0, range: 0, viewAngle: 0, reprojection: 0, unsolved: 0 }
+  const dropped = { intrinsics: 0, tooSmall: 0, cornerFit: 0, range: 0, viewAngle: 0, reprojection: 0, unsolved: 0 }
   const frames: FrameRecord[] = []
   for (const o of observations) {
     if (intrinsicsProblem(o.intrinsics) !== null) {
       dropped.intrinsics++
+      continue
+    }
+    // Before the corner fit: a frame that is both too small and badly fitted is told to come closer, which is the step that helps.
+    if (meanSidePx(o.corners) < minSide) {
+      dropped.tooSmall++
       continue
     }
     if (!cornersUsable(o, maxEdgeRms, minInlier)) {
@@ -868,16 +1000,11 @@ export function fuseTagObservations(observations: readonly TagObservation[], opt
       continue
     }
     const b = sol.best
-    if (b.rangeM < minRange || b.rangeM > maxRange) {
-      dropped.range++
-      continue
-    }
-    if (b.viewAngleDeg > maxView) {
-      dropped.viewAngle++
-      continue
-    }
-    if (b.reprojectionRmsPx > maxRms) {
-      dropped.reprojection++
+    const refusal = solutionRefusal(b, { minRangeM: minRange, maxRangeM: maxRange, maxViewAngleDeg: maxView, maxReprojectionRmsPx: maxRms })
+    if (refusal !== null) {
+      if (refusal === 'range') dropped.range++
+      else if (refusal === 'view-angle') dropped.viewAngle++
+      else dropped.reprojection++
       continue
     }
     const candidates: FrameCandidate[] = [{ pose: toSession(b, o.cameraPose), rms: b.reprojectionRmsPx, isBest: true }]
@@ -891,12 +1018,13 @@ export function fuseTagObservations(observations: readonly TagObservation[], opt
         cam.z + (c.pose.position[2] - cam.z) * unitsPerMetre,
       ]
     }
-    frames.push({ candidates, ratio: sol.ambiguityRatio, rangeM: b.rangeM, rms: b.reprojectionRmsPx, chosen: 0 })
+    frames.push({ candidates, ratio: sol.ambiguityRatio, rangeM: b.rangeM, chosen: 0 })
   }
 
   if (frames.length === 0) {
     const counts: Array<[FusionRejection, number]> = [
       ['intrinsics', dropped.intrinsics],
+      ['too-small', dropped.tooSmall],
       ['corner-fit', dropped.cornerFit],
       ['range', dropped.range],
       ['view-angle', dropped.viewAngle],
@@ -939,13 +1067,18 @@ export function fuseTagObservations(observations: readonly TagObservation[], opt
   // Outlier frames: far from the consensus compared with how far frames usually are.
   const dist = frames.map((f) => cornerDistance(f.candidates[f.chosen]!.pose, consensus, halfSession))
   const cut = Math.max(OUTLIER_MEDIANS * median(dist), OUTLIER_FLOOR_M * unitsPerMetre)
-  const kept = frames.filter((_, i) => dist[i]! <= cut)
+  const consensusNormal = normalOf(consensus.rotation)
+  const kept = frames.filter((f, i) => dist[i]! <= cut && normalAngleDeg(normalOf(f.candidates[f.chosen]!.pose.rotation), consensusNormal) <= maxNormalDev)
   if (kept.length < 1) return rejected('too-few-frames', offered, { sessionUnitsPerMetre: unitsPerMetre, dropped })
 
   const chosenPoses = kept.map((f) => f.candidates[f.chosen]!.pose)
   const fused: SessionPose = { position: medianPosition(chosenPoses), rotation: fuseRotations(chosenPoses.map((p) => p.rotation)) }
   const poseSpreadM = robustRms(chosenPoses.map((p) => Math.hypot(p.position[0] - fused.position[0], p.position[1] - fused.position[1], p.position[2] - fused.position[2]))) / unitsPerMetre
   const rotationSpreadDeg = robustRms(chosenPoses.map((p) => rotationAngleBetweenDeg(fused.rotation, p.rotation)))
+  // The heading is the bearing of the axis the frame is built on, which depends on the mount the fused normal says; a tag between the wall and horizontal
+  // limits is refused a frame (`tag-frame.ts`), so it has no heading to scatter, and its spread is NaN, which fails no gate.
+  const mount = classifyMount(normalOf(fused.rotation)[1])
+  const headingSpreadDegrees = mount === 'tilted' ? NaN : headingSpreadDeg(chosenPoses.map((p) => p.rotation), fused.rotation, mount)
   // A frame whose two solutions merged into one has no mirror to confuse it; cap its ratio so it counts as decisive, not as infinite.
   const medianRatio = median(kept.map((f) => Math.min(f.ratio, AMBIGUITY_RATIO_CAP)))
 
@@ -967,7 +1100,9 @@ export function fuseTagObservations(observations: readonly TagObservation[], opt
     pose,
     poseSpreadM,
     rotationSpreadDeg,
-    reprojectionRmsPx: median(kept.map((f) => f.rms)),
+    headingSpreadDeg: headingSpreadDegrees,
+    // Of the solution each frame kept, not of the best one: a frame the consensus gave its alternate to reports the alternate's error.
+    reprojectionRmsPx: median(kept.map((f) => f.candidates[f.chosen]!.rms)),
     rangeM: median(kept.map((f) => f.rangeM)),
     nFrames: kept.length,
     nFramesOffered: offered,
@@ -977,7 +1112,7 @@ export function fuseTagObservations(observations: readonly TagObservation[], opt
   }
   if (kept.length < minFrames) return { ...result, status: 'rejected', reason: 'too-few-frames' }
   if (ambiguous) return { ...result, status: 'rejected', reason: 'ambiguous' }
-  if (poseSpreadM > maxSpreadM || rotationSpreadDeg > maxRotSpread) return { ...result, status: 'rejected', reason: 'spread' }
+  if (poseSpreadM > maxSpreadM || rotationSpreadDeg > maxRotSpread || headingSpreadDegrees > maxHeadingSpread) return { ...result, status: 'rejected', reason: 'spread' }
   return result
 }
 
@@ -1007,20 +1142,29 @@ export const MIN_SCALE_BASELINE_M = 0.3
  * metric tag-to-camera vector rotated into session axes and p_i the camera position. That is linear
  * in (P, k), solved in least squares with one round of outlier trimming. It needs the camera to have
  * moved, because a static camera cannot tell a near small thing from a far big one; the result is
- * null for a camera path shorter than `MIN_SCALE_BASELINE_M`. Frames outside the default range and
- * reprojection gates are left out, as they are in `fuseTagObservations`.
+ * null for a camera path shorter than `MIN_SCALE_BASELINE_M`. Frames outside the range, size and reprojection limits
+ * (`options`, else the fusion's own defaults) are left out, as they are in `fuseTagObservations`.
  *
  * Labelled as it is: the scale is the printed size and the focal length speaking, so it is as good
  * as the print and the intrinsics, and as good as the runtime's relative camera positions.
  */
-export function estimateSessionScale(observations: readonly TagObservation[], tagSizeM: number): SessionScaleEstimate | null {
+export function estimateSessionScale(
+  observations: readonly TagObservation[],
+  tagSizeM: number,
+  options: { minSidePx?: number; minRangeM?: number; maxRangeM?: number; maxReprojectionRmsPx?: number } = {},
+): SessionScaleEstimate | null {
   const rows: Array<{ v: V3; p: V3 }> = []
+  const minSide = options.minSidePx ?? POSE_GRADE_MIN_SIDE_PX
+  const minRange = options.minRangeM ?? DEFAULT_MIN_RANGE_M
+  const maxRange = options.maxRangeM ?? DEFAULT_MAX_RANGE_M
+  const maxRms = options.maxReprojectionRmsPx ?? DEFAULT_MAX_REPROJECTION_RMS_PX
   for (const o of observations) {
     if (intrinsicsProblem(o.intrinsics) !== null) continue
+    if (meanSidePx(o.corners) < minSide) continue
     if (!cornersUsable(o, DEFAULT_MAX_EDGE_RMS_PX, DEFAULT_MIN_EDGE_INLIER_FRACTION)) continue
     const sol = solveTagPose(o.corners, o.intrinsics, tagSizeM)
-    if (!sol || sol.best.reprojectionRmsPx > DEFAULT_MAX_REPROJECTION_RMS_PX) continue
-    if (sol.best.rangeM < DEFAULT_MIN_RANGE_M || sol.best.rangeM > DEFAULT_MAX_RANGE_M) continue
+    if (!sol || sol.best.reprojectionRmsPx > maxRms) continue
+    if (sol.best.rangeM < minRange || sol.best.rangeM > maxRange) continue
     const rc = mmul(quatToMatrix(o.cameraPose.rotation), CV_TO_THREE)
     const t = sol.best.translation
     rows.push({ v: mapply(rc, [t.x, t.y, t.z]), p: [o.cameraPose.position.x, o.cameraPose.position.y, o.cameraPose.position.z] })
