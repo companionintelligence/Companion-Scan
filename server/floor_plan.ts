@@ -198,7 +198,8 @@ export async function runFloorPlan(opts: FloorPlanRunOptions): Promise<FloorPlan
     }, 0, `floor-plan worker missing: ${params.workerPath}`)
   }
 
-  // 3. Run the worker into a temp dir, so a failed run never replaces a plan that is already there.
+  // 3. Run the worker into a temp dir, so a failed run never overwrites the plan files already there. The manifest
+  //    still records this run, as splat-detect's does, so the editor then shows the failure, not the older plan.
   const jobDir = await Deno.makeTempDir({ prefix: 'floor-plan-' })
   try {
     const jobJson = `${jobDir}/floor-plan.json`
