@@ -34,6 +34,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { engineExpected } from '../../../src/ar/engine-state.ts'
 import { NativeARProvider } from '../../../src/ar/native.ts'
+import { pageForcedRuntime } from '../../../src/ar/runtime-select.ts'
 import { startFailureVerdict } from '../../../src/ar/preflight.ts'
 import { fakeCanvas, fakePlugin, providerOptions } from './support/fake-scan-ar.ts'
 
@@ -56,7 +57,10 @@ const PAGE: Mode = { name: 'a phone or browser page', forcedMode: null, desktopS
 const DESKTOP: Mode = { name: 'the desktop app', forcedMode: null, desktopShell: true }
 const FORCED_WEBXR: Mode = { name: 'a page forced into WebXR (?ar=webxr)', forcedMode: 'webxr', desktopShell: false }
 const DESKTOP_FORCED_WEBXR: Mode = { name: 'the desktop app forced into WebXR', forcedMode: 'webxr', desktopShell: true }
-const NO_ENGINE = [DESKTOP, FORCED_WEBXR, DESKTOP_FORCED_WEBXR]
+/** The XREAL Aura APK: built with VITE_AR_RUNTIME=webxr, whose bundle leaves the engine out, whatever its URL says. */
+const AURA_BUILD: Mode = { name: 'the XREAL Aura build (VITE_AR_RUNTIME=webxr)', forcedMode: pageForcedRuntime(null, 'webxr'), desktopShell: false }
+const AURA_BUILD_ASKED_8THWALL: Mode = { name: 'the XREAL Aura build at ?ar=8thwall', forcedMode: pageForcedRuntime('8thwall', 'webxr'), desktopShell: false }
+const NO_ENGINE = [DESKTOP, FORCED_WEBXR, DESKTOP_FORCED_WEBXR, AURA_BUILD, AURA_BUILD_ASKED_8THWALL]
 const NATIVE_PHONE: Mode = { name: 'a phone whose native AR runtime is in use', forcedMode: null, desktopShell: false, nativeActive: true }
 
 /** The text of `source` from `from` up to, not including, `to`. Both must be there, in that order. */
@@ -219,8 +223,8 @@ test('the desktop app: the engine is absent by design, so nothing is waited for 
   }
 })
 
-test('a page forced into WebXR, in a browser or in the desktop app: absent, never waited for, and the WebXR line', async () => {
-  for (const mode of [FORCED_WEBXR, DESKTOP_FORCED_WEBXR]) {
+test('a page forced into WebXR, in a browser, in the desktop app or by the Aura build: absent, never waited for, and the WebXR line', async () => {
+  for (const mode of [FORCED_WEBXR, DESKTOP_FORCED_WEBXR, AURA_BUILD, AURA_BUILD_ASKED_8THWALL]) {
     for (const waited of WAITS) {
       const run = await boot(mode, waited)
       assert.equal(run.waits.length, 0, `${mode.name}: a wait that would say ${waited} is never started`)
@@ -315,12 +319,53 @@ test('source shape: one reason feeds the overlay, the start screen and the Start
   )
 })
 
-test('source shape: engineExpected is the decision index.html makes when it requests xr.js', () => {
-  assert.match(
-    read('index.html'),
-    /\} else if \(params\.get\('ar'\) !== 'webxr' && !\('__TAURI_INTERNALS__' in window\)\) \{\n\s+const xrScript = document\.createElement\('script'\)/,
-    'index.html requests xr.js unless the page is forced into WebXR or is the desktop app: change engineExpected with it',
-  )
+/**
+ * index.html's engine loader, the plain script near the top of its <head>, run against stand-ins for the page it reads:
+ * `search` is the address's query, `buildRuntime` the content of the scan-ar-runtime meta tag vite.config.ts writes for
+ * a build that forces a runtime (null for no tag), and `tauri` whether the desktop app's webview runs it. Returns the
+ * scripts it asked for.
+ */
+function loaderRequests(search: string, buildRuntime: string | null, tauri: boolean): string[] {
+  const html = read('index.html')
+  const start = html.indexOf('      // AR engine selection:')
+  assert.notEqual(start, -1, 'index.html has the engine loader')
+  const body = html.slice(start, html.indexOf('</script>', start))
+  const requested: string[] = []
+  const document = {
+    querySelector: (selector: string) => (selector === 'meta[name="scan-ar-runtime"]' && buildRuntime !== null
+      ? { getAttribute: (name: string) => (name === 'content' ? buildRuntime : null) }
+      : null),
+    createElement: () => ({ dataset: {}, addEventListener: () => {} }),
+    head: { appendChild: (element: { src?: string }) => { requested.push(String(element.src)) } },
+    addEventListener: () => {},
+  }
+  new Function('location', 'document', 'window', body)({ search }, document, tauri ? { __TAURI_INTERNALS__: {} } : {})
+  return requested
+}
+
+test('engineExpected is the decision index.html makes when it requests xr.js, for every page, app and build', () => {
+  for (const ar of [null, 'webxr', '8thwall']) {
+    for (const build of [null, '8thwall', 'webxr']) {
+      for (const tauri of [false, true]) {
+        const requests = loaderRequests(ar ? `?ar=${ar}` : '', build, tauri).includes('/xr.js')
+        const expected = engineExpected(pageForcedRuntime(ar, build), tauri)
+        assert.equal(requests, expected, `?ar=${ar}, build ${build}, ${tauri ? 'desktop app' : 'browser or phone app'}: change engineExpected with index.html`)
+      }
+    }
+  }
+  assert.deepEqual(loaderRequests('', 'webxr', false), [], 'the Aura build asks for no engine file at all')
+  assert.deepEqual(loaderRequests('?mock=xr8', null, false), ['/test-fixtures/xr8-mock.js'], 'control: the stand-ins see what the loader asks for')
+})
+
+test('source shape: the meta tag index.html reads is the one vite.config.ts writes, before the loader runs', () => {
+  const html = read('index.html')
+  assert.match(html, /const buildRuntime = document\.querySelector\('meta\[name="scan-ar-runtime"\]'\)\?\.getAttribute\('content'\)/)
+  const config = read('vite.config.ts')
+  assert.match(config, /\{ tag: 'meta', attrs: \{ name: 'scan-ar-runtime', content: runtime \}, injectTo: 'head-prepend' as const \}/,
+    "head-prepend: the tag is in <head> ahead of index.html's own scripts, so the loader finds it")
+  assert.match(config, /runtime = typeof value === 'string' && value \? value : undefined/)
+  assert.match(config, /const value = config\.env\.VITE_AR_RUNTIME/, 'the value import.meta.env carries, so the loader and main.ts agree')
+  assert.match(config, /\n {4}forcedRuntimeMeta\(\),\n/, 'the plugin is on in every build and in the dev server')
 })
 
 // ── The runtime a failed native start hands over to ───────────────────────────────────────────────────

@@ -13,7 +13,7 @@
 import { createEighthWallProvider } from './ar/eighthwall'
 import { createNativeARProvider, NativeARProvider } from './ar/native'
 import { probeNativeAR } from './ar/native-bridge'
-import { buildForcedRuntime, chooseNativeRuntime, runtimeSwitchHref, settleNativeProbe } from './ar/runtime-select'
+import { buildForcedRuntime, chooseNativeRuntime, pageForcedRuntime, runtimeSwitchHref, settleNativeProbe } from './ar/runtime-select'
 import { createWebXRProvider, WebXRProvider, isImmersiveARSupported } from './ar/webxr'
 import { ScanFrameEpochLog } from './ar/frame-epoch'
 import { ReanchorFlow, autosplitRequested } from './ar/reanchor-flow'
@@ -935,7 +935,14 @@ async function main() {
   // WebXR-capable iOS browsers (e.g. HelloXR) where the native WebXR session
   // beats the 8th Wall SLAM fallback.  ?ar=8thwall forces the inverse. A build made with
   // VITE_AR_RUNTIME=8thwall forces it too, when the URL names no runtime (the Android 8th Wall APK).
-  const forcedMode = searchParams.get('ar') ?? buildForcedRuntime(import.meta.env.VITE_AR_RUNTIME)
+  // A build made with VITE_AR_RUNTIME=webxr (the XREAL Aura APK) forces WebXR whatever the URL says:
+  // its bundle leaves the 8th Wall engine out, so it has no other runtime, and no switch to one.
+  const buildRuntime = buildForcedRuntime(import.meta.env.VITE_AR_RUNTIME)
+  const forcedMode = pageForcedRuntime(searchParams.get('ar'), import.meta.env.VITE_AR_RUNTIME)
+  if (buildRuntime === 'webxr') {
+    const modeLink = document.getElementById('xr-mode-link')
+    if (modeLink) modeLink.style.display = 'none'
+  }
 
   // Test hook: ?mock=webxr installs the iwer emulation runtime (Meta's
   // immersive-web-emulator engine) so WebXR flows run in headless browsers.
@@ -1035,8 +1042,9 @@ async function main() {
   // buy two chances to read it as a green light.
   const immersiveArAdvertised = nativeActive ? false : await isImmersiveARSupported()
   const webxrSupported = use8thWall ? immersiveArAdvertised : true
-  if (nativeActive) {
-    // The WebXR / 8th Wall switch is a web-only choice. The native runtime has no such switch.
+  if (nativeActive || buildRuntime === 'webxr') {
+    // The WebXR / 8th Wall switch is a web-only choice. The native runtime has no such switch, and a
+    // build that forces WebXR has no 8th Wall to switch to (it was hidden above, and stays hidden).
     const modeLink = document.getElementById('xr-mode-link')
     if (modeLink) modeLink.style.display = 'none'
   } else {

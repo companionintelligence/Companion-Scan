@@ -50,6 +50,14 @@ test('source shape: the scanner points the switch through runtimeSwitchHref in b
   assert.doesNotMatch(body, /link\.href = '\//, 'no fixed href is left')
 })
 
+test('a build that forces WebXR (the XREAL Aura APK) hides the switch: its bundle has no 8th Wall to switch to', () => {
+  const main = read('src/main.ts')
+  assert.match(main, /const buildRuntime = buildForcedRuntime\(import\.meta\.env\.VITE_AR_RUNTIME\)\n\s+const forcedMode = pageForcedRuntime\(searchParams\.get\('ar'\), import\.meta\.env\.VITE_AR_RUNTIME\)\n\s+if \(buildRuntime === 'webxr'\) \{\n\s+const modeLink = document\.getElementById\('xr-mode-link'\)\n\s+if \(modeLink\) modeLink\.style\.display = 'none'\n\s+\}/,
+    'hidden before the runtime is chosen, so a device with no WebXR, which returns early, never shows it either')
+  assert.match(main, /if \(nativeActive \|\| buildRuntime === 'webxr'\) \{\n(?:\s+\/\/[^\n]*\n)*\s+const modeLink = document\.getElementById\('xr-mode-link'\)\n\s+if \(modeLink\) modeLink\.style\.display = 'none'\n\s+\} else \{\n\s+updateXrModeLink\(use8thWall, webxrSupported\)/,
+    'and kept hidden once WebXR has started, where updateXrModeLink would offer the way back to 8th Wall')
+})
+
 test('FN-007: geo is a debug token like the others, so ?debug=geo,pose arms both', () => {
   assert.equal(hasDebugFlag('geo', '?debug=geo,pose'), true)
   assert.equal(hasDebugFlag('pose', '?debug=geo,pose'), true)

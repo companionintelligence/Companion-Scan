@@ -15,6 +15,8 @@ import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { APP_NOTICE, ARCORE_NOTICE, XR_ENGINE_NOTICE, legalSections, openLegalNotices } from '../../../src/ui/legal-notices.ts'
+import { engineInBundle } from '../../../src/ar/engine-state.ts'
+import { buildForcedRuntime } from '../../../src/ar/runtime-select.ts'
 import { ARCORE_NOTICE as NOTICES_FILE_ARCORE_NOTICE } from '../../../scripts/native/third-party-notices.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
@@ -53,6 +55,16 @@ test('the engine section carries what section 1.3.2 of the Agreement asks for', 
 test('the desktop app, whose bundle leaves the engine out, shows no engine notice', () => {
   assert.equal(legalSections(false).some((section) => section.heading === XR_ENGINE_NOTICE.name), false)
   assert.deepEqual(legalSections(false).map((s) => s.heading), [APP_NOTICE.name, THIRD_PARTY])
+})
+
+test('the Android app built for XREAL Aura leaves the engine out, so it shows no engine notice, and keeps the ARCore one for the library it carries', () => {
+  const aura = legalSections(engineInBundle(false, buildForcedRuntime('webxr')), true).map((s) => s.heading)
+  assert.deepEqual(aura, [APP_NOTICE.name, ARCORE_NOTICE.name, THIRD_PARTY])
+  const android = legalSections(engineInBundle(false, buildForcedRuntime(undefined)), true).map((s) => s.heading)
+  assert.deepEqual(android, [APP_NOTICE.name, ARCORE_NOTICE.name, XR_ENGINE_NOTICE.name, THIRD_PARTY], 'control: the default Android app')
+  // The dialog's default reads the build's runtime, so the Aura build needs no flag of its own.
+  const source = readFileSync(join(ROOT, 'src/ui/legal-notices.ts'), 'utf8')
+  assert.match(source, /engineBundled = engineInBundle\(isDesktopShell\(\), buildForcedRuntime\(import\.meta\.env\?\.VITE_AR_RUNTIME as string \| undefined\)\)/)
 })
 
 test("the app's own notice is the Required Notice in LICENSE", () => {

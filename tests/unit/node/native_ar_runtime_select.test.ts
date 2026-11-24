@@ -8,17 +8,44 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { NativeARCapabilities } from '../../../src/ar/native-bridge.ts'
-import { NATIVE_RECHECKS, NATIVE_RECHECK_MS, buildForcedRuntime, chooseNativeRuntime, settleNativeProbe } from '../../../src/ar/runtime-select.ts'
+import {
+  NATIVE_RECHECKS,
+  NATIVE_RECHECK_MS,
+  buildForcedRuntime,
+  chooseNativeRuntime,
+  pageForcedRuntime,
+  settleNativeProbe,
+} from '../../../src/ar/runtime-select.ts'
 
-test('a build made with VITE_AR_RUNTIME=8thwall forces the 8th Wall runtime, and only when the URL names none', () => {
+test('a build made with VITE_AR_RUNTIME=8thwall or webxr forces that runtime, and no other value forces anything', () => {
   assert.equal(buildForcedRuntime('8thwall'), '8thwall')
-  assert.equal(buildForcedRuntime('webxr'), null)
+  assert.equal(buildForcedRuntime('webxr'), 'webxr', 'the XREAL Aura build')
   assert.equal(buildForcedRuntime('native'), null)
+  assert.equal(buildForcedRuntime('WebXR'), null, 'the values are exact')
   assert.equal(buildForcedRuntime(''), null)
   assert.equal(buildForcedRuntime(undefined), null)
   assert.equal(buildForcedRuntime(null), null)
   const supported: NativeARCapabilities = { platform: 'android', engine: 'arcore', supported: true, depth: true, checking: false }
   assert.deepEqual(chooseNativeRuntime(buildForcedRuntime('8thwall'), supported), { native: false, note: null })
+  assert.deepEqual(chooseNativeRuntime(buildForcedRuntime('webxr'), supported), { native: false, note: null },
+    'a device whose ARCore could run still never starts a native session in the WebXR build')
+})
+
+test('the URL picks the runtime over an 8th Wall build, and never over a WebXR build, which carries no engine', () => {
+  // No build value: the URL alone, as before.
+  assert.equal(pageForcedRuntime(null, undefined), null)
+  assert.equal(pageForcedRuntime('webxr', undefined), 'webxr')
+  assert.equal(pageForcedRuntime('8thwall', undefined), '8thwall')
+  // The 8th Wall APK: the build's runtime when the URL names none, and ?ar=webxr still reaches WebXR.
+  assert.equal(pageForcedRuntime(null, '8thwall'), '8thwall')
+  assert.equal(pageForcedRuntime('webxr', '8thwall'), 'webxr')
+  // The XREAL Aura APK: WebXR whatever the URL says, since its bundle leaves the 8th Wall engine out.
+  assert.equal(pageForcedRuntime(null, 'webxr'), 'webxr')
+  assert.equal(pageForcedRuntime('8thwall', 'webxr'), 'webxr')
+  assert.equal(pageForcedRuntime('anything', 'webxr'), 'webxr')
+  // A value buildForcedRuntime does not act on forces nothing, so the URL decides.
+  assert.equal(pageForcedRuntime(null, 'native'), null)
+  assert.equal(pageForcedRuntime('8thwall', 'native'), '8thwall')
 })
 
 const SUPPORTED: NativeARCapabilities = { platform: 'android', engine: 'arcore', supported: true, depth: true, checking: false }

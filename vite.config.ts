@@ -208,6 +208,27 @@ function pwaSwitch() {
   }
 }
 
+// A build that forces its AR runtime (VITE_AR_RUNTIME, which scripts/native/build-web.mjs sets from
+// --ar-runtime) names it in a meta tag at the top of each page's <head>. index.html's engine loader is a
+// plain script that runs before any module, so it cannot read import.meta.env: it reads this tag, and
+// requests no xr.js in a build that forces WebXR, whose bundle leaves the engine out
+// (src/ar/engine-state.ts). The value is the one import.meta.env carries, so the loader and main.ts agree.
+function forcedRuntimeMeta() {
+  let runtime: string | undefined
+  return {
+    name: 'forced-ar-runtime',
+    configResolved(config: { env: Record<string, unknown> }) {
+      const value = config.env.VITE_AR_RUNTIME
+      runtime = typeof value === 'string' && value ? value : undefined
+    },
+    transformIndexHtml() {
+      return runtime
+        ? [{ tag: 'meta', attrs: { name: 'scan-ar-runtime', content: runtime }, injectTo: 'head-prepend' as const }]
+        : []
+    },
+  }
+}
+
 // The native apps' third-party notices list each npm package in the bundle
 // (scripts/native/third-party-notices.mjs). scripts/native/build-web.mjs sets
 // NATIVE_BUNDLE_REPORT to a file, and this plugin writes the module ids of the main
@@ -233,6 +254,7 @@ function bundleReport(file: string) {
 export default defineConfig({
   plugins: [
     ...(tsCert ? [rewriteEditorRoute(), pwaSwitch()] : [basicSsl(), rewriteEditorRoute(), pwaSwitch()]),
+    forcedRuntimeMeta(),
     ...(BUNDLE_REPORT ? [bundleReport(BUNDLE_REPORT)] : []),
   ],
   build: {

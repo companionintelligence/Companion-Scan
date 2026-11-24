@@ -18,6 +18,7 @@ and [PLATFORM_SUPPORT.md](../operations/PLATFORM_SUPPORT.md).
 | Web, WebXR | Android Chrome with ARCore, Meta Quest Browser | WebXR `immersive-ar` | `/webxr.html` | In code, in the same bundle. On Android one session start was seen, and tracking was not reached. Quest support is documented, not verified. | [web-webxr.md](web-webxr.md) |
 | Android app, ARCore | Android phones and tablets | ARCore through `ScanAR`, then 8th Wall, then WebXR | the app (`mobile/`) | Built at `81e437c`, and on `main` after wave 14 by Mobile Build (run 45327838056), which also runs its unit tests. Not run on a device. | [android-arcore.md](android-arcore.md) |
 | Android app, 8th Wall | Android phones and tablets | 8th Wall only | the app, built with `VITE_AR_RUNTIME=8thwall` | Built locally at `81e437c`, and on `main` after wave 14 by Mobile Build's 8th Wall job (run 45327838056); `npm run build:8thwall` in `mobile/` makes it. Not run on a device. | [android-8thwall.md](android-8thwall.md) |
+| Android app, XREAL Aura | XREAL Aura: Android XR on its Compute Puck | WebXR only, which the Android WebView is not known to have; no ARCore session, no 8th Wall engine in the bundle | the app, built with `VITE_AR_RUNTIME=webxr` | Built locally on 2026-11-24 (`npm run build:aura` in `mobile/`, then Gradle), a debug APK of about 25 MB. Mobile Build has a job for it that has not run. Not run on a device. Chrome's `/webxr.html` is the capture path to try first there. | [xreal-aura.md](xreal-aura.md) |
 | Meta Quest app | Meta Quest 3 and 3S | native: Meta Spatial SDK, Camera2 passthrough | the app (`meta/`) | Built locally at `81e437c`, and on `main` after wave 14 by the Quest Build workflow (run 45327834865), whose 108 JVM unit tests pass. Not run on a headset. | [meta-quest.md](meta-quest.md) |
 | iOS app | iPhone | ARKit through `ScanAR`, drawn in RealityKit's `ARView`, then 8th Wall | the app (`mobile/`) | Compiled for the iOS Simulator at `81e437c` (Mobile Build run 45260987425), and on `main` after wave 14 (run 45327838056). Not run on a device. | [ios.md](ios.md) |
 | Desktop app | Windows, macOS, Linux | none: no capture | the app (`desktop/`) | In code. Built by workflows run by hand: Desktop Build passed on `main` after wave 14 for Linux, Windows and macOS (runs 45327841063 and 45330563893). Sign-in has not run against a real Portal. | [desktop/README.md](../../desktop/README.md) |
@@ -27,10 +28,12 @@ Every capture target uses one contract, `ARProvider` (`src/ar/provider.ts`), so 
 it does not change with the runtime. There are three providers: 8th Wall (`src/ar/eighthwall.ts`),
 WebXR (`src/ar/webxr.ts`) and native (`src/ar/native.ts`, ADR 0009). `src/main.ts` picks one when
 the page loads: in a browser, 8th Wall unless the address says `?ar=webxr`; in the phone apps,
-native first ([ADR 0009](../adr/0009-native-ar-runtime-beside-8th-wall.md)).
+native first ([ADR 0009](../adr/0009-native-ar-runtime-beside-8th-wall.md)); in the XREAL Aura
+build, WebXR alone.
 
 Planning for the device targets is in wave 13:
-[factory/13-device-targets/README.md](../factory/13-device-targets/README.md).
+[factory/13-device-targets/README.md](../factory/13-device-targets/README.md). The XREAL Aura
+target is planned in wave 16: [factory/16-xreal-aura/README.md](../factory/16-xreal-aura/README.md).
 
 ## Builds of the merged tree
 
@@ -74,6 +77,8 @@ failed at `8deb264` on `onnxruntime-node`'s install, which #292 fixed.
   each device.
 - [operations/AR_DEVICE_SUPPORT.md](../operations/AR_DEVICE_SUPPORT.md): which devices ran the live
   scanner, and which runtimes have anchors.
+- [xreal-aura.md](xreal-aura.md#first-run-on-an-aura-what-to-record): what the first run on an
+  XREAL Aura should record. There is no checklist for that device yet.
 
 ## Releases
 
@@ -117,7 +122,8 @@ the notices. The Android release build signs from four environment variables or 
    `THIRD-PARTY-NOTICES.txt`, `SHA256SUMS.txt` and notes on installing each one.
 
 The APK it publishes is the default build, native first. Native Release does not build the 8th Wall
-APK; the Mobile Build workflow builds a debug one ([android-8thwall.md](android-8thwall.md)).
+APK or the XREAL Aura APK; the Mobile Build workflow builds a debug one of each
+([android-8thwall.md](android-8thwall.md), [xreal-aura.md](xreal-aura.md)).
 
 ### Not done yet
 
