@@ -43,9 +43,11 @@
  */
 import type { EditPatch, EditPatchProvenance, ScanManifest, WorldJob, WorldProject } from '../../src/world/types.ts'
 import {
+  agreementOf,
   findAppliedRegisterPatch,
   isMatrix16,
   matricesAgree,
+  methodProposal,
   multiplyMat4,
   PLACE_REGISTER_PROPOSAL_ARTIFACT,
   PLACE_REGISTER_SKIP_ARTIFACT,
@@ -53,14 +55,22 @@ import {
   type PlaceRegisterComparison,
   type PlaceRegisterResult,
   readPlaceRegisterResult,
+  type RegistrationMethod,
   type RegistrationProposal,
+  type RegistrationRefusal,
   registerApplyState,
   refusalText,
+  requestsPhotoMethod,
+  sfmReasonText,
+  type SfmResult,
+  type StartingValue,
 } from '../../src/world/register-proposal.ts'
+import { scaleKindOfMode } from '../../src/world/scale-mode.ts'
 import { isPlaceFrameMethod } from '../../src/world/spatial-frame.ts'
 import { collectPointPositions } from '../panoptic/panoptic_lift.ts'
 import { readScanGlb } from '../world_export.ts'
-import { matchParams, matchScans, transformPositions } from './scan_match.ts'
+import { matchParams, matchScansYielding, transformPositions } from './scan_match.ts'
+import { runSfmRegistration, type SfmHost, skippedResult } from './place_register_sfm.ts'
 
 /**
  * Most reference scans the matcher searches one new scan against, in the order
@@ -102,6 +112,49 @@ export const PLACE_REGISTER_AUTO_QUEUE = true
  * that a scan filed under the wrong area gets no proposal until its filing is fixed. Listed under needsDecision.
  */
 export const PLACE_REGISTER_EXCLUDE_OTHER_AREAS = true
+
+/**
+ * Whether a pair that the matcher's own gates pass but that misses one of the starting acceptance values (R2's six, in
+ * scan_match.ts: score, how far apart a second place is, observability, share lined up, coverage, gap) is refused, or offered as the
+ * matcher said. The brief's recommendation is to refuse: the starting values are the tightest case and a verifier that offers little
+ * is the safe way to be wrong. The cost is that rooms that look the same turned round (an empty rectangle, a square with a door gap)
+ * are refused as ambiguous, which R2 found they should be. The narrowest switch there is: set it to false and the numbers are still
+ * recorded on every pair, and nothing is refused for them. Listed under needsDecision.
+ */
+export const PLACE_REGISTER_ENFORCE_STARTING_VALUES = true
+
+/** The refusal each starting value is reported as. The vocabulary is the matcher's own, so no new sentence is needed for a pair that fails one. */
+const REFUSAL_FOR_STARTING_VALUE: Record<StartingValue, RegistrationRefusal> = {
+  'global-peak-ratio': 'ambiguous',
+  'observability': 'ambiguous',
+  'query-inliers': 'low-overlap',
+  'reference-coverage': 'low-overlap',
+  'inlier-rms': 'loose-fit',
+  'field-score': 'low-score',
+}
+
+/**
+ * `proposal` as the job offers it: a proposal that misses a starting value becomes a refusal for the first one it missed, with every
+ * number it measured and no transform. Anything else is returned as it came.
+ */
+export function applyStartingValues(proposal: RegistrationProposal): RegistrationProposal {
+  if (!PLACE_REGISTER_ENFORCE_STARTING_VALUES || proposal.status !== 'proposed') return proposal
+  const verdict = proposal.details?.startingValues
+  if (!verdict || verdict.passed) return proposal
+  return { ...proposal, status: 'refused', transform: null, reason: REFUSAL_FOR_STARTING_VALUE[verdict.failed[0]!] }
+}
+
+/**
+ * Whether the two scans' sessions ran in different units, as both recorded their `scaleMode` (src/world/scale-mode.ts): the modes differ.
+ * An unrecorded mode says nothing, so it is not a difference, and two runtimes whose unit is the metre by contract (WebXR and the native
+ * plugin) agree whatever their modes are called. Two scans in one 8th Wall responsive mode can still differ in unit, since that unit
+ * follows the phone's height at the start (the scale-mode header says so); the size search is not made for them, because it costs about
+ * five times the work and the brief asks for it when the modes differ. DX1 settles whether it should be.
+ */
+export function unitsDiffer(a: Pick<ScanManifest, 'scaleMode'>, b: Pick<ScanManifest, 'scaleMode'>): boolean {
+  if (a.scaleMode === undefined || b.scaleMode === undefined || a.scaleMode === b.scaleMode) return false
+  return !(scaleKindOfMode(a.scaleMode) === 'metric' && scaleKindOfMode(b.scaleMode) === 'metric')
+}
 
 /**
  * Whether the scan's calibration tier is one whose `localToWorld` is a frame of the Place: the tiers
@@ -264,6 +317,27 @@ export interface CompareOptions {
 const yieldMacrotask = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
 /**
+ * What DX9 needs from every pair that was searched, from its details: the evidence the starting values are judged on, the global
+ * probe, the starting values it missed, and the size it recovered. Nothing for a pair that was turned away before a search.
+ */
+function comparisonNumbers(proposal: RegistrationProposal): Partial<PlaceRegisterComparison> {
+  const { evidence, globalProbe, startingValues, scale } = proposal.details ?? {}
+  return {
+    ...(evidence
+      ? {
+        queryInlierShare: evidence.queryInlierShare,
+        referenceCoverage: evidence.referenceCoverage,
+        observability: evidence.observability,
+        fieldScore: evidence.fieldScore,
+      }
+      : {}),
+    ...(globalProbe ? { globalPeakRatio: globalProbe.secondPeakRatio, symmetric: globalProbe.symmetric } : {}),
+    ...(startingValues && !startingValues.passed ? { startingValuesFailed: startingValues.failed } : {}),
+    ...(scale ? { scaleRecovered: scale.recovered } : {}),
+  }
+}
+
+/**
  * Matches `moving` against each candidate in order and picks the proposal to show.
  *
  * Every pair that was tried gets a row in `comparisons`, proposed or refused, with its overlap, residual and
@@ -309,10 +383,12 @@ export async function comparePlacedClouds(
     }
     await yieldToServer()
     const pairStarted = performance.now()
-    const proposal = matchScans(
+    const proposal = applyStartingValues(await matchScansYielding(
       { positions, floorHintY: floorHintFor(reference, patched) },
       { positions: moving.positions, floorHintY: floorHintFor(moving.scan, patched) },
-    )
+      { scaleSearch: unitsDiffer(moving.scan, reference) },
+      yieldToServer,
+    ))
     rows.push({
       referenceScanId: reference.scanId,
       referenceName: reference.name || reference.filename,
@@ -322,6 +398,7 @@ export async function comparePlacedClouds(
       overlapFraction: proposal.overlapFraction,
       inlierResidualM: proposal.inlierResidualM,
       elapsedMs: Math.round(performance.now() - pairStarted),
+      ...comparisonNumbers(proposal),
     })
     if (proposal.details.searchedTranslationM > 0) searched++
     const better = !best ||
@@ -342,20 +419,41 @@ export async function comparePlacedClouds(
   }
 }
 
+/** The sentence about the photo method, or '' when the artifact has no photo block. */
+function photoSentence(sfm: SfmResult | undefined, name: string): string {
+  if (!sfm) return ''
+  if (sfm.status === 'proposed' && sfm.boundedCorrection) {
+    const move = sfm.boundedCorrection
+    return ` The photos of "${name}" propose ${Math.round(move.translationM * 100)} cm and a ${Math.abs(move.yawDeg).toFixed(1)}° turn.`
+  }
+  return ` Photo matching: ${sfmReasonText(sfm.reason)}`
+}
+
 /** The job's `result` text. Says what was measured; never "aligned" or "verified". */
 export function placeRegisterResultText(result: PlaceRegisterResult): string {
   const { proposal, moving, reference } = result
   const name = moving.name
   const against = reference.name
   const others = result.comparisons.length > 1 ? ` (best of ${result.comparisons.length} scans compared)` : ''
+  const photos = photoSentence(result.sfm, name)
   if (proposal.status === 'proposed' && proposal.boundedCorrection) {
     const move = proposal.boundedCorrection
     const gap = proposal.inlierResidualM === null ? '' : `, about ${Math.round(proposal.inlierResidualM * 100)} cm apart`
     return `Proposed a move for "${name}": ${Math.round(move.translationM * 100)} cm and a ${Math.abs(move.yawDeg).toFixed(1)}° turn, ` +
-      `from its walls against "${against}"${others}. ${Math.round(proposal.overlapFraction * 100)}% of the smaller scan lines up${gap}. ` +
+      `from its walls against "${against}"${others}. ${Math.round(proposal.overlapFraction * 100)}% of the smaller scan lines up${gap}.${photos} ` +
       'Nothing moves until you apply it in the editor.'
   }
-  return `No move proposed for "${name}": ${refusalText(proposal.reason)} Compared with "${against}"${others}.`
+  const wallsRan = result.comparisons.length > 0
+  const photosProposed = result.sfm?.status === 'proposed' && result.sfm.boundedCorrection !== null
+  if (!wallsRan && photosProposed) {
+    return `The walls of "${name}" could not be compared.${photos} Nothing moves until you apply it in the editor.`
+  }
+  // The walls proposed nothing and the photos did: the sentence leads with what the walls did, and ends as every proposal's does.
+  if (photosProposed) {
+    return `The walls of "${name}" did not settle a move: ${refusalText(proposal.reason)} Compared with "${against}"${others}.${photos} ` +
+      'Nothing moves until you apply it in the editor.'
+  }
+  return `No move proposed for "${name}": ${refusalText(proposal.reason)} Compared with "${against}"${others}.${photos}`
 }
 
 // ─── Reading a scan's points ─────────────────────────────────────────────────
@@ -375,6 +473,25 @@ export interface PlaceRegisterHost {
   /** Marks the job failed. main.ts's `failWorldJob`. */
   fail(slug: string, jobId: string, reason: string): Promise<void>
   now?(): string
+  /**
+   * What the photo method needs from the server. Absent, the job is the wall match alone and its artifact has no photo block, as every
+   * artifact an earlier build wrote. Present with `enabled: false`, the artifact says the photo method is off.
+   */
+  sfm?: PlaceRegisterSfmHost
+}
+
+/** What the photo method needs from the server, and the one thing the job reads for it: the Place's current frame generation. */
+export interface PlaceRegisterSfmHost extends Omit<SfmHost, 'jobId'> {
+  /** The `frameId` of the Place's stored frame, or null when the Place has no frame or its frame records none. */
+  placeFrameId(projectId: string): Promise<string | null>
+}
+
+/**
+ * Whether this run was asked for the photo method: a job queued with `payload.method === 'sfm'` (the editor's "Check with photos", or
+ * `POST /worlds/:slug/jobs`). Anything else, including a payload that spells it another way, is not a request.
+ */
+export function asksForSfm(payload: WorldJob['payload']): boolean {
+  return requestsPhotoMethod(payload)
 }
 
 /**
@@ -437,26 +554,66 @@ export async function runPlaceRegisterJob(host: PlaceRegisterHost, slug: string,
     const plan = planPlaceRegister(world, claimed.scan.scanId)
     if (!plan.ok) return await skip(plan.reason, plan.message)
 
+    // ── The wall match first: it is cheap, and it needs no photographs ──
     const moving = await readPlacedCloud(host, plan.scan)
-    if (!moving) return await skip('no-geometry', 'This scan has no readable geometry yet, so there is nothing to compare.')
+    let result: PlaceRegisterResult | null = null
+    if (moving) {
+      // Read lazily, one at a time, each released after its pair is compared: a scan can be a quarter of a million points.
+      const candidates: ReferenceCandidate[] = plan.references.map((reference) => ({
+        scan: reference,
+        load: async () => (await readPlacedCloud(host, reference))?.positions ?? null,
+      }))
+      result = await comparePlacedClouds(moving, candidates, { now, patchedScanIds: patchedScanIds(world.editPatches) })
+    }
 
-    // Read lazily, one at a time, each released after its pair is compared: a scan can be a quarter of a million points.
-    const candidates: ReferenceCandidate[] = plan.references.map((reference) => ({
-      scan: reference,
-      load: async () => (await readPlacedCloud(host, reference))?.positions ?? null,
-    }))
+    // ── The photo method: when the wall match proposed nothing, or when this run was asked for it ──
+    let sfm: SfmResult | undefined
+    let pivot: [number, number] | null = null
+    if (host.sfm) {
+      const asked = asksForSfm(claimed.payload)
+      if (!host.sfm.enabled) sfm = skippedResult('off')
+      else if (result?.proposal.status === 'proposed' && !asked) sfm = skippedResult('not-needed')
+      else {
+        // The wall match's best reference is offered to the photo method first, which keeps it unless another earlier scan's photographs
+        // overlap the new scan's more (more pairs the pair list would match, then more photographs). The two methods can therefore
+        // answer for different earlier scans, and the card says when they do.
+        const best = result?.reference.scanId
+        const references = best
+          ? [...plan.references].sort((a, b) => Number(b.scanId === best) - Number(a.scanId === best))
+          : plan.references
+        const projectId = world.projectId
+        const outcome = await runSfmRegistration(
+          { ...host.sfm, jobId },
+          { place: { projectId, frameId: projectId ? await host.sfm.placeFrameId(projectId) : null }, moving: plan.scan, references },
+        )
+        sfm = outcome.result
+        pivot = outcome.pivot
+      }
+    }
 
-    const result = await comparePlacedClouds(moving, candidates, { now, patchedScanIds: patchedScanIds(world.editPatches) })
-    if (!result) return await skip('no-geometry', 'None of the other scans in this Place has readable geometry, so there is nothing to compare.')
+    // Nothing from either method: the reasons a person can act on, as before.
+    const photosAnswered = sfm !== undefined && sfm.status !== 'skipped'
+    if (!result && !photosAnswered) {
+      return moving
+        ? await skip('no-geometry', 'None of the other scans in this Place has readable geometry, so there is nothing to compare.')
+        : await skip('no-geometry', 'This scan has no readable geometry yet, so there is nothing to compare.')
+    }
+    // Only the photo method answered: the wall match has nothing to show, and says so in the shape the card already reads.
+    const answer: PlaceRegisterResult = result ?? withoutWalls(plan.scan, sfm!, now())
+    if (sfm) {
+      answer.sfm = sfm
+      const agreement = pivot ? agreementOf(answer.proposal.transform, sfm.transform, pivot) : null
+      if (agreement) answer.agreement = agreement
+    }
 
     // Deliberately no `scan.status` and no `localToWorld` here, and no applyCompletedJobToWorld: see the header.
     await host.commit(slug, jobId, (job) => {
       job.status = 'completed'
-      job.result = placeRegisterResultText(result)
+      job.result = placeRegisterResultText(answer)
       job.artifacts = [{
         type: PLACE_REGISTER_PROPOSAL_ARTIFACT,
         label: `${plan.scan.name} alignment check`,
-        metadata: result as unknown as Record<string, unknown>,
+        metadata: answer as unknown as Record<string, unknown>,
       }]
       job.progress = 1
       job.updatedAt = now()
@@ -464,6 +621,44 @@ export async function runPlaceRegisterJob(host: PlaceRegisterHost, slug: string,
   } catch (err) {
     console.error('[place-register] job failed:', err)
     await host.fail(slug, jobId, errorText(err))
+  }
+}
+
+/**
+ * The result for a run where the wall match could not read a point cloud and the photo method answered: a refusal for too few wall points
+ * with nothing measured and no comparison rows, so the card says the walls were not compared. It carries no transform, so nothing can be
+ * applied from it, and its reference is the scan the photos were registered against.
+ */
+function withoutWalls(moving: ScanManifest, sfm: SfmResult, comparedAt: string): PlaceRegisterResult {
+  return {
+    proposal: {
+      status: 'refused',
+      transform: null,
+      overlapFraction: 0,
+      inlierResidualM: null,
+      score: 0,
+      boundedCorrection: null,
+      reason: 'too-few-points',
+      details: {
+        movingCells: 0,
+        referenceCells: 0,
+        movingMatchedFraction: 0,
+        referenceMatchedFraction: 0,
+        distinctiveness: 0,
+        fit: 0,
+        peakRatio: 1,
+        nearBestReachM: null,
+        verticalChecked: false,
+        searchedTranslationM: 0,
+        searchedYawDeg: 0,
+      },
+    },
+    moving: refStamp(moving),
+    reference: sfm.reference ?? refStamp(moving),
+    comparisons: [],
+    params: matchParams(),
+    comparedAt,
+    elapsedMs: 0,
   }
 }
 
@@ -521,8 +716,11 @@ export function guardRegistrationPatch(
   if (body.provenance === undefined || body.provenance === null) return { kind: 'plain' }
 
   const claimed = body.provenance as Record<string, unknown>
+  // The wall match writes no method; the photo method writes 'sfm'. Anything else is a form this server does not read.
+  const method: RegistrationMethod | null = claimed['method'] === undefined ? 'scan-match' : claimed['method'] === 'sfm' ? 'sfm' : null
   if (
     typeof claimed !== 'object' || Array.isArray(claimed) ||
+    method === null ||
     claimed['source'] !== PLACE_REGISTER_SOURCE ||
     typeof claimed['jobId'] !== 'string' || claimed['jobId'] === '' ||
     typeof claimed['score'] !== 'number' || !Number.isFinite(claimed['score']) ||
@@ -539,18 +737,19 @@ export function guardRegistrationPatch(
   const job = world.jobs.find((candidate) => candidate.jobId === jobId)
   const result = job ? readPlaceRegisterResult(job) : null
   if (!job || !result) return refused(400, 'That alignment check is no longer in this Place. Run it again.')
-  if (result.proposal.status !== 'proposed' || !isMatrix16(result.proposal.transform)) {
+  const proposal = methodProposal(result, method)
+  if (!proposal || proposal.status !== 'proposed' || !isMatrix16(proposal.transform)) {
     return refused(400, 'That alignment check did not propose a move.')
   }
   if (body.scanId !== result.moving.scanId) return refused(400, 'That alignment check was run for a different scan.')
 
-  const state = registerApplyState(result, jobId, world.scans, world.editPatches ?? [])
+  const state = registerApplyState(result, jobId, world.scans, world.editPatches ?? [], method)
   if (state === 'stale') return refused(409, 'This scan, or the scan it was checked against, has moved since the check. Run it again.')
   if (state !== 'ready') return refused(400, 'That alignment check cannot be applied.')
 
-  const expected = multiplyMat4(result.proposal.transform, result.moving.localToWorld)
+  const expected = multiplyMat4(proposal.transform, result.moving.localToWorld)
   if (!matricesAgree(body.transform?.matrix, expected)) return refused(400, 'The patch is not the move the check proposed.')
-  if (!sameNumber(claimed['score'], result.proposal.score) || !sameNumber(claimed['residualM'], result.proposal.inlierResidualM)) {
+  if (!sameNumber(claimed['score'], proposal.score) || !sameNumber(claimed['residualM'], proposal.residualM)) {
     return refused(400, 'The score on the patch is not the one the check measured.')
   }
 
@@ -559,8 +758,9 @@ export function guardRegistrationPatch(
     provenance: {
       source: PLACE_REGISTER_SOURCE,
       jobId,
-      score: result.proposal.score,
-      residualM: result.proposal.inlierResidualM as number,
+      score: proposal.score,
+      residualM: proposal.residualM as number,
+      ...(method === 'sfm' ? { method } : {}),
     },
   }
 }

@@ -321,7 +321,8 @@ async function readAnchors(page: Page): Promise<Anchors | null> {
       if (typeof scanId !== 'string') continue
       const child = (prefix: string) => root.children.find((c) => c.name.startsWith(prefix))
       scans[scanId] = {
-        decal: seen(child('calibration anchor')),
+        // The scanner's origin decal (src/world/origin-decal.ts), which the editor draws since wave 16.
+        decal: seen(child('calibration origin')),
         actualLandmark: seen(child('actual landmark')),
         actualHeading: seen(child('actual heading marker')),
       }

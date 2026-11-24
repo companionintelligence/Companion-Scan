@@ -277,7 +277,7 @@ test.describe('Scan storage API', () => {
 test.describe('3D Viewer page', () => {
   test('viewer.html loads', async ({ page }) => {
     await page.goto(`${BASE_URL}/viewer.html`, { waitUntil: 'domcontentloaded' })
-    await expect(page.locator('#sidebar-title')).toHaveText('Companion Scan')
+    await expect(page.locator('#sidebar-title')).toHaveText('Spatial Editor')
   })
 
   test('viewer sidebar shows scan list or empty state', async ({ page }) => {

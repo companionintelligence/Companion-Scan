@@ -297,6 +297,14 @@ export interface DeleteAllDeps {
   removeAllFromWorlds(): Promise<unknown>
   /** As `ScanDeletionDeps.removeSessionCopies`, for every session. */
   removeSessionCopies?: RemoveSessionCopies
+  /**
+   * Removes what a run of the photo method of place-register left in a Place's own folder if it was killed (the database and the
+   * model COLMAP made from camera frames: server/register/sfm_workspace.ts). Called once the sessions are gone and
+   * before anything else is removed, so a failure here keeps the worlds as they were. It answers how many Places it could not
+   * clear, and any is a refusal to say everything is gone: camera data is what this route is for. Optional: a caller with none is
+   * unchanged.
+   */
+  dropDerivedWork?(): Promise<{ failed: number } | void>
 }
 
 /** Names directly under `scansDir`, read once, so that removing them does not disturb the listing. */
@@ -332,6 +340,16 @@ export async function deleteAllScans(deps: DeleteAllDeps, now: number = Date.now
         body: {
           error: 'Could not remove all camera frames, so the scans were kept. Try again.',
           keyframeSessions: { deleted: sessions.deleted.length, failed: sessions.failed.length },
+        },
+      }
+    }
+    const derived = await deps.dropDerivedWork?.()
+    if (derived && derived.failed > 0) {
+      return {
+        status: 500,
+        body: {
+          error: 'Could not remove everything made from the camera frames, so the scans were kept. Try again.',
+          derivedWork: { failed: derived.failed },
         },
       }
     }

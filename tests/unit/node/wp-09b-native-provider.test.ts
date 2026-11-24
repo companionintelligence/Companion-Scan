@@ -106,6 +106,7 @@ function optionalMembers(): string[] {
  */
 const ABSENT_WHILE_NATIVE_RUNS: Record<string, string> = {
   hitTestBurstAsync: 'a hit test over the bridge comes back with no frame to pair it with (its pose, status and time), so a native tap is one hit',
+  onCameraFrame: 'the plugins give one JPEG still on request (captureFrame), not a stream of frames each with its pose and projection, which is what the printed-marker reader pairs: a reader that asks is told no-frame-feed',
   anchors: "the runtime anchors of src/ar/anchors.ts (AnchorCapability: handles, moved and lost events, release) are the WebXR Anchors Module's, and neither plugin offers them: the iOS plugin has no anchor method, and the Android plugin's setOriginAnchor and getOriginAnchor (native-bridge.ts) are one saved origin that this provider does not use",
 }
 
