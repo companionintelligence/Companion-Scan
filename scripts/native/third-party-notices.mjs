@@ -22,7 +22,8 @@
  *     (mobile/android/app/gradle.lockfile). The release build uses the versions locked there,
  *     and fails when its libraries are not the ones the lockfile lists, so this list cannot fall
  *     behind the APK.
- *   - Components no package manager knows: the vendored XR Engine (mobile), the Draco decoder,
+ *   - Components no package manager knows: the vendored XR Engine (mobile, except a build that forces
+ *     WebXR, which leaves it out: scripts/native/build-web.mjs, bundlesEngine), the Draco decoder,
  *     the onnxruntime-web WASM files, qrcodegen, and the WebView2 loader (Windows).
  *   - Data the bundle includes by its module: the World Magnetic Model coefficients (NOAA NCEI), when
  *     the web bundle holds src/world/wmm<year>-coefficients.ts (addBundledData).
@@ -387,8 +388,8 @@ export function androidLicenceTexts(entry) {
   ]
 }
 
-function addVendored(notices, shell, targets) {
-  if (shell === 'mobile') {
+function addVendored(notices, shell, targets, engineBundled) {
+  if (engineBundled) {
     // The notice section 1.3.2 of the Agreement asks for, as the app's Legal notices view shows it
     // (src/ui/legal-notices.ts). The Agreement itself is proprietary and linked, not reproduced.
     notices.add({
@@ -504,10 +505,13 @@ export function componentsWithoutText(notices) {
   return notices.components.filter((c) => !c.texts?.length).map((c) => `${c.group} ${c.name}${c.version ? ` ${c.version}` : ''}`)
 }
 
-/** Builds the notices for one bundle. */
-export function bundleNotices({ shell, bundledModules, targets = [], title }) {
+/**
+ * Builds the notices for one bundle. `engineBundled` says whether it carries the XR Engine: the mobile bundle does,
+ * unless it was built to run WebXR alone (scripts/native/build-web.mjs, bundlesEngine); the desktop bundle never does.
+ */
+export function bundleNotices({ shell, bundledModules, targets = [], title, engineBundled = shell === 'mobile' }) {
   const notices = new Notices(title ?? `${shell === 'desktop' ? 'Desktop app' : 'Android app'}${targets.length ? ` (${targets.join(', ')})` : ''}`)
-  addVendored(notices, shell, targets)
+  addVendored(notices, shell, targets, engineBundled)
   addBundledData(notices, bundledModules)
   addNpmPackages(notices, bundledModules)
   if (shell === 'mobile') addAndroid(notices)

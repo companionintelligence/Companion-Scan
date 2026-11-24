@@ -10,7 +10,8 @@
  * link to it, and refer to the Agreement's disclaimer of warranties. Niantic asks a
  * packaged app to show this somewhere a person can find it. The desktop app is the
  * editor and viewer only and leaves the engine out of its bundle, so it shows no
- * engine notice.
+ * engine notice. Nor does the Android app's WebXR-only build (VITE_AR_RUNTIME=webxr),
+ * which runs WebXR alone and leaves the engine out too (engineInBundle, src/ar/engine-state.ts).
  *
  * The Android app also runs ARCore. That is Google's and proprietary: the SDK is under the
  * ARCore Additional Terms of Service, not an open-source licence. Google's user privacy
@@ -24,6 +25,8 @@
  * tests/unit/node/legal_notices.test.ts holds the notice to the engine's own header, and the
  * ARCore notice to the one THIRD-PARTY-NOTICES.txt carries.
  */
+import { engineInBundle } from '../ar/engine-state.ts'
+import { buildForcedRuntime } from '../ar/runtime-select.ts'
 import { isAndroidShell, isDesktopShell } from '../shared/api-base.ts'
 import { openShellDialog } from './shell-dialog.ts'
 
@@ -86,9 +89,9 @@ export interface LegalSection {
 }
 
 /**
- * The sections a build shows. `engineBundled` is false for the desktop app, whose bundle
- * leaves the XR Engine out. `arcoreBundled` is true for the Android app alone, the one that
- * runs ARCore.
+ * The sections a build shows. `engineBundled` is false for the desktop app and for the Android
+ * app's WebXR-only build, whose bundles leave the XR Engine out. `arcoreBundled` is true for
+ * the Android app alone, the one that carries ARCore.
  */
 export function legalSections(engineBundled: boolean, arcoreBundled = false): LegalSection[] {
   const sections: LegalSection[] = [{
@@ -171,10 +174,14 @@ function fileDisclosure(doc: Document, label: string, path: string): HTMLElement
 }
 
 /**
- * Opens the legal notices in a dialog. In the desktop app the engine notice is left out, as is the engine.
- * The ARCore notice is shown in the Android app alone, which is the one shell that runs ARCore.
+ * Opens the legal notices in a dialog. In the desktop app, and in the Android app's WebXR-only build, the
+ * engine notice is left out, as is the engine. The ARCore notice is shown in the Android app alone, which is
+ * the one shell that carries ARCore; the WebXR-only build carries the library too, though it never starts a session.
  */
-export function openLegalNotices(engineBundled = !isDesktopShell(), arcoreBundled = isAndroidShell()): HTMLDialogElement {
+export function openLegalNotices(
+  engineBundled = engineInBundle(isDesktopShell(), buildForcedRuntime(import.meta.env?.VITE_AR_RUNTIME as string | undefined)),
+  arcoreBundled = isAndroidShell(),
+): HTMLDialogElement {
   const doc = document
   const body: Node[] = []
   for (const section of legalSections(engineBundled, arcoreBundled)) {

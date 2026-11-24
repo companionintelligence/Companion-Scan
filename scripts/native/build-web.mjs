@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The web build a native shell ships: `node scripts/native/build-web.mjs desktop|mobile [--ar-runtime=8thwall]`.
+ * The web build a native shell ships: `node scripts/native/build-web.mjs desktop|mobile [--ar-runtime=8thwall|webxr]`.
  *
  * Both shells bundle the Scan web app rather than loading a page from a server. This is that
  * build, run by desktop/src-tauri/tauri.conf.json (beforeBuildCommand) and mobile/package.json
@@ -22,6 +22,11 @@
  *      the vite step (src/ar/runtime-select.ts, buildForcedRuntime), so the scanner starts on the 8th
  *      Wall engine and never on the native runtime. Mobile only: the desktop app has no AR. The
  *      variable may also come from the environment, as before; the build says which runtime it bakes.
+ *   5b. `--ar-runtime=webxr` builds the Android app's WebXR-only variant (docs/targets/android-webxr.md):
+ *      VITE_AR_RUNTIME=webxr, so the scanner starts on WebXR alone and never on the native runtime or
+ *      the engine. Like the desktop bundle, it leaves the 8th Wall engine out, and its notices with it
+ *      (bundlesEngine): no page of that build loads it (index.html reads the forced runtime from the
+ *      meta tag vite.config.ts writes).
  *   6. The bundle gets THIRD-PARTY-NOTICES.txt, generated from the lockfiles for exactly what it
  *      contains (scripts/native/third-party-notices.mjs), and LICENSE.txt. The app's Legal notices
  *      view shows both. The same notices go to <shell>/build/third-party-notices.json, which the
@@ -50,7 +55,7 @@ export const BUILD_DIRS = { desktop: 'desktop/build', mobile: 'mobile/build' }
 /** The licence files every bundle carries at its root. The Legal notices view reads them. */
 export const NOTICE_FILES = ['THIRD-PARTY-NOTICES.txt', 'LICENSE.txt']
 
-/** The AR engine. The desktop bundle leaves it out: the editor and viewer never load it. */
+/** The AR engine. The desktop bundle leaves it out: the editor and viewer never load it. So does a build that forces WebXR. */
 export const ENGINE_FILES = ['xr.js', 'xr-slam.js', 'xr-face.js', 'resources']
 
 /** The PWA files pwaSwitch() removes when VITE_DISABLE_PWA is set. A shell cannot use them. */
@@ -84,7 +89,16 @@ export const DEV_PAGES = {
 }
 
 /** The AR runtimes a native build may force, as VITE_AR_RUNTIME (src/ar/runtime-select.ts, buildForcedRuntime). */
-export const AR_RUNTIMES = ['8thwall']
+export const AR_RUNTIMES = ['8thwall', 'webxr']
+
+/**
+ * Whether a shell's bundle carries the 8th Wall engine, for the runtime the build forces (or null). Only the
+ * mobile app runs it, and not when it is built to run WebXR alone: the desktop app and the WebXR-only build
+ * leave it out. src/ar/engine-state.ts (engineInBundle) is the same rule as the app's Legal notices see it.
+ */
+export function bundlesEngine(shell, arRuntime = null) {
+  return shell === 'mobile' && arRuntime !== 'webxr'
+}
 
 /**
  * The shell and options from the command line: `desktop|mobile [--ar-runtime=<name>]`. Throws on an
@@ -120,17 +134,18 @@ export function viteVariablesInEnvFiles(dir = ROOT) {
 }
 
 /** What a finished bundle must not contain, as relative paths that exist in it. */
-export function forbiddenInBundle(outDir, shell) {
-  const names = [...PWA_FILES, ...Object.keys(NATIVE_EXCLUDED), ...Object.keys(DEV_PAGES), ...(shell === 'desktop' ? ENGINE_FILES : [])]
+export function forbiddenInBundle(outDir, shell, arRuntime = null) {
+  const names = [...PWA_FILES, ...Object.keys(NATIVE_EXCLUDED), ...Object.keys(DEV_PAGES), ...(bundlesEngine(shell, arRuntime) ? [] : ENGINE_FILES)]
   return names.filter((name) => existsSync(join(outDir, name)))
 }
 
 /**
  * The XR Engine files in a finished bundle that are missing or not Niantic's published bytes, as
- * `[file, problem]` pairs. Only the mobile app carries the engine; the desktop bundle has none.
+ * `[file, problem]` pairs. Only the mobile app carries the engine; the desktop bundle and the WebXR-only
+ * build have none.
  */
-export function engineProblemsInBundle(outDir, shell) {
-  return shell === 'mobile' ? engineProblems(outDir) : []
+export function engineProblemsInBundle(outDir, shell, arRuntime = null) {
+  return bundlesEngine(shell, arRuntime) ? engineProblems(outDir) : []
 }
 
 function sizeOf(path) {
@@ -189,12 +204,13 @@ export function buildShellWeb(shell, { arRuntime = null } = {}) {
     console.warn(`[native web build] left out ${name}/: ${why}`)
   }
   for (const name of Object.keys(DEV_PAGES)) rmSync(join(outDir, name), { force: true })
-  if (shell === 'desktop') {
+  if (!bundlesEngine(shell, runtime)) {
     for (const name of ENGINE_FILES) rmSync(join(outDir, name), { recursive: true, force: true })
+    if (shell === 'mobile') console.log(`[native web build] left out the 8th Wall engine: a build forced to ${runtime} never loads it`)
   }
-  const left = forbiddenInBundle(outDir, shell)
+  const left = forbiddenInBundle(outDir, shell, runtime)
   if (left.length) fail(`${outRel} still contains ${left.join(', ')}`)
-  const engine = engineProblemsInBundle(outDir, shell)
+  const engine = engineProblemsInBundle(outDir, shell, runtime)
   if (engine.length) {
     fail(`${outRel} does not carry ${ENGINE_PACKAGE} as Niantic publishes it, and its licence allows no other form: `
       + `${engine.map(([file, problem]) => `${file} (${problem})`).join('; ')}. A checkout that converted line endings `
@@ -203,7 +219,12 @@ export function buildShellWeb(shell, { arRuntime = null } = {}) {
 
   if (!existsSync(report)) fail(`the build wrote no module list to ${report}, so its notices cannot be made`)
   const modules = JSON.parse(readFileSync(report, 'utf8')).modules
-  const notices = bundleNotices({ shell, bundledModules: modules, targets: shell === 'desktop' ? rustTargets() : [] })
+  const notices = bundleNotices({
+    shell,
+    bundledModules: modules,
+    targets: shell === 'desktop' ? rustTargets() : [],
+    engineBundled: bundlesEngine(shell, runtime),
+  })
   const version = JSON.parse(readFileSync(join(ROOT, 'desktop', 'package.json'), 'utf8')).version
   writeFileSync(join(outDir, 'THIRD-PARTY-NOTICES.txt'), renderNotices(notices, version))
   copyFileSync(join(ROOT, 'LICENSE'), join(outDir, 'LICENSE.txt'))

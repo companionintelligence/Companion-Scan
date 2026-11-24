@@ -24,11 +24,23 @@ export function preferNativeRuntime(choice: NativeRuntimeChoice): boolean {
 
 /**
  * The runtime a build forces when the page's URL names none. `VITE_AR_RUNTIME=8thwall` at build time makes
- * the 8th Wall engine the runtime, so the native runtime is never chosen (the Android 8th Wall APK). Any other
- * value, or no value, forces nothing.
+ * the 8th Wall engine the runtime, so the native runtime is never chosen (the Android 8th Wall APK).
+ * `VITE_AR_RUNTIME=webxr` makes WebXR the only runtime: the native runtime is never chosen, and the bundle
+ * leaves the 8th Wall engine out (the WebXR-only APK, docs/targets/android-webxr.md). Any other value, or no
+ * value, forces nothing.
  */
 export function buildForcedRuntime(buildValue: string | null | undefined): string | null {
-  return buildValue === '8thwall' ? '8thwall' : null
+  return buildValue === '8thwall' || buildValue === 'webxr' ? buildValue : null
+}
+
+/**
+ * The runtime the page is forced into: the URL's `ar` value when it has one, else the build's
+ * (buildForcedRuntime). A build that forces WebXR carries no 8th Wall engine, so there the URL cannot
+ * pick 8th Wall, or anything other than WebXR.
+ */
+export function pageForcedRuntime(urlValue: string | null, buildValue: string | null | undefined): string | null {
+  const build = buildForcedRuntime(buildValue)
+  return build === 'webxr' ? 'webxr' : urlValue ?? build
 }
 
 /** How many times the page asks the native layer again while its answer still says 'checking'. */
