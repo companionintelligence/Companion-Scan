@@ -53,7 +53,7 @@
  *   GET  /sessions                       → the capture sessions on this server
  *   GET  /sessions/:id/keyframes/:file   → one keyframe JPEG
  *   GET  /sessions/:id/lingbot-map.*, colmap-poses.manifest.json, colmap.poses.json  → a session's reconstruction files
- *   GET  /scans/<base>.<suffix>          → a scan's sidecars (SPLAT_ARTIFACT_MIME: splat, 4D and panoptic-lift files)
+ *   GET  /scans/<base>.<suffix>          → a scan's sidecars (SPLAT_ARTIFACT_MIME: splat, 4D, panoptic-lift and floor-plan files)
  *   GET  /projects/:id/world             → a Place's world
  *   GET  /worlds, POST /worlds           → the world list, and making a world (the only way to make one)
  *   GET  /worlds/:slug, /share, /patches, /comments, /jobs, /frames/:scanId, /export.glb; POST /patches,
@@ -184,6 +184,7 @@ import {
 import {
   credentialRequiredMessage,
   dedupeKeyFor,
+  floorPlanFollowsReconstruct,
   jobNeedsCredential,
   jobNeedsScan,
   panopticLiftFollowsScan,
@@ -214,6 +215,7 @@ import { runSplatFinish } from './splat/splat_finish.ts'
 import { runSenseNovaVision, senseNovaTask } from './sensenova_vision.ts'
 import { runPanopticScan } from './panoptic/panoptic_scan.ts'
 import { runPanopticLift } from './panoptic/panoptic_lift.ts'
+import { runFloorPlan } from './floor_plan.ts'
 import {
   configFromEnv as portalAuthConfig,
   isPersonClipFetch,
@@ -414,6 +416,8 @@ const UPLOAD_MAX_SUMMARY_BYTES = Number(Deno.env.get('UPLOAD_MAX_SUMMARY_BYTES')
 const PLACE_JSON_MAX_BYTES = 1_000_000
 // Auto-enqueue a splat-finish job when splat-train completes ok (kill switch: SPLAT_FINISH_AUTO=0).
 const SPLAT_FINISH_AUTO = Deno.env.get('SPLAT_FINISH_AUTO') !== '0'
+// Auto-enqueue a floor-plan job when lingbot-map-reconstruct completes ok (kill switch: FLOORPLAN_AUTO=0).
+const FLOORPLAN_AUTO = Deno.env.get('FLOORPLAN_AUTO') !== '0'
 /**
  * Which trainer a `splat-train` job spawns. 'brush' (the default, and every
  * deployment that predates this variable) or 'spirula'.
@@ -1086,17 +1090,25 @@ app.get('/jobs/:id', async (c) => {
 //   <base>.splat-detect.manifest.json   detect run index (status/objectCount/prompt)
 //   <base>.panoptic.detections.json     panoptic-lift's placed objects (server/panoptic/panoptic_lift.ts)
 //   <base>.panoptic-lift.manifest.json  panoptic-lift run index (counts + why)
+//   <base>.floor-plan.json              floor-plan's derived 2D plan: walls, rooms, area (server/floor_plan.ts)
+//   <base>.floor-plan.svg               the plan drawn (walls, room fill, dimension labels)
+//   <base>.floor-plan.manifest.json     floor-plan run index (status, area, wall count)
 // Gated by an allowlisted suffix + the same traversal guard as /scans/:filename. The list is also what a scan's
 // deletion takes beside it (deleteScan's splatSuffixes), so a file served here goes with its scan (F-22). A JSON file
 // is served with the server paths a runner wrote into it cut to file names (jsonWithoutServerPaths).
 // Registered before the .glb-only /scans/:filename route so these suffixes win.
-// NOTE: order matters — `.splat-*.manifest.json` suffixes are checked before the
-// plainer `.interactions.json`/`.json` suffixes so the more specific one wins.
+// NOTE: order matters — the `.*.manifest.json` suffixes are checked before the
+// plainer `.interactions.json`/`.floor-plan.json` suffixes so the more specific one wins.
 const SPLAT_ARTIFACT_MIME: Array<{ suffix: string; mime: string }> = [
   { suffix: '.splat-train.manifest.json', mime: 'application/json' },
   { suffix: '.splat-detect.manifest.json', mime: 'application/json' },
   { suffix: '.splat-finish.manifest.json', mime: 'application/json' },
   { suffix: '.splat-align.manifest.json', mime: 'application/json' },
+  { suffix: '.floor-plan.manifest.json', mime: 'application/json' },
+  { suffix: '.floor-plan.json', mime: 'application/json' },
+  // Opened as a page in its own right when a person follows the Download link, so it is served with a policy that lets
+  // it draw and run nothing (FLOOR_PLAN_SVG_HEADERS). The worker writes only numbers and fixed text into it.
+  { suffix: '.floor-plan.svg', mime: 'image/svg+xml' },
   { suffix: '.interactions.json', mime: 'application/json' },
   { suffix: '.4d-capture.manifest.json', mime: 'application/json' },
   // What the editor's panoptic layer reads (src/viewer/panoptic-layer.ts). Unserved until wave 14, so the layer read
@@ -1109,7 +1121,17 @@ const SPLAT_ARTIFACT_MIME: Array<{ suffix: string; mime: string }> = [
   { suffix: '.sog', mime: 'application/octet-stream' },
 ]
 
-app.get('/scans/:filename{.+\\.(splat\\.ply|compressed\\.ply|sog|splat-train\\.manifest\\.json|splat-detect\\.manifest\\.json|splat-finish\\.manifest\\.json|splat-align\\.manifest\\.json|4d-capture\\.manifest\\.json|interactions\\.json|panoptic-lift\\.manifest\\.json|panoptic\\.detections\\.json)}', async (c) => {
+/**
+ * A floor-plan SVG may draw with its own inline attributes and nothing else: no script, no fetch, no external image or
+ * font. `<img>` never runs an SVG's script, but a person who opens the file from its Download link loads it as a
+ * document on this server's origin.
+ */
+const FLOOR_PLAN_SVG_HEADERS: Record<string, string> = {
+  'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+  'X-Content-Type-Options': 'nosniff',
+}
+
+app.get('/scans/:filename{.+\\.(splat\\.ply|compressed\\.ply|sog|splat-train\\.manifest\\.json|splat-detect\\.manifest\\.json|splat-finish\\.manifest\\.json|splat-align\\.manifest\\.json|4d-capture\\.manifest\\.json|interactions\\.json|panoptic-lift\\.manifest\\.json|panoptic\\.detections\\.json|floor-plan\\.json|floor-plan\\.svg|floor-plan\\.manifest\\.json)}', async (c) => {
   const filename = c.req.param('filename')
   if (!filename || filename.includes('/') || filename.includes('\\') || filename.startsWith('.')) {
     return c.json({ error: 'Invalid filename' }, 400)
@@ -1123,6 +1145,7 @@ app.get('/scans/:filename{.+\\.(splat\\.ply|compressed\\.ply|sog|splat-train\\.m
         'Content-Type': entry.mime,
         ...originResponseHeaders(c.req.header('origin'), ORIGIN_ALLOWLIST),
         'Cache-Control': 'private, max-age=300',
+        ...(entry.mime === 'image/svg+xml' ? FLOOR_PLAN_SVG_HEADERS : {}),
       },
     })
   } catch {
@@ -3929,7 +3952,9 @@ async function _dispatchWorldJob(slug: string, jobId: string, signal?: AbortSign
                 ? 'companion-memory'
                 : job.type === 'place-register'
                   ? 'scan-match'
-                  : 'local-coordinator'
+                  : job.type === 'floor-plan'
+                    ? 'floor-plan-worker'
+                    : 'local-coordinator'
       job.progress = 0.35
       job.updatedAt = new Date().toISOString()
       return job
@@ -3991,6 +4016,11 @@ async function _dispatchWorldJob(slug: string, jobId: string, signal?: AbortSign
 
     if (job.type === 'panoptic-lift') {
       await _runPanopticLiftJob(slug, jobId)
+      return
+    }
+
+    if (job.type === 'floor-plan') {
+      await _runFloorPlanJob(slug, jobId, signal)
       return
     }
 
@@ -4620,12 +4650,17 @@ async function _runLingBotMapJob(slug: string, jobId: string, signal?: AbortSign
       signal,
     })
 
-    await commitWorldJob(slug, jobId, (currentJob, current) => {
+    const chainedFloorPlanJobId = await commitWorldJob(slug, jobId, (currentJob, current) => {
+      let chained: string | null = null
       currentJob.progress = 1
       if (result.status === 'ok') {
         currentJob.status = 'completed'
         currentJob.result = jobResultFor(currentJob)
         currentJob.artifacts = jobArtifactsFor(currentJob, current)
+        // The floor plan is drawn from the cloud this run just wrote (kill switch: FLOORPLAN_AUTO=0).
+        if (floorPlanFollowsReconstruct(result, FLOORPLAN_AUTO)) {
+          chained = createWorldJob(current, 'floor-plan', scan.scanId, { source: 'auto-chain', reconstructJobId: jobId, sessionId }).jobId
+        }
         if (result.glbSidecarPath) {
           const glbName = result.glbSidecarPath.split('/').pop()!
           currentJob.artifacts ??= []
@@ -4669,9 +4704,90 @@ async function _runLingBotMapJob(slug: string, jobId: string, signal?: AbortSign
         currentJob.result = currentJob.error
       }
       currentJob.updatedAt = new Date().toISOString()
+      return chained
     })
+    if (chainedFloorPlanJobId) await completeJobSoon(slug, chainedFloorPlanJobId)
   } catch (err) {
     console.error('[lingbot-map job error]', err)
+    await failWorldJob(slug, jobId, errorMessage(err))
+  }
+}
+
+/**
+ * floor-plan — a 2D plan from the scan's LingBot-Map point cloud (server/floor_plan.ts).
+ *
+ * Shaped like _runSplatDetectJob: a scan with no session, or a session with no cloud, is a skip the driver words, not
+ * a failure here. The plan is a sidecar and nothing else: it adds no layer to the scan and leaves its status alone,
+ * because it draws no geometry in the scan's frame and judges nothing about the capture.
+ */
+async function _runFloorPlanJob(slug: string, jobId: string, signal?: AbortSignal): Promise<void> {
+  try {
+    const claimed = await claimJobScan(slug, jobId)
+    if (!claimed) return
+    const { scan, payload } = claimed
+
+    const base = scan.filename.replace(/\.glb$/, '')
+    const sessionId = scan.sessionId ?? undefined
+    const sessionPath = sessionId ? sessionDir(sessionId) ?? undefined : undefined
+    const manifestName = `${base}.floor-plan.manifest.json`
+    // A request may tune the shortest wall kept; anything but a finite number at or above 0 leaves the driver's default.
+    const minWall = payload?.['minWallM']
+    const result = await runFloorPlan({
+      sessionDir: sessionPath,
+      outputJsonPath: `${SCANS_DIR}/${base}.floor-plan.json`,
+      outputSvgPath: `${SCANS_DIR}/${base}.floor-plan.svg`,
+      manifestPath: `${SCANS_DIR}/${manifestName}`,
+      minWallM: typeof minWall === 'number' && Number.isFinite(minWall) && minWall >= 0 ? minWall : undefined,
+      provenance: { sessionId, scanId: scan.scanId },
+      signal,
+    })
+
+    await commitWorldJob(slug, jobId, (currentJob, current) => {
+      currentJob.progress = 1
+      if (result.status === 'ok') {
+        currentJob.status = 'completed'
+        currentJob.result = jobResultFor(currentJob)
+        currentJob.artifacts = jobArtifactsFor(currentJob, current)
+        currentJob.artifacts ??= []
+        currentJob.artifacts.push({
+          type: 'floor-plan',
+          label: `${scan.name} floor plan`,
+          url: `/scans/${encodeURIComponent(`${base}.floor-plan.json`)}`,
+          metadata: {
+            areaM2: result.areaM2 ?? null,
+            wallCount: result.wallCount ?? null,
+            roomCount: result.manifest.roomCount ?? null,
+            disclaimer: result.manifest.disclaimer ?? null,
+            svgUrl: `/scans/${encodeURIComponent(`${base}.floor-plan.svg`)}`,
+            manifestUrl: `/scans/${encodeURIComponent(manifestName)}`,
+          },
+        })
+      } else if (result.status === 'skipped') {
+        currentJob.status = 'completed'
+        // The fix rides with the reason, as every other skip's does (FN-136). A skip names the interpreter or worker it
+        // looked for, and the job is served to anyone who can read the world, so the path is cut to its name (FN-118).
+        const skippedReason = withoutServerPaths(result.manifest.skippedReason ?? 'unknown reason')
+        currentJob.result = `Floor plan skipped: ${skippedReason}` +
+          (result.manifest.remediation ? ` — ${result.manifest.remediation}` : '')
+        currentJob.artifacts = [{
+          type: 'floor-plan-skip',
+          label: 'Floor plan skipped',
+          url: `/scans/${encodeURIComponent(manifestName)}`,
+          metadata: {
+            sessionId: sessionId ?? null,
+            skippedReason,
+            remediation: result.manifest.remediation ?? null,
+          },
+        }]
+      } else {
+        currentJob.status = 'failed'
+        currentJob.error = result.manifest.error ?? `floor-plan worker exit ${result.exitCode}`
+        currentJob.result = currentJob.error
+      }
+      currentJob.updatedAt = new Date().toISOString()
+    })
+  } catch (err) {
+    console.error('[floor-plan job error]', err)
     await failWorldJob(slug, jobId, errorMessage(err))
   }
 }
@@ -5987,6 +6103,8 @@ function jobResultFor(job: WorldJob): string {
       return 'Panoptic segmentation labelled every pixel of the scan keyframes, separating discrete objects from room surfaces.'
     case 'panoptic-lift':
       return 'Panoptic object segments were placed in the room by casting each one against the scan point cloud. A segment whose depth could not be recovered is recorded as unplaced rather than guessed.'
+    case 'floor-plan':
+      return 'Floor plan drawn from the LingBot-Map point cloud. The .floor-plan.json and .svg sidecars carry the walls, the room outline and its area: derived, not survey-grade, and in the point cloud\'s own units, which are metres only if that reconstruction was metric.'
     case 'person-4d-reconstruct':
       return 'Person reconstructed in 4D. The .4d/ sequence is available as a splat4d layer on the scan.'
     case 'thing-interactive-asset':
@@ -6106,6 +6224,13 @@ function jobArtifactsFor(job: WorldJob, world: WorldProject): WorldJob['artifact
         type: 'sensenova-plan',
         label: `${scan.name} SenseNova inputs`,
         metadata: { sessionId: scan.sessionId, task: job.payload?.['task'] ?? 'recon3d' },
+      }] : []
+    case 'floor-plan':
+      // The plan itself is appended by _runFloorPlanJob once the worker run lands; this entry records its input.
+      return scan ? [{
+        type: 'floor-plan-inputs',
+        label: `${scan.name} floor-plan inputs`,
+        metadata: { sessionId: scan.sessionId, input: 'lingbot-map.point-cloud.ply' },
       }] : []
     case 'thing-interactive-asset': {
       // The GLB and the delivery report are appended by _runThingInteractiveAssetJob, which adds this entry only once

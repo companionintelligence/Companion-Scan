@@ -17,15 +17,16 @@ their own; each is pointed at a Scan server by its https address.
 - **One job system.** Every background job is a `WorldJob`, run by the single-flight pump in
   `server/world/world_job_pump.ts`, with crash recovery, dedupe and bounded history
   ([ADR 0003](../adr/0003-merged-job-system.md)). Every upload queues an `optimize-scan` job
-  (`server/pipeline.ts`: quantization, Draco and point-cloud LODs). There are twenty-three job
-  types, and a client may queue twenty-two of them by name (all but `optimize-scan`). Seventeen
+  (`server/pipeline.ts`: quantization, Draco and point-cloud LODs). There are twenty-four job
+  types, and a client may queue twenty-three of them by name (all but `optimize-scan`). Eighteen
   have a runner; six (`ingest`, `extract-layers`, `align-scan`, `merge-points`, `semantic-pass`,
   `depth-reconstruct`) are No-op placeholders that complete without doing anything. They are
   listed in [architecture.md](../architecture.md#world-job-types--processing-worldsslugjobs).
 - **Reconstruction.** Two pipelines run as `WorldJob`s: the fast GLB optimizer above, and the
   slower chain of poses (LingBot-Map, or COLMAP with a quality verdict), Gaussian-splat training
   (Brush by default, or Spirula Studio, chosen by `SPLAT_BACKEND`), then splat detection, alignment
-  and compression. A person capture is reconstructed off-box in `subsystems/4d-capture/`
+  and compression. A LingBot-Map cloud also gets a 2D floor plan (`floor-plan`, numpy on the CPU),
+  in that cloud's own units. A person capture is reconstructed off-box in `subsystems/4d-capture/`
   ([ADR 0006](../adr/0006-person-capture-is-a-calibrated-take-and-densification-is-a-subsystem.md)).
 - **Optional tools.** Every reconstruction tool is an external program the server runs. A missing
   one makes its job complete as `skipped` with a `remediation`, so a box with none of them still

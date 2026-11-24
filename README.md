@@ -786,6 +786,8 @@ The job invokes `scripts/lingbot_map_worker.py` as a subprocess and writes three
 
 All three are served read-only at `/sessions/<id>/<artifact>`. The desktop editor consumes them via the world-job artifact metadata. If LingBot-Map / torch is not installed, or the checkpoint is missing, the worker writes a `skipped` manifest with a `remediation` hint and the world job completes with that message rather than failing — so the UI explains *why* no reconstruction was produced.
 
+A reconstruction that succeeds queues a `floor-plan` job (`FLOORPLAN_AUTO=0` turns that off): `scripts/floor_plan_worker.py`, on the same interpreter and needing only its numpy, draws a 2D plan from the point cloud, as `<base>.floor-plan.json` and `.svg` beside the scan, shown in the editor's Layers → Floor plan section. It is derived, not survey-grade, and in the point cloud's own units, which are metres only if the reconstruction was metric. See [docs/pipelines/splat-toolbox.md](docs/pipelines/splat-toolbox.md#floor-plan--walls-and-area-from-a-lingbot-map-cloud-cpu).
+
 See [docs/pipelines/lingbot-map.md](docs/pipelines/lingbot-map.md) for the full architecture diagram, UI walkthrough with screenshots, test setup, and CC-BY clip provenance.
 
 ### Splat training backends (Brush or Spirula Studio)

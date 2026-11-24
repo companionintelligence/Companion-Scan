@@ -168,7 +168,7 @@ splat-transform CLI, and the analyzer and panoptic checkouts.
 | Panoptic checkout | `PANOPTIC_DIR` | — | `~/panoptic` |
 | splat_analyzer interpreter | `SPLAT_DETECT_PYTHON` | — | `~/.venvs/splat-analyzer/bin/python` |
 | splat_analyzer checkout | `SPLAT_DETECT_DIR` | — | `~/splat_analyzer` |
-| LingBot-Map interpreter | `LINGBOT_MAP_PYTHON` | `python3` | — |
+| LingBot-Map interpreter (the floor-plan job runs on it too, needing only its numpy) | `LINGBOT_MAP_PYTHON` | `python3` | — |
 | LingBot-Map checkpoint | `LINGBOT_MAP_MODEL_PATH` | — | — |
 | splat-finish's Node | `SPLAT_FINISH_NODE` | `node` | — |
 | splat-transform CLI | `SPLAT_TRANSFORM_CLI` | — | the repository's `node_modules/@playcanvas/splat-transform/bin/cli.mjs` |

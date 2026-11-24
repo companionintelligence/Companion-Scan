@@ -2752,6 +2752,29 @@
                 </div>
               </details>
 
+              <!-- Floor plan — a 2D plan (walls, room outline, area) the floor-plan job draws from the
+                   LingBot-Map points. A drawing to look at and download, not a scene layer: it is in
+                   that reconstruction's own frame and units (src/viewer/floor-plan-layer.ts). -->
+              <details class="layer-tool" id="floor-plan-section">
+                <summary><span><span class="layer-tool-name">Floor plan</span><span class="layer-tool-hint">Walls and area drawn from the LingBot-Map points.</span></span></summary>
+                <div class="layer-tool-body">
+                <div id="floor-plan-status" class="layer-meta" style="margin:12px 0 6px;">
+                  Select a scan to see the floor plan drawn from its LingBot-Map reconstruction.
+                </div>
+                <div id="floor-plan-stats" class="layer-meta" style="margin-bottom:8px;"></div>
+                <div id="floor-plan-preview" hidden style="margin-bottom:8px;background:#fbfbf8;border-radius:6px;overflow:hidden;">
+                  <img id="floor-plan-preview-img" alt="Floor plan of the selected scan" style="display:block;width:100%;max-height:220px;object-fit:contain;" />
+                </div>
+                <div style="display:flex;gap:6px;">
+                  <button class="job-btn" id="btn-floor-plan" style="flex:1;">Generate floor plan</button>
+                  <a id="floor-plan-download-svg" class="job-btn" href="#" download hidden
+                     style="flex:1;text-align:center;text-decoration:none;">Download SVG</a>
+                  <a id="floor-plan-download-json" class="job-btn" href="#" download hidden
+                     style="flex:1;text-align:center;text-decoration:none;">Download JSON</a>
+                </div>
+                </div>
+              </details>
+
               <details class="layer-tool" id="sensenova-section" open>
                 <summary><span><span class="layer-tool-name">SenseNova Vision</span><span class="layer-tool-hint">Reconstruct or understand keyframed scan imagery.</span></span></summary>
                 <div class="layer-tool-body">

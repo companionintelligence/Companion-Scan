@@ -215,6 +215,40 @@ export interface PanopticLiftManifest extends PipelineManifestBase {
   }
 }
 
+/**
+ * floor_plan.ts's manifest — a 2D plan (walls, a room outline, area) drawn from a scan's LingBot-Map point cloud by
+ * scripts/floor_plan_worker.py. `<base>.floor-plan.manifest.json`, beside `<base>.floor-plan.json` (the plan) and
+ * `<base>.floor-plan.svg` (the plan drawn).
+ *
+ * The numbers are in the point cloud's own units. A LingBot-Map cloud is not known to be metric, so `areaM2`,
+ * `ceilingHeightM` and the plan's `lengthM` are metres only when that cloud was, which nothing here checks. The
+ * names are the worker's. `disclaimer` is the plan file's own qualification, carried here so a reader of the
+ * manifest alone has it.
+ */
+export interface FloorPlanManifest extends PipelineManifestBase {
+  tool: 'floor-plan-worker'
+  /** Basename of the landed plan JSON (relative to SCANS_DIR), when 'ok'. */
+  planPath?: string
+  /** Basename of the landed plan SVG (relative to SCANS_DIR), when 'ok'. */
+  svgPath?: string
+  /** Total area of the closed room outlines, in the cloud's units squared. */
+  areaM2?: number
+  /** Wall segments the worker kept. */
+  wallCount?: number
+  /** Closed room outlines: one at most today (a rectangle, or the convex hull of the wall cells). */
+  roomCount?: number
+  /** Floor to ceiling, from the cloud's height histogram, in the cloud's units. */
+  ceilingHeightM?: number
+  /** "derived, not survey-grade", and the units. Present when 'ok'. */
+  disclaimer?: string
+  params: {
+    python: string
+    workerPath: string
+    /** Shortest wall segment kept, in the cloud's units. */
+    minWallM: number
+  }
+}
+
 /** splat_train.ts's manifest — the Brush CLI driver. */
 export interface SplatTrainManifest extends PipelineManifestBase {
   tool: 'brush'

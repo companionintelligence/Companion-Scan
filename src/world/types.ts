@@ -82,6 +82,13 @@ export type WorldJobType =
    * is not.
    */
   | 'panoptic-lift'
+  /**
+   * A 2D floor plan (walls, a room outline, area, ceiling height) from the scan's LingBot-Map point cloud, written
+   * beside the scan as `<base>.floor-plan.json` and `.svg` (server/floor_plan.ts). CPU and numpy only. A successful
+   * `lingbot-map-reconstruct` queues it (`FLOORPLAN_AUTO=0` turns that off). Derived, not survey-grade, and in the
+   * cloud's own units: see FloorPlanManifest.
+   */
+  | 'floor-plan'
   | 'memory-push'
   | 'export-world'
   | 'optimize-scan'
@@ -1411,4 +1418,5 @@ export type {
   PanopticLiftManifest,
   SplatFinishManifest,
   SplatFinishSizes,
+  FloorPlanManifest,
 } from './manifests.ts'
