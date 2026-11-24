@@ -7,20 +7,38 @@
  * diverged in their comments).
  *
  * Why it isn't just a mode-bit mask: on Windows there is no POSIX exec bit.
- * `Deno.stat()` there reports a *synthesized* numeric mode — `0o100666` for
+ * `stat()` there reports a *synthesized* numeric mode — `0o100666` for
  * an ordinary file, exec bits always clear — rather than the `null` the
  * original code's "unsupported platform" fallback was written against. So
  * masking `mode & 0o111` returned `false` for every binary on Windows,
- * including a real `deno.exe`, and every caller concluded its worker was
+ * including the runtime's own executable, and every caller concluded its worker was
  * missing. That silently pushed `splat_train`/`splat_detect` down their
  * "skipped" branch, which is why 9 tests failed on Windows dev boxes while
  * passing in Linux CI.
  */
-import { fromFileUrl } from '@std/path'
 import { REPO_ROOT } from './repo-root.ts'
+import * as fs from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { isNotFound } from './fs_util.ts'
 
-/** Platform string, injectable so both branches are testable from either OS. */
-export type ExecPlatform = typeof Deno.build.os
+/**
+ * Platform string, injectable so both branches are testable from either OS. Windows is `'windows'` here,
+ * where Node's `process.platform` says `'win32'`: see `hostPlatform`.
+ */
+export type ExecPlatform = 'darwin' | 'linux' | 'android' | 'windows' | 'freebsd' | 'netbsd' | 'aix' | 'solaris' | 'illumos'
+
+/** The host's platform, in `ExecPlatform`'s words. */
+export function hostPlatform(): ExecPlatform {
+  return process.platform === 'win32' ? 'windows' : (process.platform as ExecPlatform)
+}
+
+/**
+ * The host's CPU, in the words the capability report uses: `x86_64` and `aarch64`, where Node says `x64`
+ * and `arm64`. Other CPUs keep Node's name.
+ */
+export function hostArch(): string {
+  return process.arch === 'x64' ? 'x86_64' : process.arch === 'arm64' ? 'aarch64' : process.arch
+}
 
 /**
  * True when `bin` exists, is a regular file, and — on platforms that model
@@ -31,11 +49,11 @@ export type ExecPlatform = typeof Deno.build.os
  */
 export async function isRunnable(
   bin: string,
-  platform: ExecPlatform = Deno.build.os,
+  platform: ExecPlatform = hostPlatform(),
 ): Promise<boolean> {
   try {
-    const info = await Deno.stat(bin)
-    if (!info.isFile) return false
+    const info = await fs.stat(bin)
+    if (!info.isFile()) return false
 
     // Windows: no exec-bit concept. Existence of a regular file is the only
     // meaningful signal, so don't mask a mode that is synthesized anyway.
@@ -84,7 +102,7 @@ const DEFAULT_PATHEXT = '.COM;.EXE;.BAT;.CMD'
  * resolution nothing else could reproduce.
  */
 export async function whichPath(bin: string, opts: WhichOptions = {}): Promise<string | null> {
-  const platform = opts.platform ?? Deno.build.os
+  const platform = opts.platform ?? hostPlatform()
   const probe = opts._isRunnable ?? isRunnable
   const dirSep = platform === 'windows' ? '\\' : '/'
 
@@ -129,7 +147,7 @@ function extensionCandidates(bin: string, platform: ExecPlatform, pathExt?: stri
   return [...exts, '']
 }
 
-/** Env read that survives a host without --allow-env rather than throwing. */
+/** The environment's value of `name`, or `fallback` when it is unset. */
 function envOr(name: string, fallback: string): string {
   return readEnv(name) ?? fallback
 }
@@ -193,14 +211,8 @@ export type RunnerToolId =
 
 export type EnvReader = (name: string) => string | undefined
 
-/** `Deno.env.get` that survives a host without --allow-env rather than throwing. */
-export const readEnv: EnvReader = (name) => {
-  try {
-    return Deno.env.get(name)
-  } catch {
-    return undefined
-  }
-}
+/** The server's environment, as an injectable reader. */
+export const readEnv: EnvReader = (name) => process.env[name]
 
 /**
  * Home directory for expanding the documented fallback paths.
@@ -215,8 +227,8 @@ export function resolveHome(env: EnvReader = readEnv): string {
 
 /** The checkout this server runs from, as a filesystem path with a trailing separator. */
 function repoRootPath(): string {
-  // fromFileUrl, not `.pathname`: the latter yields "/C:/…" on Windows.
-  return fromFileUrl(REPO_ROOT)
+  // fileURLToPath, not `.pathname`: the latter yields "/C:/…" on Windows.
+  return fileURLToPath(REPO_ROOT)
 }
 
 /**
@@ -452,7 +464,7 @@ export interface LocateDeps {
  * and is only probed.
  */
 export async function locateTool(lookup: ToolLookup, deps: LocateDeps = {}): Promise<ToolLocation> {
-  const platform = deps.platform ?? Deno.build.os
+  const platform = deps.platform ?? hostPlatform()
   const env = deps.env ?? readEnv
   const probeRunnable = deps.isRunnable ?? isRunnable
   const which = deps.which ?? ((bin: string, p: ExecPlatform) => whichPath(bin, { platform: p }))
@@ -519,7 +531,7 @@ export function displayPathOf(lookup: ToolLookup, location: ToolLocation): strin
 
 /** True when a spawn failed because the program is not there, as opposed to failing once it started. */
 export function isNotFoundSpawnError(err: unknown): boolean {
-  return err instanceof Deno.errors.NotFound ||
+  return isNotFound(err) ||
     (err instanceof Error && /\bENOENT\b|No such file or directory|\(os error 2\)/.test(err.message))
 }
 
@@ -529,8 +541,8 @@ function hasSeparator(name: string, platform: ExecPlatform): boolean {
 
 async function statIs(path: string, want: 'dir' | 'file'): Promise<boolean> {
   try {
-    const info = await Deno.stat(path)
-    return want === 'dir' ? info.isDirectory : info.isFile
+    const info = await fs.stat(path)
+    return want === 'dir' ? info.isDirectory() : info.isFile()
   } catch {
     return false
   }

@@ -53,7 +53,7 @@ export async function readDensifyOutput(clipOutDir) {
   const metadataPath = path.join(clipOutDir, 'metadata.json')
   const densePath = path.join(clipOutDir, 'videos', 'dense')
 
-  // stat, not access: Deno's node:fs access() asks for the uid, a permission its test runner does not grant.
+  // stat, not access(): each output must exist, and stat says whether it does on every platform.
   for (const [label, p] of [['cameras.json', camerasPath], ['videos/dense/', densePath]]) {
     try {
       await stat(p)

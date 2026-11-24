@@ -24,7 +24,7 @@
  *     drives it for real: `scan-added`, delivered on a mocked /events socket.
  *
  * Five scans share one Place whose stored frame is the two-point pair from
- * tests/unit/deno/anchor_calibration.test.ts: a perfect re-measure, the same
+ * tests/unit/server/anchor_calibration.test.ts: a perfect re-measure, the same
  * pair seen from a session that started facing another way and elsewhere, a
  * re-measure 8 cm long, a one-point calibration, and an uncalibrated scan. The
  * matrices are the repo's own builders, not stand-ins.
@@ -42,7 +42,7 @@
  * `calibrationMethod` is written into the mocked manifest, so this spec cannot
  * tell whether a real server hands the viewer the `'two-point-ground'` tier
  * (asCalibrationMethod in server/calibration_fields.ts decides that, and
- * tests/unit/deno/calibration_fields.test.ts pins it); the red pins depend on it.
+ * tests/unit/server/calibration_fields.test.ts pins it); the red pins depend on it.
  *
  * Run: npx playwright test --project=chromium-mock mock-anchor-layer
  */
@@ -60,7 +60,7 @@ const WORLD_ID = 'world-anchor-layer'
 const PROJECT_ID = 'proj-default'
 const ORIGIN: GeoPose = { lat: null, lng: null, altitudeM: null, bearing: null, accuracyM: null }
 
-/** The pair tests/unit/deno/anchor_calibration.test.ts uses, in the first session's own frame. */
+/** The pair tests/unit/server/anchor_calibration.test.ts uses, in the first session's own frame. */
 const LANDMARK: Vec3 = { x: 1.5, y: -1.2, z: -0.4 }
 const HEADING_MARKER: Vec3 = { x: 3.1, y: -1.2, z: 1.9 }
 /** What the Place stored: the landmark at project zero, the marker on +Z at this distance. */

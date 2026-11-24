@@ -3,7 +3,7 @@
  * the three artifacts the LingBot-Map worker would have produced.
  *
  * Why the synthetic artifacts: the real Python worker needs torch + the
- * LingBot-Map checkpoint, so we can't run it in CI. The Deno server's
+ * LingBot-Map checkpoint, so we can't run it in CI. The server's
  * spawn surface is already covered by lingbot_map.test.ts; what we still
  * need is something the viewer can load and screenshot. So we synthesise
  * a procedural point cloud sized to the frame count and write the same

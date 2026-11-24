@@ -74,7 +74,7 @@ export interface PortalAuthConfig {
  */
 const PROCESS_SESSION_SECRET = crypto.randomUUID() + crypto.randomUUID()
 
-export function configFromEnv(env: (k: string) => string | undefined = Deno.env.get): PortalAuthConfig {
+export function configFromEnv(env: (k: string) => string | undefined = (k) => process.env[k]): PortalAuthConfig {
   const issuerUrl = (env('OIDC_ISSUER_URL') ?? '').replace(/\/+$/, '')
   const clientId = env('OIDC_CLIENT_ID') ?? 'ci-web-xr-scan'
   return {
@@ -399,7 +399,6 @@ export function isPersonClipFetch(c: Context, token: string): boolean {
  */
 export function safeRelativePath(p: string | undefined | null): string | null {
   if (!p) return null
-  // deno-lint-ignore no-control-regex
   if (/[\x00-\x1f\x7f]/.test(p)) return null
   if (!p.startsWith('/') || p.startsWith('//') || p.startsWith('/\\')) return null
   if (p.includes('://')) return null

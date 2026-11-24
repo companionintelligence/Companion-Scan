@@ -15,7 +15,7 @@
  * landmark and a perfect calibration showed as a gap against the white pins.
  *
  * Everything here uses the repo's own calibration builders from src/world/geo.ts
- * with the pair from tests/unit/deno/anchor_calibration.test.ts, so the matrices
+ * with the pair from tests/unit/server/anchor_calibration.test.ts, so the matrices
  * are the real ones, not hand-made stand-ins.
  *
  * Run: node --experimental-strip-types --no-warnings --test tests/unit/node/anchor_placement.test.ts
@@ -44,7 +44,7 @@ const EPS = 1e-9
 
 const ZERO: Vec3 = { x: 0, y: 0, z: 0 }
 
-/** The pair tests/unit/deno/anchor_calibration.test.ts uses. */
+/** The pair tests/unit/server/anchor_calibration.test.ts uses. */
 const LANDMARK: Vec3 = { x: 1.5, y: -1.2, z: -0.4 }
 const HEADING_MARKER: Vec3 = { x: 3.1, y: -1.2, z: 1.9 }
 

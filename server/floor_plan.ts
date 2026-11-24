@@ -33,11 +33,13 @@
  *                        [--transform <16 numbers> --up-axis y --units m|m-estimated|session]
  *   exit 0 plan written · 2 bad input · 3 numpy missing. Deterministic, CPU only. It writes no manifest.
  */
-import { fromFileUrl } from '@std/path'
+import * as fs from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 
 import type { FloorPlanAlignment, FloorPlanManifest, FloorPlanUnits, ScanManifest } from '../src/world/types.ts'
 import { type ScaleKind, scaleKindOfMode } from '../src/world/scale-mode.ts'
 import { displayPathOf, locateTool, runnerToolLookup, toolSkip } from './exec_probe.ts'
+import { makeTempDir } from './fs_util.ts'
 import { REPO_ROOT } from './repo-root.ts'
 import {
   budgetFromEnv,
@@ -68,7 +70,7 @@ import {
 export type { FloorPlanAlignment, FloorPlanManifest, FloorPlanUnits }
 
 /** The worker this checkout ships. FLOORPLAN_WORKER overrides it, as LINGBOT_MAP_SCRIPT does LingBot-Map's. */
-export const DEFAULT_FLOORPLAN_WORKER = fromFileUrl(new URL('scripts/floor_plan_worker.py', REPO_ROOT))
+export const DEFAULT_FLOORPLAN_WORKER = fileURLToPath(new URL('scripts/floor_plan_worker.py', REPO_ROOT))
 
 /** The input the worker reads: the session's LingBot-Map reconstruction. */
 export const FLOOR_PLAN_INPUT = 'lingbot-map.point-cloud.ply'
@@ -294,7 +296,7 @@ export interface FloorPlanSummary {
 
 /** The worker script and the shortest wall kept: an explicit option, else the environment, else the default. */
 export function resolveParams(opts: Pick<FloorPlanRunOptions, 'workerPath' | 'minWallM'>) {
-  const workerPath = opts.workerPath ?? Deno.env.get('FLOORPLAN_WORKER') ?? DEFAULT_FLOORPLAN_WORKER
+  const workerPath = opts.workerPath ?? process.env.FLOORPLAN_WORKER ?? DEFAULT_FLOORPLAN_WORKER
   const minWallM = opts.minWallM !== undefined && Number.isFinite(opts.minWallM) && opts.minWallM >= 0
     ? opts.minWallM
     : numFromEnv('FLOORPLAN_MIN_WALL_M', 0.5)
@@ -396,7 +398,7 @@ export async function runFloorPlan(opts: FloorPlanRunOptions): Promise<FloorPlan
 
   // 3. Run the worker into a temp dir, so a failed run never overwrites the plan files already there. The manifest
   //    still records this run, as splat-detect's does, so the editor then shows the failure, not the older plan.
-  const jobDir = await Deno.makeTempDir({ prefix: 'floor-plan-' })
+  const jobDir = await makeTempDir({ prefix: 'floor-plan-' })
   try {
     const jobJson = `${jobDir}/floor-plan.json`
     const jobSvg = `${jobDir}/floor-plan.svg`
@@ -439,8 +441,8 @@ export async function runFloorPlan(opts: FloorPlanRunOptions): Promise<FloorPlan
     let planText: string
     let svgText: string
     try {
-      planText = await Deno.readTextFile(jobJson)
-      svgText = await Deno.readTextFile(jobSvg)
+      planText = await fs.readFile(jobJson, 'utf8')
+      svgText = await fs.readFile(jobSvg, 'utf8')
     } catch {
       return _finish(manifestPath, {
         ...baseManifest,
@@ -460,8 +462,8 @@ export async function runFloorPlan(opts: FloorPlanRunOptions): Promise<FloorPlan
     }
 
     // 5. Land the plan next to the scan.
-    await Deno.writeTextFile(opts.outputJsonPath, planText)
-    await Deno.writeTextFile(opts.outputSvgPath, svgText)
+    await fs.writeFile(opts.outputJsonPath, planText)
+    await fs.writeFile(opts.outputSvgPath, svgText)
 
     const manifest: FloorPlanManifest = {
       ...baseManifest,
@@ -530,7 +532,7 @@ function baseName(path: string): string {
 
 async function isFile(path: string): Promise<boolean> {
   try {
-    return (await Deno.stat(path)).isFile
+    return (await fs.stat(path)).isFile()
   } catch {
     return false
   }
@@ -538,7 +540,7 @@ async function isFile(path: string): Promise<boolean> {
 
 async function removeQuietly(path: string): Promise<void> {
   try {
-    await Deno.remove(path, { recursive: true })
+    await fs.rm(path, { recursive: true })
   } catch {
     // already gone
   }

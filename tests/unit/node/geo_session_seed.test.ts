@@ -1,6 +1,6 @@
 /**
  * What a capture session records of where it is and which way it faces (src/geo/session-seed.ts), against a physical model that
- * shares no code with the app (tests/unit/deno/physical_oracle.ts, which imports nothing).
+ * shares no code with the app (tests/unit/server/physical_oracle.ts, which imports nothing).
  *
  * The compass of the model is perfect, and magnetic: it reads the true bearing of the camera's forward direction less the
  * declination of the place, as a phone's does. A session starts facing `psi` and the camera turns and tilts through the walk. What
@@ -33,7 +33,7 @@ import type { CompassReading } from '../../../src/geo/compass-heading.ts'
 import type { GeoFix } from '../../../src/geo/geo-tracker.ts'
 import { parseGeoSession } from '../../../src/world/geo-session.ts'
 import { declinationRecord } from '../../../src/world/georef.ts'
-import { cameraRotation, norm360, perfectCompassBearing, trueSessionZBearing, type Q } from '../deno/physical_oracle.ts'
+import { cameraRotation, norm360, perfectCompassBearing, trueSessionZBearing, type Q } from '../server/physical_oracle.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..', '..', '..')

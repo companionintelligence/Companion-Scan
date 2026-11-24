@@ -5,7 +5,7 @@
  * Until WP-04b the figure on screen was `sessionDisagreementM`, a closed form for two points fitted to the investigation's
  * Monte Carlo of two visits to one Place (a landmark and a heading marker tapped twice with 3 cm of noise, a point 5 m
  * out). It is gone: the figure is now `frameUncertaintyAt` (src/world/frame-fit.ts), the same prediction for any number
- * of points, which tests/unit/deno/frame_fit.test.ts holds to simulated visit pairs. This file holds the guidance to
+ * of points, which tests/unit/server/frame_fit.test.ts holds to simulated visit pairs. This file holds the guidance to
  * three things:
  *
  *  - the figure is the fit's, said in the fit's words (`estimateSentence`, the sentence a verdict uses when it withholds
@@ -335,11 +335,11 @@ test('each adopted constant says it is adopted and not measured, where it is def
   }
 })
 
-test('the file uses no Deno API and imports only browser-safe modules, so the browser may import it (ADR 0002)', () => {
+test('the file uses no Node API and imports only browser-safe modules, so the browser may import it (ADR 0002)', () => {
   const source = readFileSync(join(ROOT, 'src/world/baseline-guidance.ts'), 'utf8')
-  assert.doesNotMatch(source, /\bDeno\.[A-Za-z]/, 'no use of the Deno namespace')
+  assert.doesNotMatch(source, /\bfrom\s+['\"]node:|\bprocess\.(?:env|argv|exit|cwd|platform|arch|versions|execPath|on)\b|\bBuffer\.(?:from|alloc|concat|isBuffer)\b/, 'no Node module, no process, no Buffer')
   const imports = [...source.matchAll(/from '([^']+)'/g)].map((m) => m[1])
   // frame-fit.ts owns the one adopted tap-noise figure (SIGMA0_M) and the prediction; this file re-exports the first as
-  // TAP_SIGMA0_M, so the two cannot drift apart. All three modules are free of Deno and DOM references.
+  // TAP_SIGMA0_M, so the two cannot drift apart. All three modules are free of Node and DOM references.
   assert.deepEqual(imports, ['./frame-fit.ts', './geo.ts', './types.ts'])
 })

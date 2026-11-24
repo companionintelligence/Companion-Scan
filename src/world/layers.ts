@@ -1,4 +1,4 @@
-import type { LayerManifest, LayerType } from './types'
+import type { LayerManifest, LayerType } from './types.ts'
 
 export const LAYER_ORDER: LayerType[] = [
   'points',

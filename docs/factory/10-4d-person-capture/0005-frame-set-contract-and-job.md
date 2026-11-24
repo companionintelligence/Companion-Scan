@@ -151,7 +151,7 @@ whole world JSON (ADR 0004), so throttle to ~5% steps — **never per frame**.
 
 New:
 - `server/person4d/person_4d.ts` — the driver
-- `tests/unit/deno/person_4d.test.ts`
+- `tests/unit/server/person_4d.test.ts`
 - `tests/api-person-capture.spec.ts` (one consolidated spec for the whole wave, rather than one per ticket)
 
 Changed:

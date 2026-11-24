@@ -2,7 +2,7 @@
  * Deadline-bounded subprocess runs for the WorldJob runners.
  *
  * Nothing bounds a runner's child today. The single-flight pump awaits one job
- * at a time, so a stage that awaits `Deno.Command#output()` with no limit holds
+ * at a time, so a stage that awaits a child's output with no limit holds
  * the only job slot for as long as its child stays alive: one wedged GPU run
  * stops every queued job in every world until the process restarts.
  *
@@ -21,6 +21,8 @@
  * which this helper does not do.
  */
 import { isServerSessionId } from '../src/shared/session-id.ts'
+import * as fs from 'node:fs/promises'
+import { type CommandOptions, spawnCommand, type CommandOutput } from './subprocess.ts'
 
 /** How long a killed child's pipes get to close before the helper stops waiting for them. */
 export const KILL_GRACE_MS = 5_000
@@ -30,7 +32,7 @@ export const MAX_TIMER_MS = 2_147_483_647
 
 const EXPIRED = Symbol('deadline-expired')
 
-export interface DeadlineOutput extends Deno.CommandOutput {
+export interface DeadlineOutput extends CommandOutput {
   /**
    * `timed out after 3 h` when the deadline fired and the child was killed,
    * `aborted by its job (…)` when the caller's signal did, null when it
@@ -81,13 +83,13 @@ function notStarted(timeoutReason: string): DeadlineOutput {
  */
 export async function runWithDeadline(
   bin: string,
-  options: Deno.CommandOptions,
+  options: CommandOptions,
   deadlineMs: number,
   killGraceMs: number = KILL_GRACE_MS,
   signal?: AbortSignal,
 ): Promise<DeadlineOutput> {
   if (signal?.aborted) return notStarted(abortReasonOf(signal))
-  const child = new Deno.Command(bin, options).spawn()
+  const child = await spawnCommand(bin, options)
   const exited = child.output()
 
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -100,7 +102,7 @@ export async function runWithDeadline(
     onAbort = () => resolve(ABORTED)
     signal.addEventListener('abort', onAbort, { once: true })
   })
-  let first: Deno.CommandOutput | typeof EXPIRED | typeof ABORTED
+  let first: CommandOutput | typeof EXPIRED | typeof ABORTED
   try {
     first = await Promise.race([exited, expired, aborted])
   } finally {
@@ -130,28 +132,15 @@ export async function runWithDeadline(
   }
 }
 
-/**
- * Copy a finished child's output with the timeout reason added. The fields are
- * copied one by one, not spread: a stream that was not piped has a getter that
- * throws, and a spread calls it. Spreading made a probe with `stdout: 'null'`
- * throw before it reported its exit code.
- */
-function withTimeoutReason(out: Deno.CommandOutput, timeoutReason: string | null): DeadlineOutput {
+/** A finished child's output with the timeout reason added. A pipe that was not piped reads as empty. */
+function withTimeoutReason(out: CommandOutput, timeoutReason: string | null): DeadlineOutput {
   return {
     code: out.code,
     signal: out.signal,
     success: out.success,
-    stdout: streamOrEmpty(() => out.stdout),
-    stderr: streamOrEmpty(() => out.stderr),
+    stdout: out.stdout,
+    stderr: out.stderr,
     timeoutReason,
-  }
-}
-
-function streamOrEmpty(read: () => Deno.CommandOutput['stdout']): Deno.CommandOutput['stdout'] {
-  try {
-    return read()
-  } catch {
-    return new Uint8Array()
   }
 }
 
@@ -183,17 +172,10 @@ export function describeBudget(ms: number): string {
  * A per-stage budget from the environment, in milliseconds.
  *
  * An unset, unparseable or infinite value takes the default, and so does one
- * below 1 ms once it is rounded down (0.5 counts as 0). A read the process is not
- * allowed to make takes the default too, so a missing permission cannot throw
- * into a job.
+ * below 1 ms once it is rounded down (0.5 counts as 0).
  */
 export function budgetFromEnv(name: string, fallbackMs: number): number {
-  let raw: string | undefined
-  try {
-    raw = Deno.env.get(name)
-  } catch {
-    raw = undefined
-  }
+  const raw = process.env[name]
   const ms = Math.floor(raw ? Number(raw) : Number.NaN)
   // Rounded down before the test: a zero-length timer fires at once, so a budget
   // that floors to 0 would kill its stage immediately. setTimeout also fires at
@@ -207,13 +189,9 @@ export function budgetFromEnv(name: string, fallbackMs: number): number {
 // Each of these used to be copied into five runners (ADR 0001). The integer
 // rule is `budgetFromEnv`'s, without the timer cap.
 
-/** An env read that survives a missing --allow-env rather than throwing into a job. */
+/** The environment's value of `name`. */
 function envValue(name: string): string | undefined {
-  try {
-    return Deno.env.get(name)
-  } catch {
-    return undefined
-  }
+  return process.env[name]
 }
 
 /**
@@ -222,8 +200,8 @@ function envValue(name: string): string | undefined {
  * One rule for every runner: the value is rounded down first and then kept
  * only when it is finite and at least 1, so 0.5 takes the default rather than
  * passing a `> 0` test and becoming 0. Text that is not a number (`12abc`)
- * takes the default too; `parseInt` used to read it as 12. Unset, empty and
- * unreadable all take the default.
+ * takes the default too; `parseInt` used to read it as 12. Unset and empty
+ * take the default.
  */
 export function intFromEnv(name: string, fallback: number): number {
   const raw = envValue(name)?.trim()
@@ -273,9 +251,9 @@ export async function writeRunnerManifest(
   try {
     if (opts.mkdir) {
       const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
-      if (slash > 0) await Deno.mkdir(path.slice(0, slash), { recursive: true })
+      if (slash > 0) await fs.mkdir(path.slice(0, slash), { recursive: true })
     }
-    await Deno.writeTextFile(path, JSON.stringify(manifest, null, 2))
+    await fs.writeFile(path, JSON.stringify(manifest, null, 2))
   } catch (e) {
     console.warn(`[${tag}] failed to write manifest:`, e)
   }

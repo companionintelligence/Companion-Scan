@@ -13,7 +13,7 @@
  * ordinary write inside it is dropped rather than queued, because a stale tick
  * has nothing worth saying later.
  *
- * Lives in the node suite rather than the Deno one only because the module
+ * Lives in the node suite rather than the server one only because the module
  * sits under src/ with the browser code it ships alongside; `StatusNode` is
  * narrow enough that a plain object stands in for the DOM element.
  *

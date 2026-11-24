@@ -62,8 +62,8 @@ export function toolTable(env = process.env) {
 /**
  * A regular file with an exec bit, the same test as the appliance's
  * `isRunnable` (server/exec_probe.ts). Windows has no exec bit, so a file is
- * enough there. Mode bits rather than `access(X_OK)`, which needs the process's
- * uid and so a permission Deno's test runner does not grant.
+ * enough there. Mode bits rather than `access(X_OK)`, so the answer is the
+ * appliance's own: server/exec_probe.ts reads the mode bits too.
  */
 export async function isExecutable(file) {
   try {

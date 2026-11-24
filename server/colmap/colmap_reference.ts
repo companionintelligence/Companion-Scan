@@ -37,6 +37,8 @@ import { type ColmapImage, parseImagesBin } from './colmap_model.ts'
 import { countSessionModels, type JointFrame, jointReaderArgs, type SessionCameraPrior } from './colmap_sessions.ts'
 import { formatMatchList, type ImagePair, type PairImage, planMatching } from '../register/pair_list.ts'
 import { frameKey } from '../register/session_priors.ts'
+import * as fs from 'node:fs/promises'
+import { readBytes } from '../fs_util.ts'
 
 /** How a COLMAP command is run: the seam the tests replace. The same shape `ColmapPosesRunOptions._spawn` has. */
 export type ColmapSpawn = NonNullable<ColmapPosesRunOptions['_spawn']>
@@ -120,15 +122,15 @@ export function deadlineSpawn(clock: WallClock, stepBudgetMs: number, base?: Col
  * Returns the list's path. Only the frames offered are in it, so a session's other frames are never read.
  */
 async function writeImageList(workDir: string, session: SfmSessionInput): Promise<string> {
-  await Deno.mkdir(`${workDir}/lists`, { recursive: true })
+  await fs.mkdir(`${workDir}/lists`, { recursive: true })
   const listPath = `${workDir}/lists/${session.sessionId}.txt`
-  await Deno.writeTextFile(listPath, session.frames.map((frame) => frameKey(session.sessionId, frame.file)).join('\n') + '\n')
+  await fs.writeFile(listPath, session.frames.map((frame) => frameKey(session.sessionId, frame.file)).join('\n') + '\n')
   return listPath
 }
 
 async function readModelImages(modelDir: string): Promise<ColmapImage[]> {
   try {
-    return parseImagesBin(await Deno.readFile(`${modelDir}/images.bin`))
+    return parseImagesBin(await readBytes(`${modelDir}/images.bin`))
   } catch {
     return []
   }
@@ -182,7 +184,7 @@ export interface BuildReferenceOptions {
 export async function buildReferenceModel(options: BuildReferenceOptions): Promise<ReferenceBuilt | ReferenceWeak | ColmapFailure> {
   const { ctx, workDir, session } = options
   const offered = session.frames.length
-  await Deno.mkdir(workDir, { recursive: true })
+  await fs.mkdir(workDir, { recursive: true })
   const weak = (message: string, registered = 0, models = 0): ReferenceWeak => ({
     ok: false, reason: 'reference-weak', message, offered, registered, models,
   })
@@ -206,13 +208,13 @@ export async function buildReferenceModel(options: BuildReferenceOptions): Promi
   if (err) return failureOf(err)
 
   const pairsPath = `${workDir}/pairs.txt`
-  await Deno.writeTextFile(pairsPath, formatMatchList(pairs))
+  await fs.writeFile(pairsPath, formatMatchList(pairs))
   err = await step('matches_importer(reference)', matchesImporterArgs(ctx.params, db, pairsPath))
   if (err) return failureOf(err)
 
   const sparse = `${workDir}/sparse`
   const grown = `${workDir}/sparse_grown`
-  await Deno.mkdir(sparse, { recursive: true })
+  await fs.mkdir(sparse, { recursive: true })
   err = await step('mapper(reference)', mapperArgs(db, imagesDir, sparse))
   if (err) return failureOf(err)
 
@@ -220,7 +222,7 @@ export async function buildReferenceModel(options: BuildReferenceOptions): Promi
   const largest = firstPass.reduce<(typeof firstPass)[number] | null>((best, model) => (!best || model.count > best.count ? model : best), null)
   if (!largest) return weak('COLMAP placed none of the reference photographs.', 0, 0)
 
-  await Deno.mkdir(grown, { recursive: true })
+  await fs.mkdir(grown, { recursive: true })
   const growErr = await step('mapper(reference, grow)', growMapperArgs(db, imagesDir, largest.dir, grown))
   const modelDir = growErr ? largest.dir : await bestOf(grown, largest.dir)
 
@@ -272,8 +274,8 @@ export async function registerToReference(options: RegisterToReferenceOptions): 
   const step = createStepRunner(ctx.spawn, ctx.bin, ctx.logs)
 
   const db = `${workDir}/db.db`
-  await Deno.mkdir(workDir, { recursive: true })
-  await Deno.copyFile(reference.dbPath, db)
+  await fs.mkdir(workDir, { recursive: true })
+  await fs.copyFile(reference.dbPath, db)
   // The reference's frames are not extracted again, because their features are in the copied database already: only the new session
   // has a list. The mapper finds the pictures it colours the points from where their sessions keep them.
   const listPath = await writeImageList(workDir, session)
@@ -286,12 +288,12 @@ export async function registerToReference(options: RegisterToReferenceOptions): 
   if (err) return failureOf(err)
 
   const pairsPath = `${workDir}/pairs.txt`
-  await Deno.writeTextFile(pairsPath, formatMatchList(options.pairs))
+  await fs.writeFile(pairsPath, formatMatchList(options.pairs))
   err = await step('matches_importer', matchesImporterArgs(ctx.params, db, pairsPath))
   if (err) return failureOf(err)
 
   const out = `${workDir}/registered`
-  await Deno.mkdir(out, { recursive: true })
+  await fs.mkdir(out, { recursive: true })
   err = await step(
     'mapper(register)',
     [...growMapperArgs(db, imagesDir, reference.modelDir, out), '--Mapper.fix_existing_frames', '1'],

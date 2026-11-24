@@ -12,7 +12,7 @@
  * catch the tool reporting non-metric units with a metre suffix (see the unit
  * caveat in src/viewer/measure.ts's header).
  *
- * Requirements: Vite dev server (VITE_URL) + Deno server behind the proxy.
+ * Requirements: Vite dev server (VITE_URL) + server behind the proxy.
  * Run: npx playwright test --project=chromium-mock mock-editor-homes
  */
 import { test, expect, type Page } from '@playwright/test'

@@ -10,7 +10,7 @@
  * were missing from it, so they failed with a TypeError instead of a sentence. The server can import this constant
  * in place of its copy.
  *
- * Browser-safe on purpose (ADR 0002): no Deno or DOM references.
+ * Browser-safe on purpose (ADR 0002): no Node or DOM references.
  */
 import type { WorldJobType } from './types.ts'
 

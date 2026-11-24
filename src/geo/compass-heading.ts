@@ -1,7 +1,7 @@
 /**
  * The compass heading a phone's orientation events describe, and what is known about it.
  *
- * Pure: nothing here reads the DOM, the clock or a Deno API (ADR 0002), so the browser and the node tests
+ * Pure: nothing here reads the DOM, the clock or a Node API (ADR 0002), so the browser and the node tests
  * import it alike. `GeoTracker` (./geo-tracker.ts) listens to the events and keeps the result; this file
  * turns one event into a {@link CompassReading}, and a reading with the AR camera's pose into the bearing
  * the calibration pairs with that pose ({@link pairCompassWithPose}).

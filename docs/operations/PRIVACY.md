@@ -13,7 +13,7 @@ the engine licence (D16) still gates any store listing and is not part of this n
 
 ## 1. Who runs the server (Decision)
 
-Scan is a client for a **Scan server** that its owner runs: the Deno server in this repository, on a machine the owner
+Scan is a client for a **Scan server** that its owner runs: the server in this repository (`server/main.ts`, run by Node), on a machine the owner
 controls (usually reached over Tailscale). Everything below that says "your Scan server" means that server.
 
 - If every person who uses the app runs their own Scan server, the developer receives none of this data, and the store

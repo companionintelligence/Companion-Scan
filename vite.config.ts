@@ -10,7 +10,7 @@ import path from 'node:path'
 const FALLBACK_HOSTNAME = 'localhost'
 
 // Vite dev/preview port. Same variable name and default as main.ts's read of
-// Deno.env.get('VITE_PORT') — deliberately parallel one-liners (see
+// process.env.VITE_PORT — deliberately parallel one-liners (see
 // docs/foundation-updates/0002 for the hostname precedent this follows), not a
 // shared module.
 const VITE_PORT = Number(process.env.VITE_PORT ?? 5173)
@@ -23,8 +23,8 @@ const VITE_PORT = Number(process.env.VITE_PORT ?? 5173)
  *   3. a <hostname>.ts.net.crt file sitting in the repo root (tailscale cert output)
  *   4. FALLBACK_HOSTNAME, `localhost`, with one warning: no phone can reach it
  *
- * server/origin.ts resolveHostnameWith is the same algorithm for Deno. They are parallel on purpose (different
- * runtimes, docs/factory/foundation-updates/0002): change both.
+ * server/origin.ts resolveHostnameWith is the same algorithm for the server. They are parallel on purpose (Vite's config
+ * loader and the server each supply their own probes, docs/factory/foundation-updates/0002): change both.
  */
 function resolveHostname(): { hostname: string; source: string } {
   const fromEnv = process.env.TAILSCALE_HOSTNAME ?? process.env.VITE_HOSTNAME
@@ -62,7 +62,7 @@ if (HOSTNAME_SOURCE === 'default') {
   )
 }
 
-// Deno API server the proxy forwards to. Overridable so test harnesses can
+// The API server the proxy forwards to. Overridable so test harnesses can
 // point one Vite instance at an isolated server (e.g. API_TARGET=http://localhost:8100).
 const API_TARGET = process.env.API_TARGET ?? 'http://localhost:8000'
 const WS_TARGET = API_TARGET.replace(/^http/, 'ws')
@@ -109,7 +109,7 @@ if (tsCert) {
   console.warn(`[vite] Run: tailscale cert ${HOSTNAME}`)
 }
 
-// Deno API routes proxied through Vite so the HTTPS page never makes a
+// API routes proxied through Vite so the HTTPS page never makes a
 // mixed-content HTTP request to the API port directly.
 const PROXIED_ROUTES = [
   '/infer',
@@ -159,12 +159,12 @@ for (const route of ['/rtc-signal', '/events']) {
 // URL — see README.md, docs/product/UX_FLOW.md) to viewer.html; Vite's dev server has
 // no equivalent, so the same URL falls through to the SPA fallback (index.html,
 // the scanner start screen) instead. Mirror the rewrite here so `/editor` works
-// identically on `vite dev` and the production Deno static server.
+// identically on `vite dev` and the server's production static handler.
 /**
  * `/editor`, `/editor/`, either with a query: viewer.html with that query; null for any other path. The same rule as
  * rewriteEditorPath in server/wp-a-static.ts, which main.ts's static handler uses. This is a copy, not an import, because
  * the Docker image builds the bundle in a stage that has no server/ (Dockerfile, stage `web`), as with resolveHostname.
- * tests/unit/deno/server_core_editor_route.test.ts holds the two bodies equal.
+ * tests/unit/server/server_core_editor_route.test.ts holds the two bodies equal.
  */
 function rewriteEditorPath(pathWithQuery: string): string | null {
   const query = pathWithQuery.indexOf('?')
@@ -289,7 +289,7 @@ export default defineConfig({
     // (VITE_PORT, or the next free port if that one is busy).
     hmr: { host: HOSTNAME },
     proxy,
-    // Vite answers CORS preflights itself, before the proxy above reaches the Deno API. The Capacitor
+    // Vite answers CORS preflights itself, before the proxy above reaches the API server. The Capacitor
     // shells call the API from capacitor://localhost (iOS) or https://localhost (Android), and the
     // desktop shell from tauri://localhost (macOS, Linux) or http(s)://tauri.localhost (Windows), so
     // without this a shell's JSON request fails its preflight here in dev. Vite's own localhost
@@ -297,7 +297,7 @@ export default defineConfig({
     cors: {
       origin: [/^https?:\/\/(?:(?:[^:]+\.)?localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/, 'capacitor://localhost', 'tauri://localhost'],
     },
-    // These are runtime data stores written by the Deno API (uploaded scans,
+    // These are runtime data stores written by the API server (uploaded scans,
     // optimized GLBs/LODs, world state) and served to the browser through the
     // proxy above — never imported into Vite's module graph. Watching them is
     // pure waste, and under a test:box run the optimize pipeline writes enough

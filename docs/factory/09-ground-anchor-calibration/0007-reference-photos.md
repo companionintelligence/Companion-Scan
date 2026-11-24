@@ -302,12 +302,12 @@ string with `role: 'landmark' | 'headingMarker'`, `tapPoint`, `pose`), mirroring
       **Checked first, as asked, and the answer changed the split:** `/sessions/:id/keyframes`
       has no Deno coverage at all — its routes are exercised through `api-*` Playwright specs,
       and only its *shape* helpers are unit-tested (`session_id.ts`). So this mirrors that
-      exactly: `tests/unit/deno/reference_photos.test.ts` proves the path/role/meta logic in
+      exactly: `tests/unit/server/reference_photos.test.ts` proves the path/role/meta logic in
       `server/project_media.ts` (which exists separately from `main.ts` for the same reason
       `session_id.ts` does — `main.ts` cannot be imported without running `Deno.serve`), and
       `tests/api-reference-photos.spec.ts` proves the routes are wired to it and the bytes
       survive a round trip
-- [x] Deno: the new test file is registered. Note the task is `deno test … tests/unit/deno/` —
+- [x] Deno: the new test file is registered. Note the task is `deno test … tests/unit/server/` —
       a **directory**, not the file list the ticket assumed, so dropping the file in registers it
 - [x] Unit: crosshair placement maps normalised tap coords to pixel coords for a given rendered
       photo size — and, more importantly, the canvas→frame step in front of it. The tap is

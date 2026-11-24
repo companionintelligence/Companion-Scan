@@ -55,7 +55,7 @@
  * is the arm DX5 needs to decide whether it should; the floor gate and the height warning between the two markers
  * still judge what the hits measured, not where the ray put the point. Neither is on by default.
  *
- * Pure: no DOM, no Deno, no provider of its own (ADR 0002: the browser and the Node tests import this file). The
+ * Pure: no DOM, no Node API, no provider of its own (ADR 0002: the browser and the Node tests import this file). The
  * ring and the note are painted onto whatever elements the modal hands over, through the few members of them that
  * are used.
  */

@@ -142,7 +142,6 @@ export const JOB_PAYLOAD_MAX_KEYS = 32
 /** Characters one payload string may carry. A detection prompt is the longest real one. */
 export const JOB_PAYLOAD_MAX_STRING = 4000
 const KEY_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/
-// deno-lint-ignore no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f]/
 
 export type JobPayloadValue = string | number | boolean | null

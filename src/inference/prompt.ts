@@ -4,7 +4,7 @@
  * The prompt is designed to elicit a strict JSON array from LFM2.5-VL
  * (or any capable VLM) with no surrounding prose.
  *
- * Must stay in sync with root prompt.ts (the Deno server's copy — see that
+ * Must stay in sync with root prompt.ts (the server's copy — see that
  * file's header). sync.test.ts checks the two match past this comment.
  */
 

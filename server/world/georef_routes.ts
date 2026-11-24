@@ -2,7 +2,7 @@
  * The Place georeference routes, registered onto the server's app: `PUT /projects/:id/georeference` and
  * `GET /projects/:id/georeference-seed` (ADR 0015).
  *
- * Deno-API-free like the rest of server/world/ (ADR 0004): the one thing here that is not a plain function, the Hono app, is a
+ * Node-API-free like the rest of server/world/ (ADR 0004): the one thing here that is not a plain function, the Hono app, is a
  * type, and everything server/main.ts owns (the Places registry and its mutation queue, the size-capped body reader, the stored
  * scans and the sidecar readers) is handed in. It is `registerMemoryPush`'s shape (server/memory_push.ts), and the routes are
  * behind the guard every `/projects` path is behind: server/main.ts registers that guard before it calls this.

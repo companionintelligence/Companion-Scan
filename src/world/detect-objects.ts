@@ -11,11 +11,11 @@
  *
  * Two consumers read it, in two different runtimes:
  *   - `src/viewer/splat-detect-layer.ts` (browser) — draws the boxes
- *   - `memory_push.ts` (Deno) — ships the objects to Companion Memory
+ *   - `memory_push.ts` (the server) — ships the objects to Companion Memory
  *
  * so the shape and the parse live here once (ADR 0001) rather than being
  * declared twice, in a dependency-free file both runtimes can import (ADR 0002
- * — splat-detect-layer.ts imports `three`, memory_push.ts calls `Deno.*`, so
+ * — splat-detect-layer.ts imports `three`, memory_push.ts imports `node:fs`, so
  * neither is a safe import target for the other).
  *
  * Intentionally NOT part of the RawDetection → WorldDetection →

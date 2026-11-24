@@ -54,7 +54,7 @@ keyframes to the person's own Scan server, where the existing reconstruction and
 - **So the one documented route to frames is a Unity app** on PICO's Unity SDK with Camera Pack.
   That differs from the Quest app, which is Kotlin on Meta's Spatial SDK, so its code cannot be
   shared directly. Port its pose conventions with their tests, against the same `poseToMatrix`
-  fixture (`meta/app/src/test/resources`, `tests/unit/deno/native_quest_pose_fixture.test.ts`).
+  fixture (`meta/app/src/test/resources`, `tests/unit/server/native_quest_pose_fixture.test.ts`).
 
 ## Before implementation
 

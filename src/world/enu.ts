@@ -7,7 +7,7 @@
  * equirectangular approximation on a sphere of the WGS-84 equatorial radius,
  * which sits off the ellipsoid by up to about 0.7 %, depending on latitude and
  * direction: 0.67 m in 100 m going north on the equator, 0.30 m at San
- * Francisco, 13 m in 2 km (tests/unit/deno/enu.test.ts measures it). This
+ * Francisco, 13 m in 2 km (tests/unit/server/enu.test.ts measures it). This
  * module is the conversion the georeference work builds on, kept apart so it can
  * be checked on its own against numbers that do not come from it.
  *
@@ -23,7 +23,7 @@
  * right-handed, and `composeYUpTransform` is a pure rotation, so a session
  * placed in (east, up, north) by compass and GPS comes out mirrored east–west,
  * however good the compass and the GPS are: a feature 4 m from the session origin
- * can land 8 m from where it is (tests/unit/deno/world_registration.test.ts).
+ * can land 8 m from where it is (tests/unit/server/world_registration.test.ts).
  * No rotation can fix a mirror.
  *
  * ## Which placements are mirrored today (F-42, read from the code 2026-11-23)
@@ -87,7 +87,7 @@
  * the same amount at both ends of a short baseline, so ENU *differences* are
  * unaffected.
  *
- * Browser-safe on purpose (ADR 0002): no Deno or DOM references.
+ * Browser-safe on purpose (ADR 0002): no Node or DOM references.
  */
 import { normaliseBearingDeg } from './geo.ts'
 import type { LocalFrame, Vec3 } from './types.ts'
@@ -148,7 +148,7 @@ export function geodeticToEcef(g: Geodetic): Vec3 {
  * than 1e-15 rad (about 6 nm on the ground), or after 12 steps. Both limits are
  * adopted, not measured (ADR 0005 rule 5). What was measured: over 20 000
  * random points at any latitude and heights from -500 m to 19.5 km it stopped
- * within 6 steps, and the round-trip test in tests/unit/deno/enu.test.ts
+ * within 6 steps, and the round-trip test in tests/unit/server/enu.test.ts
  * measures the result to about 5 nm (worst of 2000 random origins) and holds it
  * under 20 nm.
  */

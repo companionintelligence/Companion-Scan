@@ -45,9 +45,9 @@ export type {
   ScanEntry,
   ScanEntryQualitySummary,
   ScanStatus,
-} from '../world/types'
+} from '../world/types.ts'
 
-import type { Floor, Project, ProjectSpatialFrame, Room, ScanEntry } from '../world/types'
+import type { Floor, Project, ProjectSpatialFrame, Room, ScanEntry } from '../world/types.ts'
 import type { FrameReplaces } from '../world/frame-replacement.ts'
 import { placeFrameRevision } from '../world/spatial-frame.ts'
 import { PROJECTS_DB_NAME } from '../shared/storage-keys.ts'

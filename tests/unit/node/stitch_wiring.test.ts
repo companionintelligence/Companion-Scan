@@ -3,7 +3,7 @@
  *
  * viewer.ts runs its DOM code when it is imported and server/main.ts starts the server, so neither can be
  * loaded by a test. The behaviour behind each hook is tested where it lives (stitch_session, stitch_tools_dom,
- * transform_tools; patch_validate, scan_store and patch_routes on the Deno side). What none of those can see is a hook
+ * transform_tools; patch_validate, scan_store and patch_routes on the server side). What none of those can see is a hook
  * that was lost: the hub files are merged from several packages, and a dropped one-line call leaves every
  * module test green and the editor back to turning a scan about a point nobody can see. These checks read the
  * source and pin each call site, scoped to the function it sits in, in the style of wp-v3-viewer-guards.
@@ -181,12 +181,12 @@ test('an upload\'s transform is set aside and flagged, never refused: no 4xx on 
   assert.match(route, /sidecar: sanitised\?\.metadata \?\? null/, 'what is stored beside the scan is the sanitised text')
   assert.doesNotMatch(route.slice(route.indexOf('sanitiseUploadMetadata')), /c\.json\([^)]*,\s*4\d\d\)/, 'no 4xx after the sidecar is sanitised')
   assert.match(route, /projectTransformRejected \? \{ projectTransformRejected \} : \{\}/)
-  assert.doesNotMatch(route, /Deno\.open\(|writeTextFile\(/, 'the route does not write scan files itself: scan_store.ts does, in an order a reader cannot catch half made')
+  assert.doesNotMatch(route, /fs\.open\(|fs\.writeFile\(/, 'the route does not write scan files itself: scan_store.ts does, in an order a reader cannot catch half made')
 })
 
 test('the scans a world lists are .glb files, which is what makes a scan that is still being written invisible', () => {
   const list = fn(server, 'listStoredScans')
-  assert.match(list, /entry\.isFile \|\| !entry\.name\.endsWith\('\.glb'\)/)
+  assert.match(list, /entry\.isFile\(\) \|\| !entry\.name\.endsWith\('\.glb'\)/)
   assert.match(read('server/world/scan_store.ts'), /PART_SUFFIX = '\.part'/)
 })
 
@@ -223,9 +223,9 @@ test('the undo route is an editor action inside the world lock, reads its reques
   assert.match(revertRoute, /error instanceof PlacementRefused\) return c\.json\(\{ error: error\.message \}, error\.status\)/)
 })
 
-test('the one-line gates the viewer and the server import are the shared, Deno-free modules (ADR 0002)', () => {
+test('the one-line gates the viewer and the server import are the shared, Node-free modules (ADR 0002)', () => {
   for (const file of ['src/world/scan-placement.ts', 'src/viewer/transform-tools.ts', 'src/viewer/stitch-session.ts', 'src/viewer/compare-style.ts', 'src/viewer/stitch-tools.ts', 'server/world/patch_validate.ts']) {
-    assert.doesNotMatch(read(file), /\bDeno\./, file + ' has no Deno reference')
+    assert.doesNotMatch(read(file), /\bfrom\s+['\"]node:|\bprocess\.(?:env|argv|exit|cwd|platform|arch|versions|execPath|on)\b|\bBuffer\.(?:from|alloc|concat|isBuffer)\b/, file + ' has no Node reference')
   }
   assert.match(read('server/world/patch_validate.ts'), /from '\.\.\/\.\.\/src\/world\/scan-placement\.ts'/)
   assert.doesNotMatch(read('src/viewer/stitch-tools.ts'), /from '\.\.\/\.\.\/server/, 'the editor does not import from the server tree')

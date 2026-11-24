@@ -92,7 +92,7 @@
  * tuned on the owner's real data under DX9 (docs/audits, shared-context.json).
  * Each says what it is and when to revisit it.
  *
- * No Deno API, no file access, no dependency beyond the shared proposal types, so
+ * No Node API, no file access, no dependency beyond the shared proposal types, so
  * the module runs unchanged under Node. File access, reading GLBs and the job
  * live in ./place_register.ts.
  */

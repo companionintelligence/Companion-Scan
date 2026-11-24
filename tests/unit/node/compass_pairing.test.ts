@@ -49,7 +49,7 @@ import {
 } from '../../../src/geo/compass-heading.ts'
 import { normaliseBearingDeg, sessionFrameBearingDeg } from '../../../src/world/geo.ts'
 // The shared physical model of an AR session: quaternion arithmetic written out, as independent of src/ as this is.
-import { mulQuat, pitchQuat, rotateByQuat } from '../deno/physical_oracle.ts'
+import { mulQuat, pitchQuat, rotateByQuat } from '../server/physical_oracle.ts'
 import {
   R2D,
   angDiff,

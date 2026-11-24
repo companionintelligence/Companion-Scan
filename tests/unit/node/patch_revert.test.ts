@@ -2,7 +2,7 @@
  * What the editor asks of the undo route and what it does with the answer (src/viewer/patch-revert.ts).
  *
  * viewer.ts hands the module how to send, how to read a refusal and where to put the world, so these tests give it
- * ordinary replies and watch what it asks and what it keeps. The route itself is in tests/unit/deno/patch_routes.test.ts.
+ * ordinary replies and watch what it asks and what it keeps. The route itself is in tests/unit/server/patch_routes.test.ts.
  *
  * Run: node --experimental-strip-types --no-warnings --test tests/unit/node/patch_revert.test.ts
  */

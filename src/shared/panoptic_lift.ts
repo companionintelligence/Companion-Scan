@@ -1,8 +1,8 @@
 /**
  * Lift a 2D panoptic segment to a 3D world position against a point cloud.
  *
- * Pure geometry + a confidence policy. No `Deno.*`, no DOM, no `three` — this
- * file is imported by the Deno driver (`server/panoptic/panoptic_lift.ts`) and
+ * Pure geometry + a confidence policy. No `node:*` import, no DOM, no `three` — this
+ * file is imported by the server driver (`server/panoptic/panoptic_lift.ts`) and
  * must stay importable by the browser too, per ADR 0002. Vectors are plain
  * `{x,y,z}` objects and the cloud is a `Float32Array` + count, which is the
  * shape both runtimes already have (`PointCloud.toFloat32Array()` in the

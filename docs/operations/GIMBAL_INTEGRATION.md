@@ -613,7 +613,7 @@ the `splat-align` job that supplies metric scale will correctly *skip* on these 
 read dimensions off the result.
 
 This whole sequence is inherently cross-MCP-server (gimbal moves from `osmo-gimbal`, photos from
-an `android-*` server, ingest via a plain HTTP call to this repo's own Deno server) — no single
+an `android-*` server, ingest via a plain HTTP call to this repo's own API server) — no single
 tool call does all of it, since MCP servers can't call each other's tools. Whatever orchestrates
 the loop (an interactive Claude Code session, or a script written against all three) is what
 makes it "one call" in practice.

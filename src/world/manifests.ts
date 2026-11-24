@@ -3,23 +3,23 @@
  *
  * Every background pipeline stage (splat-train, splat-detect, splat-finish)
  * writes a `<base>.splat-<stage>.manifest.json` sidecar next to a scan (e.g.
- * `<base>.splat-train.manifest.json`). Both the Deno
+ * `<base>.splat-train.manifest.json`). Both the
  * server drivers (splat_train.ts, splat_detect.ts, splat_finish.ts, all in
  * server/splat/) and the browser viewer (src/viewer/splat-layer.ts,
  * src/viewer/splat-detect-layer.ts) need the exact same shape.
  *
  * This file — not the three driver .ts files — is the single canonical
  * location for all four interfaces below, specifically so it can be
- * imported (even type-only) from browser code without pulling Deno's
+ * imported (even type-only) from browser code without pulling the server's
  * runtime API surface into the frontend's type-check graph: `tsc --noEmit`
  * (run by `npm run build`) type-checks a file's *entire* body once it enters
  * the program, `import type` only skips it for bundling/codegen — so a
  * browser file that type-imports straight from splat_train.ts would drag
- * its `Deno.readFile`/`Deno.Command`/etc. calls into a tsconfig.json program
- * that has no `deno.ns` lib (confirmed via `deno check` on the viewer files
- * before this file existed: 30+ "Cannot find name 'Deno'" errors surfaced
- * from splat_train.ts and splat_train_dataset.ts). Keeping these interfaces
- * here — dependency-free, no `Deno.*` references — avoids that entirely.
+ * its file and subprocess calls into a tsconfig.json program that has no
+ * server runtime types (confirmed on the viewer files before this file
+ * existed: 30+ "Cannot find name" errors surfaced from splat_train.ts and
+ * splat_train_dataset.ts). Keeping these interfaces
+ * here — dependency-free, no `node:*` imports — avoids that entirely.
  *
  * Per ADR 0001: extend PipelineManifestBase rather than declaring another
  * copy of the envelope — see
@@ -47,8 +47,8 @@ export interface PipelineManifestBase {
  * same `--device` flag on their workers — ADR 0001 wants one definition of
  * that, not the two this repo has been bitten by before. This file is the
  * right home for the same reason it holds the manifests: dependency-free and
- * free of `Deno.*`, so the viewer can read a manifest's device without
- * dragging a Deno driver into its type graph.
+ * free of `node:*` imports, so the viewer can read a manifest's device without
+ * dragging a server driver into its type graph.
  *
  * There is deliberately no 'rocm' member. A ROCm torch reports
  * `torch.cuda.is_available() == True` and takes the device string "cuda" —

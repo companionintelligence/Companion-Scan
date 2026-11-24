@@ -2,7 +2,7 @@
 
 The **Splat Toolbox** is the set of tools that turn a Companion-Scan capture
 session into a viewable, trainable, and queryable 3D Gaussian-splat scene. Each
-tool is a thin Deno/Node driver over a proven external engine, wired into the
+tool is a thin Node driver over a proven external engine, wired into the
 Companion Scan Spatial Editor as a job type (or exposed as a script). This document is the
 inventory: what each tool is, when you reach for it, and how to drive it from
 the **editor UI**, from a **scanner/session**, and from **curl**.

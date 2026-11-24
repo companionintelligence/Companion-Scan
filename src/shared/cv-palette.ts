@@ -4,12 +4,12 @@
  *   - scripts/generate-cv-images.mjs   (draws synthetic room images)
  *   - server/inference.ts mock engine   (detects these colours as objects)
  *   - public/test-fixtures/xr8-mock.js  (paints the fake camera feed — keep
- *     its inline copy in sync when editing; tests/unit/deno/sync.test.ts
+ *     its inline copy in sync when editing; tests/unit/server/sync.test.ts
  *     fails when the two drift)
  *   - labelDisplayRgb() below, the one table a detection's colour on screen
  *     and in the GLB comes from
  *
- * Runtime-agnostic: imported by Deno (server), Node (scripts), and Vite.
+ * Runtime-agnostic: imported by the server, Node scripts and Vite.
  */
 
 export interface PaletteEntry {

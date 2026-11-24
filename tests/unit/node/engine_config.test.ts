@@ -15,7 +15,7 @@
  *   - that the unit is stamped onto the calibration where it reaches the scanner, written into the
  *     upload sidecar and the GLB, and survives a legacy record.
  *
- * The Deno half, the manifest reader, is tests/unit/deno/calibration_scale.test.ts.
+ * The server half, the manifest reader, is tests/unit/server/calibration_scale.test.ts.
  *
  * Run: node --experimental-strip-types --no-warnings --test tests/unit/node/engine_config.test.ts
  */

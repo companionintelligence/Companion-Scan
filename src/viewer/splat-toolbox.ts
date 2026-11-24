@@ -13,7 +13,7 @@
  * body without a live coordinator; viewer.ts owns the actual fetch (it holds the
  * access token + world slug).
  */
-import type { WorldJobType } from '../world/types'
+import type { WorldJobType } from '../world/types.ts'
 
 export interface SplatJobRequest {
   type: WorldJobType

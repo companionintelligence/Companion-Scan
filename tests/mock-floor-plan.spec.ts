@@ -12,7 +12,7 @@
  * Fixture: scripts/make-splat-fixture.mjs writes a synthetic 4 x 3 plan for the `splat-fixture` scan in the schema
  * scripts/floor_plan_worker.py writes. The test box generates it into its own scans dir before the servers start, so
  * readiness is asked of the server, not of the working tree. The worker itself runs in
- * tests/unit/deno/floor_plan.test.ts and floor_plan_server.test.ts.
+ * tests/unit/server/floor_plan.test.ts and floor_plan_server.test.ts.
  *
  * Run:
  *   TEST_BOX_API_PORT=… TEST_BOX_VITE_PORT=… node scripts/test-box.mjs tests/mock-floor-plan.spec.ts --workers=1 --retries=0

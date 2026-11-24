@@ -3,7 +3,7 @@
  * against the scripted XR8 mock — no device, camera or SLAM binary.
  *
  * What this covers that the unit tests cannot: the staged flow is a DOM state
- * machine. `tests/unit/deno/anchor_calibration.test.ts` proves the frame math
+ * machine. `tests/unit/server/anchor_calibration.test.ts` proves the frame math
  * (origin, forward axis, yaw-invariance, rigidity); only a real document can
  * prove the stages are ordered, that a tap reaches the canvas listener beneath
  * the overlay, and that the overlay always unmounts.

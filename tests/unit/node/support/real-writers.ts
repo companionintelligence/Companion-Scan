@@ -8,7 +8,7 @@
  *    scan's `ScanCalibration` and the Place's `ProjectSpatialFrame`. It is a DOM module, so it is driven the way
  *    tests/unit/node/calibration_bearing_flow.test.ts drives it: a stand-in document that registers every
  *    `id="..."` in the flow's markup, taps fired on a stand-in canvas, and a physical model of the session and
- *    the floor (tests/unit/deno/physical_oracle.ts) that shares no code with the app;
+ *    the floor (tests/unit/server/physical_oracle.ts) that shares no code with the app;
  *  - the frame's trip to the server: `persistProjectSpatialFrame` (src/project/frame-sync.ts), which stores the
  *    reference photos and sends the frame with their records attached, against the real `ProjectStore` on an
  *    in-memory IndexedDB;
@@ -32,7 +32,7 @@ import type { DetectionStore } from '../../../../src/scene/store.ts'
 import type { PointCloud } from '../../../../src/scene/pointcloud.ts'
 import { persistProjectSpatialFrame, type FrameSyncEnv } from '../../../../src/project/frame-sync.ts'
 import type { Project, ProjectSpatialFrame, ScanCalibration, Vec3 } from '../../../../src/world/types.ts'
-import { cameraRotation, enuToSession, perfectCompassBearing } from '../../deno/physical_oracle.ts'
+import { cameraRotation, enuToSession, perfectCompassBearing } from '../../server/physical_oracle.ts'
 import { opened } from './fake-indexeddb.ts'
 
 // The flow's imports are written for the bundler (`'../world/geo'`); Node needs the extension.

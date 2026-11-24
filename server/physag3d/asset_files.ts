@@ -22,6 +22,9 @@
  * sequence. A folder, not files beside the scan: a `.glb` at the top of the scans directory is listed as a scan, and a
  * `.json` there is read as a scan's sidecar. Deleting the scan removes the folder.
  */
+import * as fs from 'node:fs/promises'
+import { isNotFound } from '../fs_util.ts'
+
 export const INTERACTIVE_ASSET_DIR_SUFFIX = '.interactive'
 
 /** The asset folder's name for a scan file: `room.glb` gives `room.interactive`. */
@@ -77,9 +80,9 @@ export async function writeCaseSource(
 ): Promise<void> {
   const record: CaseSource = { schemaVersion: 1, ...source, writtenAt: new Date().toISOString() }
   const path = `${caseParent}/${assetId}${CASE_SOURCE_SUFFIX}`
-  await Deno.mkdir(caseParent, { recursive: true })
-  await Deno.writeTextFile(`${path}.part`, JSON.stringify(record, null, 2))
-  await Deno.rename(`${path}.part`, path)
+  await fs.mkdir(caseParent, { recursive: true })
+  await fs.writeFile(`${path}.part`, JSON.stringify(record, null, 2))
+  await fs.rename(`${path}.part`, path)
 }
 
 /** The sessions whose keyframes a run in this process is copying, sending or reading back now, with how many runs each. */
@@ -118,11 +121,11 @@ export class SessionFramesInUseError extends Error {
 export async function caseFolderParents(scansDir: string, runsDir: string | null): Promise<string[]> {
   const parents: string[] = []
   try {
-    for await (const entry of Deno.readDir(scansDir)) {
-      if (entry.isDirectory && entry.name.endsWith(INTERACTIVE_ASSET_DIR_SUFFIX)) parents.push(`${scansDir}/${entry.name}`)
+    for (const entry of await fs.readdir(scansDir, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name.endsWith(INTERACTIVE_ASSET_DIR_SUFFIX)) parents.push(`${scansDir}/${entry.name}`)
     }
   } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error
+    if (!(isNotFound(error))) throw error
   }
   if (runsDir) parents.push(runsDir)
   return parents
@@ -142,11 +145,11 @@ export async function removeSessionCaseCopies(parents: readonly string[], sessio
   for (const parent of parents) {
     const records: string[] = []
     try {
-      for await (const entry of Deno.readDir(parent)) {
-        if (entry.isFile && entry.name.endsWith(CASE_SOURCE_SUFFIX)) records.push(entry.name)
+      for (const entry of await fs.readdir(parent, { withFileTypes: true })) {
+        if (entry.isFile() && entry.name.endsWith(CASE_SOURCE_SUFFIX)) records.push(entry.name)
       }
     } catch (error) {
-      if (error instanceof Deno.errors.NotFound) continue
+      if (isNotFound(error)) continue
       throw error
     }
     for (const name of records) {
@@ -163,7 +166,7 @@ export async function removeSessionCaseCopies(parents: readonly string[], sessio
 
 async function readCaseSource(path: string): Promise<Partial<CaseSource> | null> {
   try {
-    const parsed: unknown = JSON.parse(await Deno.readTextFile(path))
+    const parsed: unknown = JSON.parse(await fs.readFile(path, 'utf8'))
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Partial<CaseSource> : null
   } catch {
     return null
@@ -173,8 +176,8 @@ async function readCaseSource(path: string): Promise<Partial<CaseSource> | null>
 /** Removes `path`, a folder with its contents or a file, and a link as a link. A path that is already gone is done. */
 async function removeIfPresent(path: string): Promise<void> {
   try {
-    await Deno.remove(path, { recursive: true })
+    await fs.rm(path, { recursive: true })
   } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error
+    if (!(isNotFound(error))) throw error
   }
 }

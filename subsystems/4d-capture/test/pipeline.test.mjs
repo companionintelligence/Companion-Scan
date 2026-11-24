@@ -3,7 +3,7 @@
  * at fetch (FN-132, FN-187, FN-188): the clip and pose track are downloaded with
  * the token, frames are extracted, every view is placed from its pose and
  * intrinsics, Brush is run with the real flags, and the exports are named
- * frame-NNNNN.ply. The Deno test tests/unit/deno/wp-runners-4d-e2e.test.ts
+ * frame-NNNNN.ply. The server test tests/unit/server/wp-runners-4d-e2e.test.ts
  * drives the same path with the real appliance side.
  */
 import { test } from 'node:test'

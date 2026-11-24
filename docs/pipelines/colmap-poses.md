@@ -78,7 +78,7 @@ curl -X POST localhost:8000/worlds/default/jobs \
 Or drive the whole chain from the CLI:
 
 ```bash
-deno run -A scripts/scan-room.ts <session-id>
+node scripts/scan-room.ts <session-id>
 ```
 
 ## Setup

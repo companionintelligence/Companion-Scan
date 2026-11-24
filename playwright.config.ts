@@ -52,7 +52,7 @@ const chromiumExecutable = process.env['CHROMIUM_EXECUTABLE_PATH']
 
 export default defineConfig({
   testDir: './tests',
-  // tests/unit/ holds Deno unit tests (`deno task test`), not Playwright specs.
+  // tests/unit/ holds server unit tests (`npm run test:server`), not Playwright specs.
   // Playwright's default testMatch is **/*.@(spec|test).[jt]s, which matches
   // *.test.ts, so without an explicit ignore the runner tries to import all 32
   // and dies on `jsr:` specifiers. Note this top-level value is only a default:
@@ -65,7 +65,7 @@ export default defineConfig({
 
   projects: [
     // ── API-only tests (request fixture — no browser binary required) ───────
-    // Targets the Deno server directly; pair with INFERENCE_MODE=mock and
+    // Targets the server directly; pair with INFERENCE_MODE=mock and
     // the generated corpus (npm run gen:test-data).
     {
       name: 'api',
@@ -129,7 +129,7 @@ export default defineConfig({
 
     // ── iPhone UA + live Tailscale URL (npm run test:iphone) ────────────────
     // Exercises real network path (cert, proxy, CORS) with iPhone 15 UA.
-    // Requires Vite + Deno servers running. No USB connection needed here.
+    // Requires Vite + servers running. No USB connection needed here.
     {
       name: 'iphone-usb',
       testIgnore: [/api-.*\.spec\.ts/, /mock-.*\.spec\.ts/, /unit\//],

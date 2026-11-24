@@ -21,7 +21,7 @@
  *  - closure's least-squares turn (src/ar/closure.ts) and frame-fit's heading (src/world/frame-fit.ts) accumulate the
  *    cross term with opposite signs, and frame-fit's pass also collects the mirrored sums its verdict needs.
  *
- * Pure and import-free: the browser, the Node tests and (should the server ever need one) Deno can import it, and
+ * Pure and import-free: the browser, the Node tests and (should it ever need one) the server can import it, and
  * nothing it reaches is outside the directories the Docker image copies.
  */
 

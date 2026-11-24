@@ -44,9 +44,11 @@
  *
  * Counts, and nothing that names a session, a scan, a path or a place (`purgeSummary`).
  */
-import { isAbsolute, relative, SEPARATOR } from '@std/path'
+import { isAbsolute, relative, sep } from 'node:path'
 import { deleteSessionDirectories, directoryBytes, type RemoveSessionCopies } from './session_deletion.ts'
 import { SESSION_ID_RE } from './session_id.ts'
+import * as fs from 'node:fs/promises'
+import { errorKind } from './fs_util.ts'
 
 /** The environment variable that sets the retention period, in whole days. */
 export const KEYFRAME_RETENTION_ENV = 'KEYFRAME_RETENTION_DAYS'
@@ -154,12 +156,12 @@ function emptyReport(opts: PurgeOptions): PurgeReport {
 /** True when `child` is `parent` or lies under it, by their real paths. */
 function isInside(parent: string, child: string): boolean {
   const path = relative(parent, child)
-  return path === '' || !(path === '..' || path.startsWith(`..${SEPARATOR}`) || isAbsolute(path))
+  return path === '' || !(path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path))
 }
 
 async function readRecord(path: string): Promise<Record<string, unknown> | null> {
   try {
-    const parsed: unknown = JSON.parse(await Deno.readTextFile(path))
+    const parsed: unknown = JSON.parse(await fs.readFile(path, 'utf8'))
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null
   } catch {
     return null
@@ -168,7 +170,7 @@ async function readRecord(path: string): Promise<Record<string, unknown> | null>
 
 async function modifiedMs(path: string): Promise<number | null> {
   try {
-    const info = await Deno.stat(path)
+    const info = await fs.stat(path)
     return info.mtime ? info.mtime.getTime() : null
   } catch {
     return null
@@ -212,8 +214,8 @@ export async function purgeExpiredKeyframeSessions(opts: PurgeOptions): Promise<
   let realSessions: string
   let realScans: string
   try {
-    realSessions = await Deno.realPath(opts.sessionsDir)
-    realScans = await Deno.realPath(opts.scansDir)
+    realSessions = await fs.realpath(opts.sessionsDir)
+    realScans = await fs.realpath(opts.scansDir)
   } catch {
     return { ...report, skipped: 'sessions-dir-missing' }
   }
@@ -221,9 +223,9 @@ export async function purgeExpiredKeyframeSessions(opts: PurgeOptions): Promise<
 
   const cutoff = (opts.now ?? Date.now()) - opts.retentionDays * DAY_MS
   const expired: string[] = []
-  for await (const entry of Deno.readDir(realSessions)) {
+  for (const entry of await fs.readdir(realSessions, { withFileTypes: true })) {
     // A link is not a directory here, so a link to somewhere else is never examined, let alone removed.
-    if (!entry.isDirectory || !SESSION_ID_RE.test(entry.name)) continue
+    if (!entry.isDirectory() || !SESSION_ID_RE.test(entry.name)) continue
     report.scanned += 1
     const dir = `${realSessions}/${entry.name}`
     const record = await readRecord(`${dir}/session.json`)
@@ -342,7 +344,7 @@ export async function runKeyframePurge(opts: {
 
 /** What the job says when a pass stops on an error, and what the log says: the error's name, never its message, which can hold a path. */
 export function keyframePurgeFailure(error: unknown): string {
-  const name = error instanceof Error ? error.name : 'Error'
+  const name = errorKind(error)
   console.error(`[keyframe-retention] the purge stopped on an error (${name})`)
   return `The purge stopped on an error (${name}).`
 }
@@ -357,10 +359,10 @@ export function scheduleKeyframeRetention(raw: string | undefined, queue: () => 
   if (setting.problem) console.warn(`[keyframe-retention] ${setting.problem}`)
   if (setting.days === null) return () => {}
   console.log(`[keyframe-retention] camera frames are kept ${setting.days} days; a purge is queued now and every day`)
-  const run = () => void queue().catch((err) => console.error(`[keyframe-retention] could not queue a purge (${err instanceof Error ? err.name : 'Error'})`))
+  const run = () => void queue().catch((err) => console.error(`[keyframe-retention] could not queue a purge (${errorKind(err)})`))
   run()
   const timer = setInterval(run, KEYFRAME_PURGE_INTERVAL_MS)
   // The server's own exit is not held up by the daily timer.
-  Deno.unrefTimer(timer)
+  timer.unref()
   return () => clearInterval(timer)
 }

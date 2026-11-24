@@ -10,7 +10,7 @@ It checks the Tailscale host, the HTTPS origin, the Vite proxy into the API, the
 
 Two things it does not check:
 
-- The CORS lines show the answer Vite gives to a preflight (`vite.config.ts` answers it before the proxy), not the Deno server's own rule, and the desktop app's three Tauri origins are not among them.
+- The CORS lines show the answer Vite gives to a preflight (`vite.config.ts` answers it before the proxy), not the API server's own rule, and the desktop app's three Tauri origins are not among them.
 - It opens no WebSocket, so a server that refuses the page's origin on `/events` or `/rtc-signal` (403) shows only on a device, as an editor or scanner with no live updates.
 
 The server admits `https://<TAILSCALE_HOSTNAME>` on any port, `ALLOWED_ORIGIN_PREFIX`, `APP_BASE_URL` and the native apps' own origins. It admits localhost and LAN pages only when it runs with `ALLOW_DEV_ORIGINS=1` (`server/origin.ts`), which a phone test never needs: open the page on the tailnet host, and check that the `[server] Hostname:` line at server startup names that host.
@@ -28,7 +28,7 @@ Each feature is listed below with what was checked on the dev box and what only 
 | Quest headset, scan | `webxr.html` | Page answers 200 | An `immersive-ar` scan with keyframes |
 | Quest headset, edit | `xr-world.html?world=<slug>` | Three Playwright tests on the iwer Quest 3 emulator: enter VR, select, relabel, move, saved as patches; a refused save reverts; no immersive-vr says so | Enter VR on a real Quest. Select, move and relabel a Thing. Reload the desktop catalogue and check the change |
 | Desktop catalogue | `viewer.html` (Things tab) | One Playwright test on a mocked world: search, label and scan filters, relabel, clear | Your own multi-scan place: search, filter, relabel and clear across real rooms |
-| Whole-Place glTF | queue an `export-world` job (the editor's Publish step, or Export world in the Advanced queue), then `GET /worlds/<slug>/export.glb` | 14 Deno tests. The Khronos glTF validator reports 0 issues on samples and on live exports | Open the file in a glTF viewer and check each scan lands where it was scanned |
+| Whole-Place glTF | queue an `export-world` job (the editor's Publish step, or Export world in the Advanced queue), then `GET /worlds/<slug>/export.glb` | 14 server unit tests. The Khronos glTF validator reports 0 issues on samples and on live exports | Open the file in a glTF viewer and check each scan lands where it was scanned |
 
 The whole-Place file holds every scan's geometry, so `GET /worlds/<slug>/export.glb` follows the same viewer rule as `GET /worlds/<slug>/frames/<scanId>`. With strict world auth on (sign-in on, `WORLD_STRICT_AUTH=1` or `SCAN_REQUIRE_AUTH=1`) it needs a viewer's world token, sent as `?token=` or `Authorization: Bearer`. An install that is open by design serves it without one.
 

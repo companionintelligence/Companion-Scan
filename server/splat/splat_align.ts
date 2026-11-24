@@ -62,7 +62,7 @@
  *     translation at indices 12/13/14).
  *   - `SplatAlignManifest.projectTransform` is **row-major** (translation at
  *     indices 3/7/11), pinned by that field's doc comment and asserted in
- *     tests/unit/deno/splat_align.test.ts. `THREE.Matrix4.fromArray` reads
+ *     tests/unit/server/splat_align.test.ts. `THREE.Matrix4.fromArray` reads
  *     column-major, so a consumer must use `Matrix4.set(...)` (which takes
  *     row-major arguments) or transpose — feeding it to `fromArray` transposes
  *     it silently, which is why the convention is tested rather than assumed.
@@ -83,6 +83,7 @@ import {
   readSolvedPoses,
   recordHasPose,
 } from './splat_train_dataset.ts'
+import * as fs from 'node:fs/promises'
 
 export type Vec3Tuple = [number, number, number]
 
@@ -822,7 +823,7 @@ async function finish(
 ): Promise<SplatAlignResult> {
   const withTiming: SplatAlignManifest = { ...manifest, timing: { elapsedMs: Date.now() - started } }
   try {
-    await Deno.writeTextFile(manifestPath, JSON.stringify(withTiming, null, 2))
+    await fs.writeFile(manifestPath, JSON.stringify(withTiming, null, 2))
   } catch (e) {
     // A session dir that vanished mid-run must not mask the real result — the
     // caller still gets the status it asked for.
@@ -877,7 +878,7 @@ export function applyColumnMajor(m: number[], p: Vec3Tuple): Vec3Tuple {
  * meaningful and the caller free of NaN. "Orthonormal" here means to
  * floating-point rounding, not exactly: max|UᵀU − I| is asserted below 1e-9
  * over full-rank, rank-2, rank-1 and zero matrices in
- * tests/unit/deno/splat_align.test.ts.
+ * tests/unit/server/splat_align.test.ts.
  */
 export function svd3(m: number[][]): { u: number[][]; d: number[]; v: number[][] } {
   const ata = matMul3(transpose3(m), m)

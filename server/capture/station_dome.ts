@@ -70,6 +70,7 @@ import {
   UNCHECKED_SEPARATION,
   type SweepSeparation,
 } from './station_movement.ts'
+import * as fs from 'node:fs/promises'
 
 /** `session.json`'s `source` for a capture built this way. */
 export const STATION_DOME_SOURCE = 'station-dome'
@@ -493,7 +494,7 @@ export function isStationDomeSession(record: unknown): boolean {
 export async function readStationCoverage(sessionPath: string): Promise<StationCoverage> {
   let jsonl = ''
   try {
-    jsonl = await Deno.readTextFile(`${sessionPath}/keyframes.jsonl`)
+    jsonl = await fs.readFile(`${sessionPath}/keyframes.jsonl`, 'utf8')
   } catch {
     // No frames posted yet.
   }
@@ -536,7 +537,7 @@ export async function readStationCoverage(sessionPath: string): Promise<StationC
 export async function stationCaptureBlockReason(sessionPath: string): Promise<string | null> {
   let record: unknown
   try {
-    record = JSON.parse(await Deno.readTextFile(`${sessionPath}/session.json`))
+    record = JSON.parse(await fs.readFile(`${sessionPath}/session.json`, 'utf8'))
   } catch {
     return null
   }
@@ -584,7 +585,7 @@ export async function applyStationLabels(
   stationBySourcePhoto: Map<string, number>,
 ): Promise<StationLabelResult> {
   const path = `${sessionPath}/keyframes.jsonl`
-  const raw = await Deno.readTextFile(path)
+  const raw = await fs.readFile(path, 'utf8')
   let labelled = 0
   let unlabelled = 0
   const out = raw.split('\n').map((line) => {
@@ -607,6 +608,6 @@ export async function applyStationLabels(
     labelled += 1
     return JSON.stringify({ ...meta, station })
   })
-  await Deno.writeTextFile(path, out.join('\n'))
+  await fs.writeFile(path, out.join('\n'))
   return { labelled, unlabelled }
 }

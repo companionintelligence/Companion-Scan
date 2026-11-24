@@ -2,7 +2,7 @@
  * What a Place's scans say, together, about where it is and which way it faces: the compass estimate the Place location
  * panel offers ("Use compass estimate from N scans"), and `GET /projects/:id/georeference-seed` serves.
  *
- * Deno-API-free like ./world_origin.ts (ADR 0004). It reads sidecars (the nested `geoSession` of src/world/geo-session.ts, the
+ * Node-API-free like ./world_origin.ts (ADR 0004). It reads sidecars (the nested `geoSession` of src/world/geo-session.ts, the
  * `projectTransform`, the calibration tier) and answers with numbers and how sure they are; it writes nothing. A seed is
  * **approximate** (ADR 0015): the compass is magnetic and indoors it is off by tens of degrees, the phone's fix by 10 to 50 m,
  * and none of it is checked against anything. The panel offers it as a starting point and says so, and a record made from it

@@ -23,7 +23,7 @@
  *  3. THE SEAMS. `sampleTap`, `isDisturbed` and `sigmaHatM` default to what the modal always did and are honoured when
  *     given; a reader may refuse a tap with a sentence or say how high it measured, and the evidence of a tap is stamped
  *     on the calibration as given (WP-05b); `sigmaHatM` now sets the spacing tolerance and the gates of a fit.
- *  4. PURITY. The module reads no DOM, no Deno API, no clock and imports only the world modules and the constellation
+ *  4. PURITY. The module reads no DOM, no Node API, no clock and imports only the world modules and the constellation
  *     flow (ADR 0002).
  *
  * The modal around it is held to goldens in wp-calibration-characterisation.test.ts, and the flow's own claims (the
@@ -1003,10 +1003,10 @@ test('a tap noise below the adopted floor is raised to it, for a fit as for a pa
 
 const stripComments = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
 
-test('the module reads no DOM, no Deno API, no clock and no randomness, and imports only the world modules and the constellation flow (ADR 0002)', () => {
+test('the module reads no DOM, no Node API, no clock and no randomness, and imports only the world modules and the constellation flow (ADR 0002)', () => {
   const source = stripComments(readFileSync(join(ROOT, 'src/ar/calibration-commit.ts'), 'utf8'))
   for (const [what, pattern] of [
-    ['a Deno API', /\bDeno\b/],
+    ['a Node API', /\bfrom\s+['"]node:|\bprocess\.|\bBuffer\./],
     ['the document or window', /\b(document|window|navigator|location|localStorage|sessionStorage|indexedDB)\b/],
     ['a DOM type', /\b(HTML\w*Element|TouchEvent|PointerEvent|Element|Node)\b/],
     ['the clock', /\b(Date\.now|new Date|performance\.now|setTimeout|setInterval|requestAnimationFrame)\b/],

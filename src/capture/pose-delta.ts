@@ -14,11 +14,11 @@
  * Types come from world/types.ts rather than ar/provider.ts even though
  * `ARProvider.Pose` is the structurally identical shape this is fed at runtime:
  * provider.ts references `HTMLCanvasElement`, so importing from it drags DOM
- * lib types into the Deno test run and fails type-checking (ADR 0002).
+ * lib types into the server unit suite and fails type-checking (ADR 0002).
  * `PoseLike` is structurally compatible with `Pose`, so callers pass one
  * without a cast.
  */
-import type { Quat, Vec3 } from '../world/types'
+import type { Quat, Vec3 } from '../world/types.ts'
 import { cameraHeadingDeg, wrapDeg } from '../shared/pose-math.ts'
 
 /**

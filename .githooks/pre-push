@@ -1,12 +1,12 @@
 #!/bin/sh
 # Pre-push guard: refuse to push anything that doesn't pass locally.
 #
-# Runs `npm run verify` — deno check + the full Deno test suite + the
-# frontend type-check. All three are hermetic (no servers, no browsers, no
-# seeded corpus), so this is deterministic and takes only a few seconds.
+# Runs `npm run verify` — the server's type-check and unit suite, the
+# frontend type-check, and the Node unit suites. All are hermetic (no servers,
+# no browsers, no seeded corpus), so this is deterministic and takes a few minutes.
 #
 # Deliberately NOT run here: the Playwright suites (tests/mock-*, tests/api-*).
-# They need a Vite server, a Deno API, a browser binary, and a seeded scan
+# They need a Vite server, the API server, a browser binary, and a seeded scan
 # corpus, which is minutes of setup and not something to put in front of every
 # push. Use `npm run test:box` for that loop.
 #
@@ -18,7 +18,7 @@
 
 set -e
 
-echo "[pre-push] npm run verify (deno check + deno test + tsc)"
+echo "[pre-push] npm run verify (server type-check and suite, tsc, unit suites)"
 
 if ! npm run --silent verify; then
   echo ""

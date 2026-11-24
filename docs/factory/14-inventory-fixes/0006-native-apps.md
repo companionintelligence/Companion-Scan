@@ -34,7 +34,7 @@ The two ScanAR plugins keep one contract and one pose convention. The Quest app 
   - `limited.initializing`, `limited.excessiveMotion`, `limited.insufficientFeatures`;
   - `limited.relocalizing`, which only ARKit sends. ARCore has no relocalization state, and none is invented: the codec test and the `native.ts` header depend on that.
 - **The Quest app's numbers follow the web** (`src/capture/keyframes.ts` DEFAULTS, `UPLOAD_RETRIES`, the 5 s drain; `src/ar/frame-epoch.ts` `FRAME_JUMP_TRANSLATION_M`, `FRAME_JUMP_REFRACTORY_MS`). The one exception is a number with a device reason, and that reason is written beside the constant.
-- **New Node test cases** go into test files a `package.json` script already runs, because `package.json` belongs to no session. A new file would need a `tests/unit/node/wp-*.test.ts` name to be run by `npm run test:wave`; none was needed. New Deno tests go under `tests/unit/deno/`, which `deno task test` runs whole.
+- **New Node test cases** go into test files a `package.json` script already runs, because `package.json` belongs to no session. A new file would need a `tests/unit/node/wp-*.test.ts` name to be run by `npm run test:wave`; none was needed. New Deno tests go under `tests/unit/server/`, which `deno task test` runs whole.
 - **No host names, addresses, personal names or home paths** anywhere. Use `<host>` placeholders.
 
 ## Before implementation
@@ -70,7 +70,7 @@ The two ScanAR plugins keep one contract and one pose convention. The Quest app 
   - `mobile/android/app/src/main/java/com/companionintelligence/scan/ScanARRules.java`
   - `meta/app/src/main/java/com/companionintelligence/scan/quest/auth/*.kt` and their tests
   - `meta/app/src/test/resources/pose-to-matrix.fixture.json`
-  - `tests/unit/deno/native_quest_pose_fixture.test.ts`
+  - `tests/unit/server/native_quest_pose_fixture.test.ts`
   - `.github/workflows/quest-build.yml` and `.github/workflows/subsystem-tests.yml`
 
 ## Schema required
@@ -134,7 +134,7 @@ source ~/.nvm/nvm.sh && nvm use 22.23.2 && export ONNXRUNTIME_NODE_INSTALL_CUDA=
 (cd mobile/android && ./gradlew --max-workers=4 -Dorg.gradle.jvmargs=-Xmx3g testDebugUnitTest assembleDebug :app:assembleDebugAndroidTest --no-daemon)
 (cd meta && ./gradlew --max-workers=4 -Dorg.gradle.jvmargs=-Xmx3g :app:testDebugUnitTest :app:assembleDebug --no-daemon)
 npm run test:native-ar && npm run test:native-provider && npm run test:native-build && npm run test:native-release && npm run test:wave
-deno test --allow-read tests/unit/deno/native_quest_pose_fixture.test.ts
+deno test --allow-read tests/unit/server/native_quest_pose_fixture.test.ts
 # cap sync leaves a copy of the 8th Wall engine in mobile/android/app/src/main/assets/public (git-ignored), and the
 # engine-quarantine test reads every file of the tree outside the folders it skips, so remove that copy first.
 rm -rf mobile/android/app/src/main/assets/public

@@ -51,7 +51,7 @@
  * `'expired'` with no value: the Place georeference and the compass seed then have no declination, which is
  * the honest answer, but not one to ship. NCEI released WMM2025 on December 17, 2024, two weeks before its
  * epoch, so expect WMM2030 in December 2029: weeks, not months, before the limit. The calendar item is a
- * test: the reminder at the end of tests/unit/deno/declination.test.ts prints a warning from 180 days before
+ * test: the reminder at the end of tests/unit/server/declination.test.ts prints a warning from 180 days before
  * the model ends (2030-01-01) and fails from 14 days before it, until this swap is made. To make it:
  *
  *   1. Download NOAA's `WMM.COF` and the test-value file for WMM2030 from the page above (the download sits
@@ -63,13 +63,13 @@
  *   3. Change the import of the coefficients below to that file: the only place this module's code names the
  *      year, which a test checks. Delete `src/world/wmm2025-coefficients.ts`. Read this header for the years and
  *      the model it names (2025, 2030, WMM2025, the 2026 figures for the poles) and correct them.
- *   4. Run `deno task test`: what fails is what knows WMM2025's answers, and each is marked "WMM2025 only" in
- *      the test files. In tests/unit/deno/declination.test.ts replace the 12 NOAA rows with the new test-value
- *      file's, the pinned reference table with what `python3 -I -B tests/unit/deno/wmm_reference.py table`
+ *   4. Run `npm run test:server`: what fails is what knows WMM2025's answers, and each is marked "WMM2025 only" in
+ *      the test files. In tests/unit/server/declination.test.ts replace the 12 NOAA rows with the new test-value
+ *      file's, the pinned reference table with what `python3 -I -B tests/unit/server/wmm_reference.py table`
  *      prints, and the table's name, file date, SHA-256 and first and last rows, and re-read the places the tests
  *      name (their declination and zone on the day the tests use) against the new model. In
- *      tests/unit/deno/wmm_generator.test.ts replace the layout lines and the two header sentences marked. In
- *      tests/unit/deno/wmm_reference.py replace the 12 NOAA rows: `python3 -I -B tests/unit/deno/wmm_reference.py`
+ *      tests/unit/server/wmm_generator.test.ts replace the layout lines and the two header sentences marked. In
+ *      tests/unit/server/wmm_reference.py replace the 12 NOAA rows: `python3 -I -B tests/unit/server/wmm_reference.py`
  *      then checks the new table against them with a second implementation, and finds the new file by its name.
  *   5. NOTICE.md and THIRD_PARTY.md name the file, the model and the dates: edit those (a test reads them). The
  *      native apps' notices (scripts/native/third-party-notices.mjs) find the file by its name and carry the
@@ -98,10 +98,10 @@
  * Everything is plain double arithmetic with no state: the same arguments give the same bits in any order
  * within one engine, and the frozen coefficient table cannot be changed by a caller. (`Math.sin` and
  * `Math.cos` may differ in the last bit between engines; the module's whole rounding error against a 60-digit
- * reference is about 1e-10 nT, measured in tests/unit/deno/declination.test.ts.) Dates are read in UTC
+ * reference is about 1e-10 nT, measured in tests/unit/server/declination.test.ts.) Dates are read in UTC
  * whatever the machine's time zone.
  *
- * Browser-safe on purpose (ADR 0002): no Deno or DOM references.
+ * Browser-safe on purpose (ADR 0002): no Node or DOM references.
  */
 import { WGS84_A_M, WGS84_F } from './enu.ts'
 import { hasGeoPose, normaliseBearingDeg } from './geo.ts'

@@ -14,10 +14,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { registerHooks, stripTypeScriptTypes } from 'node:module'
+import { registerHooks } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import ts from 'typescript'
 import { PIPELINE_GRACE_MS, pipelineDrewRecently, startFrameLoop } from '../../../src/ui/frame-loop.ts'
 
+/** How the load hook compiles a file Node cannot strip: Node 26's stripTypeScriptTypes has no transform mode. */
+const TRANSPILE = { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
+
+// src/ui/overlay.ts uses parameter properties, which Node's type stripping cannot run, so the hook compiles it.
 registerHooks({
   resolve(specifier, context, nextResolve) {
     try {
@@ -31,7 +36,7 @@ registerHooks({
   load(url, context, nextLoad) {
     if (/\/src\/ui\/overlay\.ts$/.test(url)) {
       const source = readFileSync(fileURLToPath(url), 'utf8')
-      return { format: 'module', source: stripTypeScriptTypes(source, { mode: 'transform' }), shortCircuit: true }
+      return { format: 'module', source: ts.transpileModule(source, { fileName: url, compilerOptions: TRANSPILE }).outputText, shortCircuit: true }
     }
     return nextLoad(url, context)
   },

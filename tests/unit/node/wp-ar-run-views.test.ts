@@ -14,7 +14,7 @@
  *    it (nothing of it is in the view to select), and reports the scan a load or a delete leaves as this run's.
  *
  * The three classes declare their dependencies as constructor parameter properties, which Node's strip-only loader
- * cannot run, so a load hook transforms those three files (module.stripTypeScriptTypes in "transform" mode) and
+ * cannot run, so a load hook compiles those three files with the TypeScript compiler (Node 26 has no transform mode) and
  * leaves every other module to the default loader. Node runs each test file in its own process, so the hook and the
  * globals installed below reach no other test.
  *
@@ -28,11 +28,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { registerHooks, stripTypeScriptTypes } from 'node:module'
+import { registerHooks } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import ts from 'typescript'
 import { PREVIOUS_RUN_LABEL } from '../../../src/ui/previous-run.ts'
 import type { StoredDetection } from '../../../src/scene/store.ts'
 import type { WorldDetection } from '../../../src/spatial/resolver.ts'
+
+/** How the load hook compiles a file Node cannot strip: Node 26's stripTypeScriptTypes has no transform mode. */
+const TRANSPILE = { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
 
 // The classes' imports are written for the bundler (`'./icons'`), and three of them use parameter properties.
 registerHooks({
@@ -48,7 +52,7 @@ registerHooks({
   load(url, context, nextLoad) {
     if (/\/src\/ui\/(history|panel|overlay)\.ts$/.test(url)) {
       const source = readFileSync(fileURLToPath(url), 'utf8')
-      return { format: 'module', source: stripTypeScriptTypes(source, { mode: 'transform' }), shortCircuit: true }
+      return { format: 'module', source: ts.transpileModule(source, { fileName: url, compilerOptions: TRANSPILE }).outputText, shortCircuit: true }
     }
     return nextLoad(url, context)
   },

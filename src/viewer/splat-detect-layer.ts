@@ -25,7 +25,7 @@ import { type DetectObject, parseDetectObjects } from '../world/detect-objects'
 import { scanArtifactBase } from './splat-layer'
 
 // The interactions.json shape + parser moved to ../world/detect-objects.ts so
-// the Deno-side memory push can read the same sidecar without type-importing
+// the server-side memory push can read the same sidecar without type-importing
 // this file (it imports `three`) — ADR 0001/0002. Re-exported here because
 // this module has been the import point for both since they were written.
 export { type DetectObject, type DetectObjectRecord, parseDetectObjects, parseDetectRecords } from '../world/detect-objects'

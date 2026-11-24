@@ -18,7 +18,7 @@
  * Pulled out of main.ts (rather than living as bare module-level state
  * there) purely so it's importable — and unit-testable — without pulling in
  * main.ts's unconditional top-level side effects (hostname resolution, VLM
- * engine load, `Deno.serve`), which no existing test in this repo does.
+ * engine load, `serve(...)`), which no existing test in this repo does.
  */
 import type { WorldJob, WorldJobType } from '../../src/world/types.ts'
 import { budgetFromEnv, describeBudget, within } from '../run_with_deadline.ts'
@@ -66,11 +66,13 @@ const DEFAULT_GRACE_MS = 60_000
 export class WorldJobPump {
   private _pending: Array<{ slug: string; jobId: string }> = []
   private _working = false
+  private readonly dispatch: PumpDispatch
+  private readonly options: WorldJobPumpOptions
 
-  constructor(
-    private readonly dispatch: PumpDispatch,
-    private readonly options: WorldJobPumpOptions = {},
-  ) {}
+  constructor(dispatch: PumpDispatch, options: WorldJobPumpOptions = {}) {
+    this.dispatch = dispatch
+    this.options = options
+  }
 
   /** Push a job onto the queue and kick the pump if it isn't already running. */
   enqueue(slug: string, jobId: string): void {

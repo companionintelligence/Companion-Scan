@@ -5,7 +5,7 @@
  *
  * Declared here and nowhere else, for the reason `./calibration-evidence.ts` gives for the tap, fit and
  * check records: the detector that builds this record imports the AR provider (three.js and the DOM), and a
- * type the Deno server reads must not sit in a module that does (ADR 0002). `src/ar/fiducial/types.ts`
+ * type the server reads must not sit in a module that does (ADR 0002). `src/ar/fiducial/types.ts`
  * re-exports it under the name it has always had. `src/world/types.ts` is to import it from here when it gains the member.
  *
  * ## Why it is one flat record
@@ -20,7 +20,7 @@
  * Every field is a measurement or a fact about the sheet, JSON-safe (a finite number, a string, or null), and
  * none is a default: a fusion that produced no pose produces no evidence.
  *
- * Pure data and no values: no Deno, no DOM, nothing to import (ADR 0002).
+ * Pure data and no values: no Node API, no DOM, nothing to import (ADR 0002).
  */
 
 /** How the tag is mounted: on a wall, or lying flat (a floor, a table, a plaque). A tilted tag is refused, not recorded. */

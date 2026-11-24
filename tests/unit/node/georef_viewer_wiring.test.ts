@@ -3,7 +3,7 @@
  *
  * viewer.ts runs its DOM code when it is imported and server/main.ts starts the server, so neither can be loaded by a test. The
  * behaviour behind each hook is tested where it lives (scan_placement_by_hand, georef_anchor_pins, placement_note and georef_hud
- * on the Node side; world_origin and georef_replace on the Deno side). What none of those can see is a hook that was lost: the hub
+ * on the Node side; world_origin and georef_replace on the server side). What none of those can see is a hook that was lost: the hub
  * files are merged from several packages, and a dropped one-line call leaves every module test green and the editor drawing a scan
  * where an undo left it, the red pins metres from the taps, and a claim about the map on a scan a person moved. These checks read the
  * source and pin each call site, scoped to the function it sits in, in the style of stitch_wiring.test.ts.

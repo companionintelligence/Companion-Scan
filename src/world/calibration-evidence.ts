@@ -4,7 +4,7 @@
  *
  * Declared here and nowhere else. `src/ar/tap-sampling.ts` and `./frame-fit.ts` build these records and
  * re-export the types under the names they have always had, so their callers are unchanged. They cannot be
- * declared in those two files: `ScanCalibration` is read by the browser, by the Deno server and by the Node
+ * declared in those two files: `ScanCalibration` is read by the browser, by the server and by the Node
  * tests, and a type the server reads must not sit in a module that imports the AR provider (three.js and
  * the DOM, ADR 0002). `frame-fit.ts` declaring them would be no better the other way round: it imports
  * `Vec3` from ./types.ts, so ./types.ts importing it back would make the hub part of an import cycle. A
@@ -12,7 +12,7 @@
  * calibration keeps (WP-14b) is a leaf of its own for the same reason, ./fiducial-evidence.ts: the detector that
  * builds it imports the AR provider.
  *
- * Pure data and no values: no Deno, no DOM, nothing to import (ADR 0002).
+ * Pure data and no values: no Node API, no DOM, nothing to import (ADR 0002).
  */
 
 /** Where a tap's position came from. */

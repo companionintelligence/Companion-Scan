@@ -129,6 +129,8 @@ import {
   scrubPaths,
   withWorkDir,
 } from './sfm_workspace.ts'
+import * as fs from 'node:fs/promises'
+import { errorKind, readBytes } from '../fs_util.ts'
 
 // ─── The switch, and the adopted constants ───────────────────────────────────
 
@@ -547,7 +549,7 @@ export async function runSfmRegistration(host: SfmHost, request: SfmRequest): Pr
     return await run(host, request, { now, started, wallClockMs, done, skip })
   } catch (error) {
     // A bug or a file system error must not fail the job that has a wall match to report. Only the error's name is logged: a message can hold a path.
-    console.error(`[place-register-sfm] stopped on an error (${error instanceof Error ? error.name : 'Error'})`)
+    console.error(`[place-register-sfm] stopped on an error (${errorKind(error)})`)
     return done({
       ...emptyResult('refused', 'colmap-failed', 'The photo method stopped on an unexpected error.', wallClockMs, started, now),
     })
@@ -657,13 +659,13 @@ async function run(host: SfmHost, request: SfmRequest, ctx: RunContext): Promise
 
   const clock = startWallClock(wallClockMs, now)
   const params = resolveParams({ sessionDir: host.sessionsDir, colmapBin: located.bin })
-  const imageRoot = await Deno.realPath(host.sessionsDir)
+  const imageRoot = await fs.realpath(host.sessionsDir)
   const colmap: ColmapContext = { bin: located.bin, imageRoot, params, spawn: deadlineSpawn(clock, colmapStepBudgetMs(), host._spawn), logs: [] }
   const thresholds = resolveQualityThresholds()
 
   return await withWorkDir(workRoot, host.jobId, async (workDir): Promise<SfmOutcome> => {
     // COLMAP's words can name the folders it was given. They are known, so they are removed whole whatever characters they hold.
-    const roots = [host.sessionsDir, imageRoot, workRoot, workDir, await Deno.realPath(workDir).catch(() => workDir), colmap.bin]
+    const roots = [host.sessionsDir, imageRoot, workRoot, workDir, await fs.realpath(workDir).catch(() => workDir), colmap.bin]
     const scrub = (text: string): string => scrubPaths(text, roots)
     const failed = (reason: SfmRefusal, detail: string, extra: Partial<SfmResult> = {}): SfmOutcome =>
       done({ ...emptyResult('refused', reason, scrub(detail), wallClockMs, started, now), reference: referenceRef, ...extra })
@@ -714,7 +716,7 @@ async function run(host: SfmHost, request: SfmRequest, ctx: RunContext): Promise
     }
 
     // ── The reference's own fit, from the model the cache holds: made every run, so it can never be stale ──
-    const refImages = parseImagesBin(await Deno.readFile(`${cache.modelDir}/images.bin`))
+    const refImages = parseImagesBin(await readBytes(`${cache.modelDir}/images.bin`))
     const refSolverCentres = cameraCentres(refImages, { keepFolder: true })
     const refRecorded = sessionCentres(refSession.records, refSession.sessionId, refSession.epoch)
     const placeFromReference = sim3FromColumnMajor(reference.scan.localToWorld)

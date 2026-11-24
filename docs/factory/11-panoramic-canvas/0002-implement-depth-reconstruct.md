@@ -101,7 +101,7 @@ a room at 1 mm precision within 16 bits up to 65 m.
 
 New:
 - `server/depth/depth_reconstruct.ts` — the driver
-- `tests/unit/deno/depth_reconstruct.test.ts`
+- `tests/unit/server/depth_reconstruct.test.ts`
 
 Changed:
 - `server/main.ts` — dispatch branch, `_runDepthReconstructJob`, `jobResultFor` case, the

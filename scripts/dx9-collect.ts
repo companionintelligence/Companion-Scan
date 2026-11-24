@@ -1,8 +1,8 @@
-#!/usr/bin/env -S deno run --allow-read --allow-env=WORLDS_DIR,SESSIONS_DIR,SCANS_DIR
+#!/usr/bin/env node
 /**
  * DX9 collector: what the owner's real scans say about server registration, as one table.
  *
- *   deno run --allow-read --allow-env=WORLDS_DIR,SESSIONS_DIR,SCANS_DIR scripts/dx9-collect.ts \
+ *   node scripts/dx9-collect.ts \
  *     [--worlds <dir>] [--sessions <dir>] [--labels <file>] [--all] [--json]
  *
  * DX9 is the only data that can tune the acceptance values of `place-register` (docs/testing/DEVICE_TESTING.md, "DX9"; the values are
@@ -50,6 +50,7 @@ import {
 } from '../src/world/register-proposal.ts'
 import { SESSION_ID_RE } from '../src/shared/session-id.ts'
 import type { ScanManifest, WorldJob, WorldProject } from '../src/world/types.ts'
+import * as fs from 'node:fs/promises'
 
 /** Rooms and sessions DX9 needs, and the pairs they make: 8 rooms of 3 sessions are 24 same-room pairs and 252 cross-room pairs. */
 export const DX9_MIN_ROOMS = 8
@@ -433,7 +434,7 @@ export async function keyframeStats(sessionDir: string): Promise<KeyframeStats> 
   const stats: KeyframeStats = { sessions: 0, frames: 0, bytes: 0, meanBytes: null }
   let text: string
   try {
-    text = await Deno.readTextFile(`${sessionDir}/keyframes.jsonl`)
+    text = await fs.readFile(`${sessionDir}/keyframes.jsonl`, 'utf8')
   } catch {
     return stats
   }
@@ -467,13 +468,13 @@ export async function scanKeyframes(
 /** The world files of a folder (`<slug>.json`), skipping any JSON that is not one. */
 export async function readWorlds(worldsDir: string): Promise<Array<{ name: string; world: WorldProject }>> {
   const names: string[] = []
-  for await (const entry of Deno.readDir(worldsDir)) {
-    if (entry.isFile && entry.name.endsWith('.json')) names.push(entry.name)
+  for (const entry of await fs.readdir(worldsDir, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith('.json')) names.push(entry.name)
   }
   const worlds: Array<{ name: string; world: WorldProject }> = []
   for (const name of names.sort()) {
     try {
-      const parsed = JSON.parse(await Deno.readTextFile(`${worldsDir}/${name}`)) as WorldProject
+      const parsed = JSON.parse(await fs.readFile(`${worldsDir}/${name}`, 'utf8')) as WorldProject
       if (parsed && Array.isArray(parsed.jobs) && Array.isArray(parsed.scans)) worlds.push({ name: name.slice(0, -'.json'.length), world: parsed })
     } catch { /* not a world */ }
   }
@@ -579,7 +580,7 @@ export function formatSummary(summary: Summary): string {
 // ─── Command line ────────────────────────────────────────────────────────────
 
 if (import.meta.main) {
-  const args = [...Deno.args]
+  const args = [...process.argv.slice(2)]
   const flag = (name: string): boolean => {
     const at = args.indexOf(name)
     if (at < 0) return false
@@ -594,19 +595,19 @@ if (import.meta.main) {
   }
   const asJson = flag('--json')
   const keepAll = flag('--all')
-  const worldsDir = take('--worlds') ?? Deno.env.get('WORLDS_DIR') ?? './worlds'
-  const sessionsDir = take('--sessions') ?? Deno.env.get('SESSIONS_DIR') ?? `${Deno.env.get('SCANS_DIR') ?? './scans'}/sessions`
+  const worldsDir = take('--worlds') ?? process.env.WORLDS_DIR ?? './worlds'
+  const sessionsDir = take('--sessions') ?? process.env.SESSIONS_DIR ?? `${process.env.SCANS_DIR ?? './scans'}/sessions`
   const labelsPath = take('--labels')
   if (args.length > 0) {
     console.error(`Unknown argument: ${args[0]}`)
-    Deno.exit(2)
+    process.exit(2)
   }
   let labels: Labels | null = null
   if (labelsPath) {
-    const parsed: unknown = JSON.parse(await Deno.readTextFile(labelsPath))
+    const parsed: unknown = JSON.parse(await fs.readFile(labelsPath, 'utf8'))
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       console.error('--labels must be a JSON object of scan id to room name')
-      Deno.exit(2)
+      process.exit(2)
     }
     labels = parsed as Labels
   }
@@ -615,7 +616,7 @@ if (import.meta.main) {
     worlds = await readWorlds(worldsDir)
   } catch {
     console.error(`No worlds folder to read at ${worldsDir}. Pass --worlds <dir>.`)
-    Deno.exit(2)
+    process.exit(2)
   }
   const gathered: PairRow[] = []
   const keyframes = new Map<string, KeyframeStats>()

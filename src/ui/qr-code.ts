@@ -8,7 +8,7 @@
  * module keeps the DOM to two nodes even for a version-10 symbol.
  */
 // Extension-ful, following the `src/shared/provenance.ts` convention: this
-// module is imported by a Deno unit test as well as by Vite, and Deno resolves
+// module is imported by a server unit test as well as by Vite, and Node resolves
 // specifiers literally.
 import { qrcodegen } from '../third-party/qrcodegen/qrcodegen.ts'
 

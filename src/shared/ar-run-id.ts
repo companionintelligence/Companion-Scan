@@ -6,7 +6,7 @@
  * the id on every detection and every capture it writes (`arRunId`), and asks it back before it
  * shows or exports a stored position. See `DetectionStore.currentRunDetections`.
  *
- * Deno-API-free on purpose (ADR 0002): the browser imports it, and the server may one day compare
+ * Node-API-free on purpose (ADR 0002): the browser imports it, and the server may one day compare
  * ids. Like the other ids here (src/shared/session-id.ts) it comes from `crypto.randomUUID()`. Old
  * webviews have no `randomUUID`, so there it is the time plus random bytes: a different shape, the
  * same job, because the id is only ever compared for equality.

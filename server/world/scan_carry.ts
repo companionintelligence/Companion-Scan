@@ -37,7 +37,7 @@
  * deletes the world they were kept in, once everything else in it has been handed over, and then says how many went with it
  * instead (`placementsRemoved`, counted by `placementsInWorld`, server/place_deletion.ts).
  *
- * Deno-API-free and importing no server module that is not, so a test can import it.
+ * Node-API-free and importing no server module that is not, so a test can import it.
  */
 import type { EditPatch, ReviewComment, ScanManifest, WorldJob, WorldProject } from '../../src/world/types.ts'
 import { checkPlacementMatrix } from '../../src/world/scan-placement.ts'

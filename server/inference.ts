@@ -22,7 +22,7 @@ import { normalizeOllamaHost } from '../src/shared/ollama-host.ts'
 import { resolveOllamaModel } from '../src/shared/ollama-model.ts'
 import { loadLfmDriver, runLfmDriver } from '../src/inference/lfm-driver.ts'
 import type { LfmDriverHandle, LfmPort } from '../src/inference/lfm-driver.ts'
-import { createDenoOnnxPort } from './lfm-driver-onnx.ts'
+import { createNodeOnnxPort } from './lfm-driver-onnx.ts'
 
 // Re-export shared types
 export type { RawDetection }
@@ -47,7 +47,7 @@ const DEFAULT_NUM_CTX = 8192
 // most natural wrong value to supply — it is what `ollama show` prints.
 const MAX_NUM_CTX = 131072
 const OLLAMA_NUM_CTX = (() => {
-  const raw = Deno.env.get('OLLAMA_NUM_CTX')
+  const raw = process.env.OLLAMA_NUM_CTX
   if (raw == null || raw.trim() === '') return DEFAULT_NUM_CTX
   const n = Number(raw)
   // Number('') is 0 and Number('abc') is NaN; JSON.stringify turns NaN into
@@ -68,7 +68,7 @@ const OLLAMA_NUM_CTX = (() => {
 
 const NUM_THREADS = (() => { try { return Math.max(1, navigator?.hardwareConcurrency ?? 4) } catch { return 4 } })()
 
-// Helper to safely convert array buffer to base64 in Deno without stack overflows
+// Helper to safely convert array buffer to base64 without stack overflows
 function arrayBufferToBase64(bytes: Uint8Array): string {
   let binary = ''
   const len = bytes.byteLength
@@ -163,10 +163,10 @@ export class InferenceEngine {
   private _onnxQueue: Promise<unknown> = Promise.resolve()
 
   constructor() {
-    const requested = Deno.env.get('INFERENCE_MODE')
+    const requested = process.env.INFERENCE_MODE
     this._mode = requested === 'onnx' ? 'onnx' : requested === 'mock' ? 'mock' : 'ollama'
-    this.ollamaUrl = normalizeOllamaHost(Deno.env.get('OLLAMA_HOST'))
-    this.ollamaModel = Deno.env.get('OLLAMA_MODEL') ?? DEFAULT_MODEL_TAG
+    this.ollamaUrl = normalizeOllamaHost(process.env.OLLAMA_HOST)
+    this.ollamaModel = process.env.OLLAMA_MODEL ?? DEFAULT_MODEL_TAG
   }
 
   /** Resolved inference mode (INFERENCE_MODE env). */
@@ -251,7 +251,7 @@ export class InferenceEngine {
       logSeverityLevel: 3,
     }
 
-    this.driverPort = createDenoOnnxPort(ort, JimpClass)
+    this.driverPort = createNodeOnnxPort(ort, JimpClass)
     this.driverHandle = await loadLfmDriver(this.driverPort, opts)
 
     console.log('[engine] Local ONNX sessions loaded successfully')

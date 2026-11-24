@@ -40,7 +40,7 @@ import {
 import { sessionFrameBearingDeg } from '../../../src/world/geo.ts'
 // The physical model of an AR session and a perfect compass the bearing tests are measured against. It imports
 // nothing from src/, so it is as independent here as it is there.
-import { cameraRotation, perfectCompassBearing, trueSessionZBearing } from '../deno/physical_oracle.ts'
+import { cameraRotation, perfectCompassBearing, trueSessionZBearing } from '../server/physical_oracle.ts'
 // The rigid body the headings are measured against (carried axes, a phone placed by heading, tilt and roll).
 import {
   D2R,
@@ -607,9 +607,9 @@ test('source shape: GeoPose says it is a GPS fix and not an OGC GeoPose, and the
   assert.match(tracker.slice(tracker.indexOf('export interface GeoFix'), tracker.indexOf('export interface AddressComponents')), /clockwise from MAGNETIC north/)
 })
 
-test('source shape: the module uses no Deno API and imports only the browser-safe bearing helper (ADR 0002), and flags every constant it adopted (ADR 0005 rule 5)', () => {
+test('source shape: the module uses no Node API and imports only the browser-safe bearing helper (ADR 0002), and flags every constant it adopted (ADR 0005 rule 5)', () => {
   const source = read('src/geo/compass-heading.ts')
-  assert.doesNotMatch(source, /\bDeno\.[A-Za-z]/, 'no use of the Deno namespace')
+  assert.doesNotMatch(source, /\bfrom\s+['\"]node:|\bprocess\.(?:env|argv|exit|cwd|platform|arch|versions|execPath|on)\b|\bBuffer\.(?:from|alloc|concat|isBuffer)\b/, 'no Node module, no process, no Buffer')
   assert.doesNotMatch(source, /\b(window|document|navigator|performance|Date)\b\./, 'and no DOM or clock: it is pure')
   const imports = [...source.matchAll(/^import .* from '([^']+)'/gm)].map((m) => m[1])
   assert.deepEqual(imports, ['../world/geo.ts', '../world/types.ts'], 'its imports are the browser-safe geometry module and the shared types')

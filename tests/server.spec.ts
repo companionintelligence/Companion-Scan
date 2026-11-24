@@ -1,8 +1,8 @@
 /**
- * Backend API tests — exercises the Deno/Hono server directly via the Vite proxy.
+ * Backend API tests — exercises the Hono server directly via the Vite proxy.
  *
  * All requests go through:
- *   Playwright → Vite dev server (port 5173, or VITE_PORT if set) → Deno server (port 8000)
+ *   Playwright → Vite dev server (port 5173, or VITE_PORT if set) → server (port 8000)
  *
  * Tests are project-agnostic (no browser) and run under the webkit-desktop
  * project, so `npm test` runs each of them once.

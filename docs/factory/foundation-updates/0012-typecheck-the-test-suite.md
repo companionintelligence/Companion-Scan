@@ -85,7 +85,7 @@ so the mistake is legible rather than edited out of history.
   environments are worth keeping apart.
   Folding them in also puts spec files in `npm run build`'s type graph, which is the
   class of cross-runtime leak ADR 0002 exists because of.
-- **Do not add `tests/unit/deno/` to the TypeScript project.** Those use `jsr:`
+- **Do not add `tests/unit/server/` to the TypeScript project.** Those use `jsr:`
   specifiers and Deno globals; `deno task check` and `deno task test` already
   type-check them, and CI runs both. `playwright.config.ts` already `testIgnore`s
   `**/unit/**` for the same class of reason.
@@ -245,7 +245,7 @@ None.
 - [ ] Negative control for scope: confirm `npm run build` and the root
       `npx tsc --noEmit` still do **not** pull spec files in, so the production build
       is unaffected
-- [ ] Confirm `tests/unit/deno/` is excluded — its `jsr:` specifiers must not appear
+- [ ] Confirm `tests/unit/server/` is excluded — its `jsr:` specifiers must not appear
       as errors
 - [ ] Re-run the affected Playwright suites and confirm identical results to before,
       since the point is that behaviour did not change:

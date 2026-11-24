@@ -1,5 +1,5 @@
 /**
- * Server inference client — POST to the Deno inference server.
+ * Server inference client — POST to the inference server.
  *
  * The default path everywhere, not only where navigator.gpu is missing:
  * `InferenceRouter.init()` (./router.ts) uses on-device WebGPU only when the

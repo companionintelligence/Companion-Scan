@@ -12,7 +12,7 @@
  *
  * ── Stage ────────────────────────────────────────────────────────────────────
  * TWO servers, not one. Vite alone is no longer enough: the storyboard now films
- * the World Editor and the detections panel, and both are backed by the Deno API.
+ * the World Editor and the detections panel, and both are backed by the API server.
  *
  *   # terminal 1 — the API, on isolated data dirs so the checkout stays clean
  *   npm run gen:test-data
@@ -20,7 +20,7 @@
  *   SCANS_DIR=/tmp/ci-video-scans \
  *   WORLDS_DIR=/tmp/ci-video-worlds \
  *   SUMMARIES_DIR=/tmp/ci-video-summaries \
- *     npm run server                            # Deno on :8000
+ *     npm run server                            # the API server on :8000
  *   COUNT=3 npm run seed:test-data              # three homes into world "default"
  *
  *   # terminal 2 — the app
@@ -118,7 +118,7 @@
  *     three FTUE shots order-independent. (The storyboard also never clicks
  *     past step 5, so the key is never set in the first place — belt and braces.)
  *
- *  6. THE API IS NOW REQUIRED — this used to say "the Deno API is deliberately
+ *  6. THE API IS NOW REQUIRED — this used to say "the API server is deliberately
  *     not run". That is no longer true, and re-deleting the server will silently
  *     hollow out four shots rather than fail the build: viewer.ts:403 GETs
  *     /worlds/<slug> and writes "Failed to load world: …" into #viewer-placeholder
@@ -168,7 +168,7 @@
  *     FIXED_TIMESTAMP (scripts/generate-test-homes.mjs:111) but for a runtime
  *     upload falls back to `uploadedAt = new Date()` (main.ts:1203, 1238) — a
  *     live wall-clock string that the browser-side frozen clock cannot reach,
- *     because it is minted server-side in Deno. Blocking the write routes below
+ *     because it is minted by the server. Blocking the write routes below
  *     is therefore load-bearing for byte stability, not just for speed: it pins
  *     the world at exactly the three seeded homes for every shot and both
  *     viewports. Read routes (/infer, /worlds, /scans, /sessions, /jobs,

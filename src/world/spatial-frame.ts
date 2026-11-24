@@ -3,7 +3,7 @@
  * told apart, and the revision that says which one a Place holds.
  *
  * This file is imported by the server (`server/wp-a-projects.ts`) and by the browser
- * (`src/project/frame-sync.ts`), so it has no Deno or DOM reference (ADR 0002).
+ * (`src/project/frame-sync.ts`), so it has no Node or DOM reference (ADR 0002).
  *
  * ## Why a validator
  *

@@ -13,7 +13,7 @@
  * checkbox that switches nothing (F-19). It is shown the way the other job outputs in the Layers tab are, in its own
  * section (viewer.html, `#floor-plan-section`).
  *
- * Pure apart from the `fetcher` it is handed, so a Deno test drives it with canned responses.
+ * Pure apart from the `fetcher` it is handed, so a unit test drives it with canned responses.
  */
 import type { FloorPlanManifest, FloorPlanUnits, ScanManifest } from '../world/types.ts'
 import { artifactProblemText, readArtifact, type ArtifactRead } from './artifact-read.ts'

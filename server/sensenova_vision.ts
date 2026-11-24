@@ -1,13 +1,14 @@
 /**
  * SenseNova-Vision worker driver.
  *
- * Keeps the heavyweight Python runtime outside the Deno server process. The
+ * Keeps the heavyweight Python runtime outside the server process. The
  * worker follows the upstream public entrypoint and produces a structured
  * result even when the optional checkout/model are not installed yet.
  */
 import { locateTool, runnerToolLookup } from './exec_probe.ts'
 import { sampleEvenly } from './sample_even.ts'
 import { budgetFromEnv, KILL_GRACE_MS, runWithDeadline } from './run_with_deadline.ts'
+import * as fs from 'node:fs/promises'
 
 /** One hour: a recon3d pass over eight keyframes is minutes on a GPU. Untuned. */
 const DEFAULT_SENSENOVA_TIMEOUT_MS = 60 * 60 * 1000
@@ -47,9 +48,9 @@ export function senseNovaTask(value: unknown): SenseNovaTask {
 }
 
 export async function runSenseNovaVision(opts: SenseNovaVisionRunOptions): Promise<SenseNovaVisionResult> {
-  const repoDir = opts.repoDir ?? Deno.env.get('SENSENOVA_DIR') ?? ''
-  const modelPath = opts.modelPath ?? Deno.env.get('SENSENOVA_MODEL_PATH') ?? ''
-  const bashName = opts.bashBin ?? Deno.env.get('SENSENOVA_BASH') ?? 'bash'
+  const repoDir = opts.repoDir ?? process.env.SENSENOVA_DIR ?? ''
+  const modelPath = opts.modelPath ?? process.env.SENSENOVA_MODEL_PATH ?? ''
+  const bashName = opts.bashBin ?? process.env.SENSENOVA_BASH ?? 'bash'
   const launcher = `${repoDir}/scripts/run_sensenova_vision.sh`
   const useWsl = /(?:^|[\\/])wsl(?:\.exe)?$/i.test(bashName)
   const base = { task: opts.task, outputDir: opts.outputDir, files: [] as string[] }
@@ -62,7 +63,7 @@ export async function runSenseNovaVision(opts: SenseNovaVisionRunOptions): Promi
   if (!(await exists(launcher))) {
     return { ...base, status: 'skipped', log: '', remediation: `SenseNova launcher not found at ${launcher}.` }
   }
-  // A bare name is looked up on PATH, as a shell would. Deno.stat on the bare
+  // A bare name is looked up on PATH, as a shell would. fs.stat on the bare
   // name checks the server's working directory instead, which is why this
   // driver used to skip on every Linux default (see exec_probe.ts).
   const bashLocation = await locateTool(runnerToolLookup('sensenova-bash'), { explicit: bashName })
@@ -96,7 +97,7 @@ export async function runSenseNovaVision(opts: SenseNovaVisionRunOptions): Promi
     return { ...base, status: 'skipped', log: '', remediation: 'This scan has no uploaded keyframes. Capture with keyframe streaming enabled.' }
   }
 
-  await Deno.mkdir(opts.outputDir, { recursive: true })
+  await fs.mkdir(opts.outputDir, { recursive: true })
   const query = opts.query?.trim() || defaultQuery(opts.task)
   const runtimePath = (path: string): string => useWsl ? windowsPathToWsl(path) : path
   const args = useWsl
@@ -124,7 +125,7 @@ export async function runSenseNovaVision(opts: SenseNovaVisionRunOptions): Promi
   }
 }
 
-/** WSL consumes Linux paths even when the Deno coordinator runs on Windows. */
+/** WSL consumes Linux paths even when the server coordinator runs on Windows. */
 function windowsPathToWsl(path: string): string {
   const normalized = path.replace(/\\/g, '/')
   const match = /^([A-Za-z]):\/(.*)$/.exec(normalized)
@@ -140,8 +141,8 @@ function defaultQuery(task: SenseNovaTask): string {
 async function sessionImages(sessionDir: string, limit: number): Promise<string[]> {
   const entries: Array<{ name: string; path: string }> = []
   try {
-    for await (const entry of Deno.readDir(sessionDir)) {
-      if (entry.isFile && /\.(jpe?g|png)$/i.test(entry.name)) entries.push({ name: entry.name, path: `${sessionDir}/${entry.name}` })
+    for (const entry of await fs.readdir(sessionDir, { withFileTypes: true })) {
+      if (entry.isFile() && /\.(jpe?g|png)$/i.test(entry.name)) entries.push({ name: entry.name, path: `${sessionDir}/${entry.name}` })
     }
   } catch { return [] }
   const sorted = entries.sort((a, b) => a.name.localeCompare(b.name))
@@ -151,10 +152,10 @@ async function sessionImages(sessionDir: string, limit: number): Promise<string[
 async function listFiles(dir: string): Promise<string[]> {
   const files: string[] = []
   async function walk(current: string): Promise<void> {
-    for await (const entry of Deno.readDir(current)) {
+    for (const entry of await fs.readdir(current, { withFileTypes: true })) {
       const path = `${current}/${entry.name}`
-      if (entry.isDirectory) await walk(path)
-      else if (entry.isFile) files.push(path)
+      if (entry.isDirectory()) await walk(path)
+      else if (entry.isFile()) files.push(path)
     }
   }
   try { await walk(dir) } catch { /* missing output is represented by an empty artifact list */ }
@@ -162,5 +163,5 @@ async function listFiles(dir: string): Promise<string[]> {
 }
 
 async function exists(path: string): Promise<boolean> {
-  try { await Deno.stat(path); return true } catch { return false }
+  try { await fs.stat(path); return true } catch { return false }
 }

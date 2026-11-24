@@ -13,6 +13,7 @@
 import type { ScanManifest } from '../src/world/types.ts'
 import { isInPlaceFrame } from '../src/world/frame-generations.ts'
 import { sessionDirPath } from './session_id.ts'
+import * as fs from 'node:fs/promises'
 
 export type Person4DClipExtras = { durationMs?: number; localToWorld?: number[] }
 
@@ -26,7 +27,7 @@ export async function person4dClipExtras(
   const dir = sessionDirPath(sessionsDir, sessionId)
   if (dir && record['poseTrackFile']) {
     try {
-      const track = JSON.parse(await Deno.readTextFile(`${dir}/pose-track.json`)) as { durationMs?: unknown } | null
+      const track = JSON.parse(await fs.readFile(`${dir}/pose-track.json`, 'utf8')) as { durationMs?: unknown } | null
       if (typeof track?.durationMs === 'number' && Number.isFinite(track.durationMs) && track.durationMs > 0) {
         extras.durationMs = track.durationMs
       }

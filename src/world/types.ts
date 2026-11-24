@@ -267,7 +267,7 @@ export interface CalibrationReferencePhoto {
  * the bearing of a session direction is the bearing of session +Z minus that
  * direction's session yaw, so the camera's own yaw is added back. That is
  * computed, against a physical model that shares no code with the app
- * (tests/unit/deno/world_registration.test.ts): a right-handed Y-up session, a
+ * (tests/unit/server/world_registration.test.ts): a right-handed Y-up session, a
  * camera that looks down its own -Z and a perfect compass. What a phone's
  * compass actually reports is not covered; that needs the spin test on a phone
  * (`compassSpinTerms()` in ./geo.ts).
@@ -1415,7 +1415,7 @@ export interface WorldProject {
 // The canonical interfaces live in ./manifests.ts (split out of this file so
 // pipeline-stage envelopes — a third family alongside this file's "places"
 // types — can be imported standalone from browser code without dragging in
-// Deno-only driver code; see that file's header for why). Re-exported here
+// server-only driver code; see that file's header for why). Re-exported here
 // because src/world/types.ts is the established cross-runtime import point
 // (main.ts and all src/viewer/* already import from it).
 export type {

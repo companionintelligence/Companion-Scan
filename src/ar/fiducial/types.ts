@@ -1,7 +1,7 @@
 /**
  * Types for the printed fiducial anchor (WP-14a): detector, pose and print sheet.
  *
- * Browser-safe (ADR 0002): no Deno reference anywhere under `src/ar/fiducial/`, so the
+ * Browser-safe (ADR 0002): no Node reference anywhere under `src/ar/fiducial/`, so the
  * scanner, the editor and Node tests can all import from here, type-only or not.
  *
  * ## Conventions, stated once because every file in this folder depends on them

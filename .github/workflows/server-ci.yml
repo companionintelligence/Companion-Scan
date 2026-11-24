@@ -1,0 +1,94 @@
+name: Server CI
+
+# Type-checks and tests the server (server/main.ts and the server-side
+# modules it imports: inference/jobs/pipeline/portal_auth/memory_push/
+# lingbot_map/splat_*, all under server/), on Node 26, from .node-version.
+# The npm-based frontend (Vite/Playwright) is out of scope here — see
+# docker-publish.yml for the full-container smoke test that exercises both
+# together.
+#
+# lingbot_map_glb.test.ts runs in the Node unit suites (npm run verify), not
+# here: it covers the PLY -> GLB sidecar path through @gltf-transform/functions,
+# whose texture tools load the `sharp` native binary.
+#
+# The detection-gate job below is the CI-executable half of the detection
+# regression gate (docs/factory/06-detection-ground-truth/
+# 0003-detection-regression-gate.md): a path filter (no model needed) plus
+# the mock-engine synthetic-corpus regression check (no model needed either
+# — see that ticket's "hard constraint: CI has no model"). The real-corpus
+# quality gate runs locally, against Ollama, as a documented pre-merge step —
+# see docs/testing/TEST_INFRA.md's "Detection regression gate" section.
+
+# >>> ci-local:gated original triggers below, restore with `ci-local restore`
+# on:
+#   push:
+#     branches: [main]
+#   pull_request:
+#     branches: [main]
+#   workflow_dispatch:
+# <<< ci-local:gated
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# onnxruntime-node's install script downloads a CUDA build from the onnxruntime GitHub release page on Linux x64, and that file
+# (v1.21.0) now answers 404, which fails every `npm ci` on a Linux runner. No job here runs a model, so none needs the CUDA
+# execution provider: skipping it is what the installer's own switch is for. mobile-build.yml, desktop-build.yml and
+# native-release.yml set the same.
+env:
+  ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+
+concurrency:
+  group: server-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server-test:
+    name: server type-check + test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Type-check the server and its suite
+        run: npm run typecheck:server
+
+      - name: Run the server suite
+        run: npm run test:server
+
+  detection-gate:
+    name: detection regression gate (mock engine + path filter)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Full history: the path-filter step needs `git merge-base` against
+          # the PR's base branch, which a shallow (depth-1) checkout can't do.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Fetch base branch for the diff
+        run: git fetch origin ${{ github.event.pull_request.base.ref || 'main' }}
+
+      - name: Path filter — did this change touch a detection input?
+        run: npm run check:detection-gate
+        env:
+          BASE_REF: origin/${{ github.event.pull_request.base.ref || 'main' }}
+
+      - name: Mock-engine pipeline regression (no model, no GPU)
+        run: npm run gate:mock
+

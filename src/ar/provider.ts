@@ -1,9 +1,9 @@
 import type * as THREE from 'three'
-import type { TrackingStatus } from './tracking-quality'
-import type { PreflightVerdict } from './preflight'
-import type { AnchorCapability } from './anchors'
-import type { FrameDiscontinuity, TrackingDiagnostics } from './frame-epoch'
-import type { ScaleKind, ScaleMode } from '../world/scale-mode'
+import type { TrackingStatus } from './tracking-quality.ts'
+import type { PreflightVerdict } from './preflight.ts'
+import type { AnchorCapability } from './anchors.ts'
+import type { FrameDiscontinuity, TrackingDiagnostics } from './frame-epoch.ts'
+import type { ScaleKind, ScaleMode } from '../world/scale-mode.ts'
 import type { CameraFrame, CameraFrameOptions, CameraFrameSubscription } from './camera-frame-feed.ts'
 
 /** 6-DoF camera pose from the AR runtime */

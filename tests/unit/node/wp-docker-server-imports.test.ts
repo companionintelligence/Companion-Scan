@@ -2,8 +2,8 @@
  * The Docker image can build: every file under src/ that the server imports, directly or through
  * another file, is one the Dockerfile copies into the image.
  *
- * `RUN deno cache server/main.ts` stops with "Module not found" at the first import the image does
- * not hold, and nothing else notices: publishing is workflow_dispatch-only, so a missing COPY line
+ * `node server/main.ts` stops with ERR_MODULE_NOT_FOUND at the first import the image does not hold,
+ * when the container starts, and nothing else notices: publishing is workflow_dispatch-only, so a missing COPY line
  * shows up at the next release and not in a pull request. It has happened twice (src/inference, in
  * the 2026-09-06 publish run, and src/geo/tile-source.ts, the module the maps and the server share
  * for the map tile setting). The Dockerfile copies `server/` whole and then names the parts of
@@ -11,7 +11,7 @@
  *
  * Reads the Dockerfile, `.dockerignore` and the source; runs nothing. A file is followed through
  * every `import`, `export ... from` and `import()` with a relative `.ts` path, type-only imports
- * included, because `deno cache` resolves those too.
+ * included: Node strips those at load, so the guard asks for more than the image needs, never less.
  *
  * Runs with `npm run test:wave` (the wp- prefix), or alone:
  *   node --experimental-strip-types --no-warnings --test tests/unit/node/wp-docker-server-imports.test.ts
@@ -39,7 +39,7 @@ function tsFiles(dir: string): string[] {
   return found
 }
 
-/** The last stage of a Dockerfile: the Deno server, where `deno cache server/main.ts` runs. The web stage before it copies all of src/, and none of that is in this image. */
+/** The last stage of a Dockerfile: the server, which runs `node server/main.ts`. The web stage before it copies all of src/, and none of that is in this image. */
 function lastStage(dockerfile: string): string {
   const stages = dockerfile.split(/^FROM\b.*$/m)
   return stages[stages.length - 1]!
@@ -118,7 +118,7 @@ test('every file under src/ that the server imports is copied into the Docker im
   assert.deepEqual(
     uncopiedImports(dockerfile, serverFiles, readFromDisk),
     [],
-    'a file the server imports is not copied by the Dockerfile: `deno cache server/main.ts` fails with "Module not found" while the image builds. Add a COPY line for it.',
+    'a file the server imports is not copied by the Dockerfile: `node server/main.ts` fails with ERR_MODULE_NOT_FOUND when the container starts. Add a COPY line for it.',
   )
 })
 
@@ -133,7 +133,7 @@ test('the guard sees what it is there to see: the map tile setting is reached fr
   assert.ok(copied.files.includes('src/geo/tile-source.ts'), 'a single-file COPY is read')
   assert.ok(copied.directories.includes('src/world') && copied.directories.includes('server'), 'a directory COPY is read, without its trailing slash')
   assert.deepEqual(copied.rootGlobs, ['*.ts'], 'a root glob is read, from the last stage only: the web stage copies *.html and src/ whole')
-  assert.equal(copied.directories.includes('src'), false, 'the web stage copies all of src/, and none of that is in the Deno image')
+  assert.equal(copied.directories.includes('src'), false, 'the web stage copies all of src/, and none of that is in the server image')
   assert.equal(copied.files.includes('web/dist'), false, 'a COPY --from=stage takes files from another stage, not from the repo')
 
   const without = dockerfile.replace(/^COPY src\/geo\/tile-source\.ts .*$/m, '')
@@ -146,7 +146,7 @@ test('the guard sees what it is there to see: the map tile setting is reached fr
 })
 
 test('the guard follows imports through a copied file, and ignores a comment that only mentions an import', () => {
-  const dockerfile = 'FROM node AS web\nCOPY src/ ./src/\nFROM deno\nCOPY server/ ./server/\nCOPY src/a/ ./src/a/\n'
+  const dockerfile = 'FROM node AS web\nCOPY src/ ./src/\nFROM node:26-trixie-slim\nCOPY server/ ./server/\nCOPY src/a/ ./src/a/\n'
   const sources: Record<string, string> = {
     'server/main.ts': "import { a } from '../src/a/a.ts'\n// import { nope } from '../src/never/nope.ts'\n * from '../src/never/doc.ts'\n",
     'src/a/a.ts': "export { b } from '../b/b.ts'\nconst later = await import('../c/c.ts')\n",

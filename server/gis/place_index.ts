@@ -46,7 +46,7 @@
  * equirectangular projection about the mean latitude of the two points, on a
  * sphere of the WGS-84 equatorial radius. Measured against an independent
  * Vincenty inverse solution on the WGS-84 ellipsoid (see
- * `tests/unit/deno/place_index.test.ts`, which pins these numbers):
+ * `tests/unit/server/place_index.test.ts`, which pins these numbers):
  *
  * | separation | `distanceM` error vs. WGS-84 geodesic |
  * | ---------- | ------------------------------------- |
@@ -63,9 +63,9 @@
  * is fine, because "scans near here" at continental range is not a question
  * anyone asks of a room scanner, but do not reuse these functions for one.
  *
- * ## Deliberately Deno-API-free
+ * ## Deliberately Node-API-free
  *
- * Nothing here touches `Deno.*`, so the whole module is unit-testable without
+ * Nothing here touches `node:fs` or the network, so the whole module is unit-testable without
  * `main.ts`'s top-level side effects — the same pattern `world_prune.ts`,
  * `world_lock.ts` and `world_membership.ts` follow (ADR 0004). It lives under
  * `server/` because it is a server-side query layer, not because it needs a

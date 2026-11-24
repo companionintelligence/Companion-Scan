@@ -2,15 +2,15 @@
  * The print sheet with the repo's REAL QR renderer: the byte-for-byte snapshots, the modules of the code
  * against the vendored encoder's, and the command line.
  *
- * Needs --experimental-transform-types: `src/ui/qr-code.ts` sits on the vendored Nayuki encoder, which uses a
- * TypeScript namespace that plain type-stripping cannot load. The geometry, the page choice, the printed
- * cells and the detector round trip are in `fiducial_print_sheet.test.ts`, which does not need the flag.
+ * `src/ui/qr-code.ts` sits on the vendored Nayuki encoder, which uses a TypeScript namespace that Node's type
+ * stripping cannot load, so both are compiled first (scripts/lib/qr-code-compiled.mjs). The geometry, the page
+ * choice, the printed cells and the detector round trip are in `fiducial_print_sheet.test.ts`, with a stub QR.
  *
  * Snapshots live in `tests/unit/node/fiducial-sheet/`. To rewrite them after an intended change:
- * `UPDATE_FIDUCIAL_SNAPSHOT=1 node --experimental-transform-types --no-warnings --test tests/unit/node/fiducial_print_sheet_qr.test.ts`
+ * `UPDATE_FIDUCIAL_SNAPSHOT=1 node --test tests/unit/node/fiducial_print_sheet_qr.test.ts`
  * and read the diff: a snapshot that changes for no reason is a sheet that changed for no reason.
  *
- * Run: node --experimental-transform-types --no-warnings --test tests/unit/node/fiducial_print_sheet_qr.test.ts
+ * Run: node --test tests/unit/node/fiducial_print_sheet_qr.test.ts
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -21,8 +21,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildSheet, buildTwoTagSheet } from '../../../scripts/print-fiducial.mjs'
 import { CSCAN5_V1 } from '../../../src/ar/fiducial/dictionary.ts'
-import { qrCodeSvg } from '../../../src/ui/qr-code.ts'
-import { qrcodegen } from '../../../src/third-party/qrcodegen/qrcodegen.ts'
+import { loadCompiledQrCode } from '../../../scripts/lib/qr-code-compiled.mjs'
 import { serializeTagPayload } from '../../../src/ar/fiducial/payload.ts'
 import { assertBalancedSvg, parseSheet } from '../../support/fiducial-sheet.ts'
 
@@ -30,6 +29,9 @@ const HERE = fileURLToPath(new URL('.', import.meta.url))
 const ROOT = join(HERE, '..', '..', '..')
 const SNAPSHOTS = join(HERE, 'fiducial-sheet')
 const SCRIPT = join(ROOT, 'scripts', 'print-fiducial.mjs')
+
+/** The repo's renderer and the vendored encoder, compiled as the bundle compiles them (scripts/lib/qr-code-compiled.mjs). */
+const { qrCodeSvg, qrcodegen } = await loadCompiledQrCode()
 
 /** The 5x5 family, as the first two snapshots were made; the generator's default is the 6x6 family now (see `sheet6` and `pair`). */
 function sheet(args: Partial<Parameters<typeof buildSheet>[0]> = {}) {
@@ -82,45 +84,46 @@ test('every sheet in the snapshots is a well-formed document', () => {
   for (const name of ['id7-120mm-a4.svg', 'id23-200mm-a3.svg', 'cscan6-id7-140mm-a4.svg', 'cscan6-pair-ids3-4-150mm-500mm-a1.svg']) assertBalancedSvg(readFileSync(join(SNAPSHOTS, name), 'utf8'))
 })
 
-test('the command line writes the same bytes as the builder, and says what to run when the QR renderer cannot load', () => {
+test('the command line writes the same bytes as the builder, run by plain node with no flag', () => {
   const dir = mkdtempSync(join(tmpdir(), 'fiducial-sheet-'))
   try {
     const out = join(dir, 'm.svg')
     const args = ['--id', '7', '--size-mm', '120', '--place-id', 'place-kitchen-1', '--room-id', 'room-a', '--page', 'a4', '--family', 'cscan-5x5-v1', '--out', out]
-    execFileSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, ...args], { stdio: 'pipe' })
+    execFileSync(process.execPath, [SCRIPT, ...args], { stdio: 'pipe' })
     assert.equal(readFileSync(out, 'utf8'), sheet().svg)
 
-    const piped = execFileSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--id', '7', '--place-id', 'place-kitchen-1', '--room-id', 'room-a', '--size-mm', '120', '--page', 'a4', '--family', 'cscan-5x5-v1'], { stdio: 'pipe' }).toString()
+    const piped = execFileSync(process.execPath, [SCRIPT, '--id', '7', '--place-id', 'place-kitchen-1', '--room-id', 'room-a', '--size-mm', '120', '--page', 'a4', '--family', 'cscan-5x5-v1'], { stdio: 'pipe' }).toString()
     assert.equal(piped, sheet().svg, 'standard output is the same sheet')
 
     // With no --family the sheet is the default family's: the 6x6 one.
-    const dflt = execFileSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--id', '7', '--place-id', 'place-kitchen-1', '--room-id', 'room-a', '--size-mm', '140', '--page', 'a4'], { stdio: 'pipe' }).toString()
+    const dflt = execFileSync(process.execPath, [SCRIPT, '--id', '7', '--place-id', 'place-kitchen-1', '--room-id', 'room-a', '--size-mm', '140', '--page', 'a4'], { stdio: 'pipe' }).toString()
     assert.equal(dflt, sheet6().svg)
     assert.ok(dflt.includes('data-family="cscan-6x6-v1"'))
 
     // A pair, with a mount and its height, from the command line.
     const pairOut = join(dir, 'pair.svg')
-    execFileSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--ids', '3,4', '--spacing-mm', '500', '--size-mm', '150', '--place-id', 'place-hall-9', '--page', 'a1', '--mount', 'wall', '--mount-height-mm', '1200', '--out', pairOut], { stdio: 'pipe' })
+    execFileSync(process.execPath, [SCRIPT, '--ids', '3,4', '--spacing-mm', '500', '--size-mm', '150', '--place-id', 'place-hall-9', '--page', 'a1', '--mount', 'wall', '--mount-height-mm', '1200', '--out', pairOut], { stdio: 'pipe' })
     assert.equal(readFileSync(pairOut, 'utf8'), pair().svg)
 
-    const noFlag = spawnSync(process.execPath, ['--no-warnings', SCRIPT, ...args], { encoding: 'utf8' })
-    assert.equal(noFlag.status, 2)
-    assert.match(noFlag.stderr, /npm run print:fiducial/)
+    // No flag: the script compiles the renderer itself (scripts/lib/qr-code-compiled.mjs), so plain node runs it.
+    const noFlag = spawnSync(process.execPath, [SCRIPT, ...args.filter((a) => a !== '--out' && a !== out)], { encoding: 'utf8' })
+    assert.equal(noFlag.status, 0, noFlag.stderr)
+    assert.equal(noFlag.stdout, sheet().svg)
 
-    const missing = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--id', '7'], { encoding: 'utf8' })
+    const missing = spawnSync(process.execPath, [SCRIPT, '--id', '7'], { encoding: 'utf8' })
     assert.equal(missing.status, 2)
     assert.match(missing.stderr, /--place-id and exactly one of --id and --ids are required/)
-    const both = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--id', '7', '--ids', '1,2', '--place-id', 'p'], { encoding: 'utf8' })
+    const both = spawnSync(process.execPath, [SCRIPT, '--id', '7', '--ids', '1,2', '--place-id', 'p'], { encoding: 'utf8' })
     assert.equal(both.status, 2)
-    const unknownFamily = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--id', '7', '--place-id', 'p', '--family', 'tag36h11'], { encoding: 'utf8' })
+    const unknownFamily = spawnSync(process.execPath, [SCRIPT, '--id', '7', '--place-id', 'p', '--family', 'tag36h11'], { encoding: 'utf8' })
     assert.equal(unknownFamily.status, 2)
     assert.match(unknownFamily.stderr, /unknown family "tag36h11"/)
 
-    const tooBig = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--id', '7', '--place-id', 'p', '--size-mm', '400', '--page', 'a3'], { encoding: 'utf8' })
+    const tooBig = spawnSync(process.execPath, [SCRIPT, '--id', '7', '--place-id', 'p', '--size-mm', '400', '--page', 'a3'], { encoding: 'utf8' })
     assert.equal(tooBig.status, 2)
     assert.match(tooBig.stderr, /needs a page at least/)
 
-    const help = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--help'], { encoding: 'utf8' })
+    const help = spawnSync(process.execPath, [SCRIPT, '--help'], { encoding: 'utf8' })
     assert.equal(help.status, 0)
     assert.match(help.stdout, /usage: npm run print:fiducial/)
   } finally {
@@ -129,10 +132,10 @@ test('the command line writes the same bytes as the builder, and says what to ru
 })
 
 test('the command line refuses a size no page holds, and prints the usage with both ways to run it', () => {
-  const tooBig = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--id', '7', '--place-id', 'p', '--size-mm', '700'], { encoding: 'utf8' })
+  const tooBig = spawnSync(process.execPath, [SCRIPT, '--id', '7', '--place-id', 'p', '--size-mm', '700'], { encoding: 'utf8' })
   assert.equal(tooBig.status, 2)
   assert.match(tooBig.stderr, /size must be from 40 to 600 mm/)
-  const help = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, '--help'], { encoding: 'utf8' })
+  const help = spawnSync(process.execPath, [SCRIPT, '--help'], { encoding: 'utf8' })
   assert.match(help.stdout, /npm run print:fiducial/)
-  assert.match(help.stdout, /node --experimental-transform-types --no-warnings scripts\/print-fiducial\.mjs/)
+  assert.match(help.stdout, /node scripts\/print-fiducial\.mjs/)
 })

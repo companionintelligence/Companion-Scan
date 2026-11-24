@@ -2,7 +2,7 @@
  * HTTP range requests — the first ranged serving in this codebase.
  *
  * Every artifact route here reads a whole file into memory and returns it
- * (`Deno.readFile` → `new Response(bytes)`). That is fine for a manifest and
+ * (`readBytes` → `new Response(bytes)`). That is fine for a manifest and
  * tolerable for a GLB; it is not fine for video. A person clip is the durable
  * artifact of a capture, the editor will want to scrub it, and a handful of
  * concurrent full-buffer reads of a 1080p clip is a straightforward way to
@@ -20,6 +20,7 @@
  *
  * See docs/factory/10-4d-person-capture/0004-durable-clip-storage.md.
  */
+import * as fs from 'node:fs/promises'
 
 export interface ParsedRange {
   /** First byte, inclusive. */
@@ -166,20 +167,19 @@ export async function rangedResponse(opts: {
  * whole file — the point of the exercise.
  */
 export async function readFileRange(path: string, start: number, length: number): Promise<Uint8Array<ArrayBuffer>> {
-  const file = await Deno.open(path, { read: true })
+  const file = await fs.open(path, 'r')
   try {
-    await file.seek(start, Deno.SeekMode.Start)
     const buf = new Uint8Array(length)
     let filled = 0
     while (filled < length) {
-      const n = await file.read(buf.subarray(filled))
+      const { bytesRead } = await file.read(buf, filled, length - filled, start + filled)
       // Short read: the file ended early. Return what exists rather than
       // padding with zeros, which would silently corrupt the response body.
-      if (n === null) break
-      filled += n
+      if (bytesRead === 0) break
+      filled += bytesRead
     }
     return filled === length ? buf : buf.subarray(0, filled)
   } finally {
-    file.close()
+    await file.close()
   }
 }

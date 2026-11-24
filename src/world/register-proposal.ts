@@ -7,7 +7,7 @@
  * (src/viewer/register-proposal.ts) reads it back, previews it and, when a
  * person presses Apply, writes an ordinary scan EditPatch. Both halves import
  * this one file, which is why it lives here and not beside either of them: it
- * has no Deno references and no THREE, so the browser, the server and a Node
+ * has no Node references and no THREE, so the browser, the server and a Node
  * test can all load it (ADR 0002).
  *
  * ## What a proposal is, and is not

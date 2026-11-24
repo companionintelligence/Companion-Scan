@@ -57,8 +57,8 @@ Read this before trusting anything below.
 | Part | Status |
 | --- | --- |
 | The service: routes, token check, take-id validation, idempotent submit, retry after error | **Verified** by `npm test` (`test/service.test.mjs`) |
-| Download with the token, following Content-Range | **Verified** against the appliance's own range helper, in `tests/unit/deno/wp-runners-4d-e2e.test.ts` |
-| A whole take, appliance → service → frames back, with ffmpeg, 4DAnyone and Brush stood in by scripts that write what they write | **Verified** in the same Deno test, and with fakes in `test/pipeline.test.mjs` |
+| Download with the token, following Content-Range | **Verified** against the appliance's own range helper, in `tests/unit/server/wp-runners-4d-e2e.test.ts` |
+| A whole take, appliance → service → frames back, with ffmpeg, 4DAnyone and Brush stood in by scripts that write what they write | **Verified** in the same server unit test, and with fakes in `test/pipeline.test.mjs` |
 | Pose sampling, the session-to-Place transform, intrinsics scaling | **Verified** by `npm test` (`test/pose.test.mjs`), and `poseToMatrix` is held equal to the appliance's |
 | Frame-set slicing from clips | **Verified** against synthetic inputs |
 | Stub mode | **Verified** — produces a real, loadable `.ply` sequence |

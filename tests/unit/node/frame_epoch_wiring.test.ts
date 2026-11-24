@@ -4,7 +4,7 @@
  * main.ts touches the DOM when it loads, so, like wp-c1-scanner-wiring.test.ts, this reads
  * the source for the rules a regression would break. The behaviour behind each line is
  * tested where it lives: the log in frame_epoch.test.ts, the cloud in
- * tests/unit/deno/pointcloud.test.ts, the verdict in frame_epoch_quality.test.ts, the
+ * tests/unit/server/pointcloud.test.ts, the verdict in frame_epoch_quality.test.ts, the
  * sidecar in frame_epoch_sidecar.test.ts. What only main.ts can get wrong is the wiring.
  *
  * Run: node --experimental-strip-types --no-warnings --test tests/unit/node/frame_epoch_wiring.test.ts

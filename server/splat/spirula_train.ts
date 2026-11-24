@@ -45,7 +45,7 @@
  *     parameters disagree with its images' size.)
  */
 
-import { resolve } from '@std/path'
+import { resolve } from 'node:path'
 import { locateTool, runnerToolLookup, toolSkip } from '../exec_probe.ts'
 import { budgetFromEnv, finishRun, intFromEnv, KILL_GRACE_MS, runWithDeadline, writeRunnerManifest } from '../run_with_deadline.ts'
 import { buildDatasetWithAutoPoses } from './auto_poses.ts'
@@ -58,6 +58,8 @@ import type { SplatTrainResult, SplatTrainStatus } from './splat_train.ts'
 import type { SplatTrainManifest } from '../../src/world/types.ts'
 import { degenerateSplatRemediation, measureSplatQuality, scaleFrameOf } from './splat_quality.ts'
 import type { SplatQuality } from './splat_quality.ts'
+import * as fs from 'node:fs/promises'
+import { readBytes } from '../fs_util.ts'
 
 /**
  * The Brush manifest with the two backend-specific fields swapped.
@@ -191,11 +193,11 @@ export function resolveSpirulaParams(
 ): SpirulaTrainManifest['params'] {
   return {
     spirulaBin,
-    device: opts.device ?? Deno.env.get('SPIRULA_DEVICE') ?? '',
+    device: opts.device ?? process.env.SPIRULA_DEVICE ?? '',
     trainIters: opts.trainIters ?? intFromEnv('SPIRULA_TRAIN_ITERS', 15000),
     shDegree: opts.shDegree ?? intFromEnv('SPIRULA_SH_DEGREE', 2),
-    preset: opts.preset ?? Deno.env.get('SPIRULA_PRESET') ?? '3dgs',
-    quality: opts.quality ?? Deno.env.get('SPIRULA_QUALITY') ?? 'medium',
+    preset: opts.preset ?? process.env.SPIRULA_PRESET ?? '3dgs',
+    quality: opts.quality ?? process.env.SPIRULA_QUALITY ?? 'medium',
     capMax: opts.capMax ?? intFromEnv('SPIRULA_CAP_MAX', DEFAULT_MAX_SPLATS),
   }
 }
@@ -342,7 +344,7 @@ export async function runSpirulaTrain(opts: SpirulaTrainRunOptions): Promise<Spi
   // 5. Land the .ply into SCANS_DIR and count gaussians.
   let plyBytes: Uint8Array
   try {
-    plyBytes = await Deno.readFile(exported.path)
+    plyBytes = await readBytes(exported.path)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return _finish(manifestPath, {
@@ -372,7 +374,7 @@ export async function runSpirulaTrain(opts: SpirulaTrainRunOptions): Promise<Spi
     }, spawnResult.code, diagnosis)
   }
   const gaussianCount = countedGaussians
-  await Deno.writeFile(opts.outputPlyPath, plyBytes)
+  await fs.writeFile(opts.outputPlyPath, plyBytes)
 
   const quality = await measureSplatQuality({
     plyPath: opts.outputPlyPath,
@@ -417,13 +419,13 @@ export async function runSpirulaTrain(opts: SpirulaTrainRunOptions): Promise<Spi
 export async function findSpirulaPly(runDir: string): Promise<{ path: string; step: number } | null> {
   let best: { path: string; step: number } | null = null
   try {
-    for await (const entry of Deno.readDir(runDir)) {
-      if (!entry.isDirectory) continue
+    for (const entry of await fs.readdir(runDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
       const m = entry.name.match(/^step-(\d+)\.ckpt$/)
       if (!m) continue
       const path = `${runDir}/${entry.name}/splat.ply`
       try {
-        if (!(await Deno.stat(path)).isFile) continue
+        if (!(await fs.stat(path)).isFile()) continue
       } catch {
         continue
       }

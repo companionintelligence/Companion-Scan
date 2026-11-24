@@ -1,6 +1,6 @@
 /**
  * The georeference client (src/world/georef-client.ts): what the Place location panel and the map editor send, and what each answer of
- * `PUT /projects/:id/georeference` becomes. `fetch` is scripted; tests/unit/deno/georef_route.test.ts runs the same route for real.
+ * `PUT /projects/:id/georeference` becomes. `fetch` is scripted; tests/unit/server/georef_route.test.ts runs the same route for real.
  *
  * What is pinned:
  *  - the request: PUT to the Place's georeference route, the record and the version the writer last read in the body, the no-queue

@@ -4,7 +4,7 @@
  * (docs/factory/05-on-device-inference/0003-webgpu-driver-runtime.md).
  *
  * This is the runtime-specific half the port exists to isolate, mirroring
- * server/lfm-driver-onnx.ts's role on the Deno side: session creation via
+ * server/lfm-driver-onnx.ts's role on the server side: session creation via
  * onnxruntime-web's WebGPU execution provider, JSON loads and image decode.
  * Everything else — the loop, the KV cache, the patchify maths — lives in
  * ./lfm-driver.ts and is not duplicated here (ticket 0003's Non-goals:

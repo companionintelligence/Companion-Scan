@@ -7,7 +7,7 @@
  * not being free, or not being readable: it puts the scans that could not be handed over back in the world they are in,
  * remembers that they are waiting, says so to the route that asked, and sees to it that the hand-over is done later without
  * anybody having to read the old world again. A factory with everything it needs from the server handed in (`WorldHandOverDeps`),
- * and no Deno or server import, so a test can stand the worlds and the clock in. `server/main.ts` makes one, and its
+ * and no Node or server import, so a test can stand the worlds and the clock in. `server/main.ts` makes one, and its
  * refresh and its two routes call it.
  *
  * ## What happens to a hand-over that cannot be done

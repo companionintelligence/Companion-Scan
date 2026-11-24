@@ -1,6 +1,6 @@
 /**
  * A rig for the origin tests that run the real calibration modal (`runProjectCalibration`,
- * src/ar/project-calibration.ts) against the physical model in tests/unit/deno/physical_oracle.ts: a session that
+ * src/ar/project-calibration.ts) against the physical model in tests/unit/server/physical_oracle.ts: a session that
  * starts facing some bearing, a camera that turns, a perfect compass, and physical floor features the person taps.
  *
  * Not a test file (no `.test.ts` name, so no runner collects it). It exists because the three origin test files that
@@ -19,7 +19,7 @@ import * as THREE from 'three'
 import type { CalibrationResult } from '../../../src/ar/project-calibration.ts'
 import type { CalibrationTapSampler } from '../../../src/ar/calibration-taps.ts'
 import type { Project, Quat, Vec3 } from '../../../src/world/types.ts'
-import { cameraRotation, enuToSession, perfectCompassBearing } from '../deno/physical_oracle.ts'
+import { cameraRotation, enuToSession, perfectCompassBearing } from '../server/physical_oracle.ts'
 
 // The modal's imports are written for the bundler and carry no `.ts` extension, which Node's loader does not resolve.
 registerHooks({

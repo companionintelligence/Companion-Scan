@@ -11,7 +11,7 @@
  * runs the code it replaced beside it on 20,000 seeded inputs and requires the same records, numbers and sentences,
  * and tests/unit/node/wp-calibration-characterisation.test.ts holds the modal itself to what it did before.
  *
- * Pure: no DOM, no Deno, no clock, no provider (ADR 0002: the browser imports this file). The modal reads the
+ * Pure: no DOM, no Node API, no clock, no provider (ADR 0002: the browser imports this file). The modal reads the
  * compass and the time at the moment it commits and passes them in, so what is recorded is what was read then.
  *
  * ## What the verdict checks, and what it does not

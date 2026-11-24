@@ -5,7 +5,7 @@ name: Quest Build
 # (docs/targets/meta-quest.md). No server address, key or secret is built in: the person types their
 # own Scan server's address on the app's panel.
 #
-# Run by hand, as every workflow here is: deno-ci.yml keeps its push and pull request triggers gated.
+# Run by hand, as every workflow here is: server-ci.yml keeps its push and pull request triggers gated.
 on:
   workflow_dispatch:
 
@@ -32,8 +32,8 @@ jobs:
       - name: Android SDK packages (the runner's own SDK)
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" > /dev/null
       # Among them CoordinateConversionsTest, which holds the app's pose maths to the poseToMatrix
-      # fixture (app/src/test/resources); tests/unit/deno/native_quest_pose_fixture.test.ts holds the
-      # same file to the server's function, in deno task test.
+      # fixture (app/src/test/resources); tests/unit/server/native_quest_pose_fixture.test.ts holds the
+      # same file to the server's function, in npm run test:server.
       - name: Unit tests
         working-directory: meta
         run: ./gradlew :app:testDebugUnitTest --no-daemon

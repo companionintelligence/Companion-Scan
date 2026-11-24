@@ -3,7 +3,7 @@
  *
  * Loads a WorldProject manifest, places many GLB scans in one ENU/Y-up Three.js
  * scene, exposes per-layer visibility, and persists scan/object edits as
- * sidecar EditPatch records on the Deno coordinator.
+ * sidecar EditPatch records on the server coordinator.
  */
 import * as THREE from 'three'
 import { matchesObjectFilter, parseObjectFilter } from './object-filter'

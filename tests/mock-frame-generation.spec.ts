@@ -1,6 +1,6 @@
 /**
  * Replacing a Place's reference, in the scanner (WP-08), driven headlessly against the scripted XR8 mock: no device, camera or
- * SLAM binary, and a real Deno server for the Place and its frame.
+ * SLAM binary, and a real server for the Place and its frame.
  *
  * What it covers that the Node tests (tests/unit/node/wp-08c-*.test.ts) cannot: the pieces drawn in a real document and wired in
  * src/main.ts. A mismatch on a return visit offers "Replace this Place's reference" and not "Use anyway". Pressing it opens a

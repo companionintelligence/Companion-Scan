@@ -1,0 +1,1113 @@
+/**
+ * server unit tests for the COLMAP pose-solver surface.
+ *
+ * COLMAP itself is an external binary that CI does not install, so — like
+ * splat_train.test.ts — these cover the TS side only: the binary-model
+ * parsers, the pose-format conversion that lets one reader serve both COLMAP
+ * and LingBot-Map, PLY serialisation, and the "binary missing → skipped
+ * manifest" fallback the world-job coordinator depends on.
+ *
+ * The parsers are the part worth testing hard: they read little-endian binary
+ * laid out by another program, so a silent offset error would surface far
+ * downstream as a subtly wrong reconstruction rather than as a crash.
+ */
+import { assertEquals } from './assert.ts'
+import { assert } from './assert.ts'
+import { assertRejects } from './assert.ts'
+
+import {
+  buildPosesJson,
+  estimateUpAxis,
+  colmapCameraModelParamCount,
+  parseCamerasBin,
+  parseImagesBin,
+  parsePoints3DBin,
+  pointsToPly,
+  rotateImagePose,
+  rotatePoint,
+  rotationBetween,
+  rotationToQuat,
+} from '../../../server/colmap/colmap_model.ts'
+import type { ColmapPosesRunOptions } from '../../../server/colmap/colmap_poses.ts'
+import {
+  assessColmapQuality,
+  cameraCentres,
+  DEFAULT_MIN_POINTS_3D,
+  DEFAULT_MIN_REGISTRATION_RATIO,
+  DEFAULT_MIN_STATION_SEPARATION_RATIO,
+  degenerateRemediation,
+  frameFingerprint,
+  isValidSessionDir,
+  measureStationBaseline,
+  resolveParams,
+  resolveQualityThresholds,
+  runColmapPoses,
+} from '../../../server/colmap/colmap_poses.ts'
+import { deriveIntrinsics, openCvW2cToC2w, POSE_SOURCES, readSolvedCamera, SEED_CLOUDS } from '../../../server/splat/splat_train_dataset.ts'
+import * as fs from 'node:fs/promises'
+import { test } from 'node:test'
+import { makeTempDir, readBytes } from '../../../server/fs_util.ts'
+
+/** Encode one images.bin record the way COLMAP's writer lays it out. */
+function encodeImagesBin(
+  entries: Array<{ id: number; q: number[]; t: number[]; cam: number; name: string; nPts?: number }>,
+): Uint8Array {
+  const parts: Uint8Array[] = []
+  const head = new Uint8Array(8)
+  new DataView(head.buffer).setBigUint64(0, BigInt(entries.length), true)
+  parts.push(head)
+
+  for (const e of entries) {
+    const nameBytes = new TextEncoder().encode(e.name)
+    const nPts = e.nPts ?? 0
+    const buf = new Uint8Array(4 + 32 + 24 + 4 + nameBytes.length + 1 + 8 + nPts * 24)
+    const dv = new DataView(buf.buffer)
+    let o = 0
+    dv.setInt32(o, e.id, true); o += 4
+    for (const v of e.q) { dv.setFloat64(o, v, true); o += 8 }
+    for (const v of e.t) { dv.setFloat64(o, v, true); o += 8 }
+    dv.setInt32(o, e.cam, true); o += 4
+    buf.set(nameBytes, o); o += nameBytes.length
+    buf[o] = 0; o += 1
+    dv.setBigUint64(o, BigInt(nPts), true)
+    parts.push(buf)
+  }
+  const total = parts.reduce((n, p) => n + p.length, 0)
+  const out = new Uint8Array(total)
+  let at = 0
+  for (const p of parts) { out.set(p, at); at += p.length }
+  return out
+}
+
+test('parseImagesBin round-trips ids, pose, and name', () => {
+  const bytes = encodeImagesBin([
+    { id: 7, q: [1, 0, 0, 0], t: [1, 2, 3], cam: 1, name: 'kf-00000.jpg' },
+    // A trailing points2D block must be skipped, not misread as the next record.
+    { id: 9, q: [0, 1, 0, 0], t: [4, 5, 6], cam: 1, name: 'sub/kf-00001.jpg', nPts: 3 },
+  ])
+  const imgs = parseImagesBin(bytes)
+  assertEquals(imgs.length, 2)
+  assertEquals(imgs[0].imageId, 7)
+  assertEquals(imgs[0].name, 'kf-00000.jpg')
+  assertEquals(imgs[0].tvec, [1, 2, 3])
+  assertEquals(imgs[1].name, 'sub/kf-00001.jpg')
+  assertEquals(imgs[1].qvec, [0, 1, 0, 0])
+})
+
+test('parseImagesBin handles an empty model', () => {
+  const head = new Uint8Array(8)
+  new DataView(head.buffer).setBigUint64(0, 0n, true)
+  assertEquals(parseImagesBin(head).length, 0)
+})
+
+test('parsePoints3DBin reads xyz/rgb and skips tracks', () => {
+  const trackLen = 2
+  const buf = new Uint8Array(8 + (8 + 24 + 3 + 8 + 8 + trackLen * 8))
+  const dv = new DataView(buf.buffer)
+  let o = 0
+  dv.setBigUint64(o, 1n, true); o += 8
+  dv.setBigUint64(o, 42n, true); o += 8
+  dv.setFloat64(o, 1.5, true); dv.setFloat64(o + 8, -2.5, true); dv.setFloat64(o + 16, 3.5, true); o += 24
+  buf[o] = 10; buf[o + 1] = 20; buf[o + 2] = 30; o += 3
+  dv.setFloat64(o, 0.42, true); o += 8
+  dv.setBigUint64(o, BigInt(trackLen), true)
+
+  const pts = parsePoints3DBin(buf)
+  assertEquals(pts.length, 1)
+  assertEquals(pts[0].xyz, [1.5, -2.5, 3.5])
+  assertEquals(pts[0].rgb, [10, 20, 30])
+  assertEquals(pts[0].trackLength, trackLen)
+})
+
+test('pointsToPly writes a parseable binary header and body', () => {
+  const ply = pointsToPly([
+    { xyz: [1, 2, 3], rgb: [255, 0, 0], error: 0, trackLength: 2 },
+    { xyz: [4, 5, 6], rgb: [0, 255, 0], error: 0, trackLength: 2 },
+  ])
+  const text = new TextDecoder().decode(ply.subarray(0, 200))
+  assert(text.startsWith('ply\n'))
+  assert(text.includes('element vertex 2'))
+  assert(text.includes('format binary_little_endian 1.0'))
+
+  const headerEnd = text.indexOf('end_header\n') + 'end_header\n'.length
+  assertEquals(ply.length - headerEnd, 2 * 15) // 3×f32 + 3×u8 per vertex
+  const dv = new DataView(ply.buffer, ply.byteOffset + headerEnd)
+  assertEquals(dv.getFloat32(0, true), 1)
+  assertEquals(ply[headerEnd + 12], 255)
+})
+
+test('buildPosesJson emits the shared OpenCV w2c shape, keyed by basename', () => {
+  // Identity rotation, translation (1,2,3): the camera sits at -t in world space.
+  const out = buildPosesJson([
+    { imageId: 1, qvec: [1, 0, 0, 0], tvec: [1, 2, 3], cameraId: 1, name: 'images/kf-00000.jpg' },
+  ])
+  assertEquals(out.tool, 'colmap')
+  assertEquals(out.frames[0].file, 'kf-00000.jpg', 'COLMAP paths are relative to its own image root')
+  assertEquals(out.frames[0].cameraToWorld.length, 3)
+  assertEquals(out.frames[0].cameraToWorld[0], [1, 0, 0, 1])
+})
+
+test('COLMAP poses convert through the same reader LingBot-Map uses', () => {
+  // The whole point of matching formats (ADR 0001): buildPosesJson's output
+  // must be consumable by the converter written for lingbot-map.poses.json.
+  const { frames } = buildPosesJson([
+    { imageId: 1, qvec: [1, 0, 0, 0], tvec: [1, 2, 3], cameraId: 1, name: 'kf-00000.jpg' },
+  ])
+  const c2w = openCvW2cToC2w(frames[0].cameraToWorld)
+  assert(c2w, 'shared converter must accept a COLMAP-produced pose')
+  // Inverting an identity-rotation w2c puts the camera centre at -t, and the
+  // OpenCV→OpenGL axis flip negates the Y and Z basis columns.
+  assertEquals(c2w![0], [1, -0, -0, -1])
+  assertEquals(c2w![1][3], -2)
+  assertEquals(c2w![2][3], -3)
+  assertEquals(c2w![3], [0, 0, 0, 1])
+})
+
+test('pose sources and seed clouds stay aligned', () => {
+  // A mismatch here would seed the splat in a different world frame than the
+  // cameras it is trained against — silent, and visually catastrophic.
+  assertEquals(POSE_SOURCES.length, SEED_CLOUDS.length)
+  assertEquals(POSE_SOURCES[0].split('.')[0], SEED_CLOUDS[0].split('.')[0])
+  assertEquals(POSE_SOURCES[1].split('.')[0], SEED_CLOUDS[1].split('.')[0])
+})
+
+test('isValidSessionDir accepts server ids and rejects traversal', () => {
+  assert(isValidSessionDir('/scans/sessions/sess-photo-20260824-192434'))
+  assert(!isValidSessionDir('/scans/sessions/local-123'))
+  assert(!isValidSessionDir('/scans/sessions/..'))
+})
+
+test('resolveParams honours env overrides', () => {
+  const prev = process.env.COLMAP_BIN
+  try {
+    process.env.COLMAP_BIN = '/opt/colmap/bin/colmap'
+    assertEquals(resolveParams({ sessionDir: '/x' }).colmapBin, '/opt/colmap/bin/colmap')
+    // An explicit option still beats the env var.
+    assertEquals(resolveParams({ sessionDir: '/x', colmapBin: '/other' }).colmapBin, '/other')
+  } finally {
+    if (prev === undefined) delete process.env.COLMAP_BIN
+    else process.env.COLMAP_BIN = prev
+  }
+})
+
+test('a missing COLMAP binary is a skip, not a failure', async () => {
+  const dir = await makeTempDir()
+  const sessionDir = `${dir}/sess-photo-test`
+  await fs.mkdir(sessionDir)
+  try {
+    const r = await runColmapPoses({ sessionDir, colmapBin: `${dir}/definitely-not-here` })
+    assertEquals(r.status, 'skipped', 'an absent optional tool must not fail the job')
+    assertEquals(r.exitCode, 0)
+    assert(r.manifest.remediation, 'a skip must tell the operator how to fix it')
+    // The manifest is written even on skip — the coordinator relies on that.
+    const written = JSON.parse(await fs.readFile(`${sessionDir}/colmap-poses.manifest.json`, 'utf8'))
+    assertEquals(written.status, 'skipped')
+  } finally {
+    await fs.rm(dir, { recursive: true })
+  }
+})
+
+test('a session with too few keyframes skips with a capture hint', async () => {
+  const dir = await makeTempDir()
+  const sessionDir = `${dir}/sess-photo-thin`
+  await fs.mkdir(sessionDir)
+  await fs.writeFile(`${sessionDir}/kf-00000.jpg`, new Uint8Array([0xff, 0xd8]))
+  try {
+    // _spawn asserts COLMAP is never reached: the guard must fire first.
+    const r = await runColmapPoses({
+      sessionDir,
+      colmapBin: process.execPath,
+      _spawn: () => {
+        throw new Error('COLMAP must not be spawned for a too-thin session')
+      },
+    })
+    assertEquals(r.status, 'skipped')
+    assert(r.manifest.skippedReason?.includes('at least 3'))
+  } finally {
+    await fs.rm(dir, { recursive: true })
+  }
+})
+
+// ─── Gravity alignment ────────────────────────────────────────────────────────
+// SfM has no gravity reference, so these rotations decide whether a room
+// renders upright or on its side. A sign error here is invisible in every
+// other test and only shows up as a wrong-looking splat, so check the algebra.
+
+const norm = (v: number[]) => Math.hypot(...v)
+const close = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) < eps
+
+test('rotationBetween maps `from` onto `to`', () => {
+  const cases: Array<[[number, number, number], [number, number, number]]> = [
+    [[-1, 0, 0], [0, 1, 0]],
+    [[0, 0, 1], [0, 1, 0]],
+    [[0.577, 0.577, 0.577], [0, 1, 0]],
+  ]
+  for (const [from, to] of cases) {
+    const f = from.map((v) => v / norm(from)) as [number, number, number]
+    const got = rotatePoint(rotationBetween(f, to), f)
+    got.forEach((v, i) => assert(close(v, to[i], 1e-6), `axis ${i}: ${v} vs ${to[i]}`))
+  }
+})
+
+test('rotationBetween handles the identity and antiparallel corner cases', () => {
+  const id = rotationBetween([0, 1, 0], [0, 1, 0])
+  assertEquals(id, [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+  // Antiparallel: the cross product vanishes and the axis is undetermined, so
+  // the only thing that must hold is that the vector actually ends up flipped.
+  const flipped = rotatePoint(rotationBetween([0, -1, 0], [0, 1, 0]), [0, -1, 0])
+  assert(close(flipped[1], 1, 1e-6), `expected +Y, got ${flipped.join(',')}`)
+})
+
+test('rotationToQuat round-trips through all four branches', () => {
+  // One matrix per branch of the stable quaternion extraction.
+  const mats = [
+    [[1, 0, 0], [0, 1, 0], [0, 0, 1]],            // trace > 0
+    [[1, 0, 0], [0, -1, 0], [0, 0, -1]],          // R00 dominant
+    [[-1, 0, 0], [0, 1, 0], [0, 0, -1]],          // R11 dominant
+    [[-1, 0, 0], [0, -1, 0], [0, 0, 1]],          // R22 dominant
+  ]
+  for (const R of mats) {
+    const q = rotationToQuat(R)
+    assert(close(norm(q), 1, 1e-6), `quaternion not unit: ${q.join(',')}`)
+  }
+})
+
+test('estimateUpAxis recovers gravity from upright cameras', () => {
+  // Identity rotation => camera +Y (down in OpenCV) is world +Y, so world "up"
+  // must come back as -Y.
+  const imgs = [0, 1, 2, 3].map((i) => ({
+    imageId: i, qvec: [1, 0, 0, 0] as [number, number, number, number],
+    tvec: [0, 0, 0] as [number, number, number], cameraId: 1, name: `kf-0000${i}.jpg`,
+  }))
+  const up = estimateUpAxis(imgs)
+  assert(up, 'consistent cameras must yield an up estimate')
+  assertEquals(up!.map((v) => Math.round(v)), [-0, -1, -0])
+})
+
+test('estimateUpAxis declines when cameras disagree', () => {
+  // Too few views to average, and mutually cancelling views, must both bail
+  // rather than confidently rotate the scene to a wrong orientation.
+  assertEquals(estimateUpAxis([]), null)
+  const opposed = [
+    { imageId: 1, qvec: [1, 0, 0, 0] as [number, number, number, number], tvec: [0, 0, 0] as [number, number, number], cameraId: 1, name: 'a.jpg' },
+    { imageId: 2, qvec: [0, 0, 0, 1] as [number, number, number, number], tvec: [0, 0, 0] as [number, number, number], cameraId: 1, name: 'b.jpg' },
+    { imageId: 3, qvec: [1, 0, 0, 0] as [number, number, number, number], tvec: [0, 0, 0] as [number, number, number], cameraId: 1, name: 'c.jpg' },
+    { imageId: 4, qvec: [0, 0, 0, 1] as [number, number, number, number], tvec: [0, 0, 0] as [number, number, number], cameraId: 1, name: 'd.jpg' },
+  ]
+  assertEquals(estimateUpAxis(opposed), null, 'cancelling down-vectors carry no gravity signal')
+})
+
+test('rotating the world keeps cameras and points in the same frame', () => {
+  // The whole point of rotating poses and points together: a point in front of
+  // a camera must still be in front of it afterwards. Composing the rotation on
+  // the wrong side leaves the cloud right and every camera wrong.
+  const img = {
+    imageId: 1, qvec: [1, 0, 0, 0] as [number, number, number, number],
+    tvec: [0, 0, 0] as [number, number, number], cameraId: 1, name: 'kf-00000.jpg',
+  }
+  const world: [number, number, number] = [0, 0, 5] // 5m down the camera axis
+  const Q = rotationBetween([-1, 0, 0], [0, 1, 0])
+
+  const rotImg = rotateImagePose(Q, img)
+  const rotPt = rotatePoint(Q, world)
+
+  // Project through the rotated pose and compare with the original camera-space
+  // coordinate (identity R, zero t => camera space == world space).
+  const [w, x, y, z] = rotImg.qvec
+  const R = [
+    [1 - 2 * y * y - 2 * z * z, 2 * x * y - 2 * z * w, 2 * x * z + 2 * y * w],
+    [2 * x * y + 2 * z * w, 1 - 2 * x * x - 2 * z * z, 2 * y * z - 2 * x * w],
+    [2 * x * z - 2 * y * w, 2 * y * z + 2 * x * w, 1 - 2 * x * x - 2 * y * y],
+  ]
+  const cam = rotatePoint(R, rotPt)
+  cam.forEach((v, i) => assert(close(v, world[i], 1e-6), `axis ${i}: ${v} vs ${world[i]}`))
+})
+
+/** Encode one cameras.bin record the way COLMAP's writer lays it out. */
+function encodeCamerasBin(
+  entries: Array<{ id: number; model: number; w: number; h: number; params: number[] }>,
+): Uint8Array {
+  const parts: Uint8Array[] = []
+  const head = new Uint8Array(8)
+  new DataView(head.buffer).setBigUint64(0, BigInt(entries.length), true)
+  parts.push(head)
+
+  for (const e of entries) {
+    const rec = new Uint8Array(4 + 4 + 8 + 8 + e.params.length * 8)
+    const dv = new DataView(rec.buffer)
+    let o = 0
+    dv.setUint32(o, e.id, true); o += 4
+    dv.setInt32(o, e.model, true); o += 4
+    dv.setBigUint64(o, BigInt(e.w), true); o += 8
+    dv.setBigUint64(o, BigInt(e.h), true); o += 8
+    for (const v of e.params) { dv.setFloat64(o, v, true); o += 8 }
+    parts.push(rec)
+  }
+  const total = parts.reduce((n, p) => n + p.length, 0)
+  const out = new Uint8Array(total)
+  let at = 0
+  for (const p of parts) { out.set(p, at); at += p.length }
+  return out
+}
+
+test('parseCamerasBin reads SIMPLE_RADIAL — the model colmap_poses actually requests', () => {
+  // colmap_poses.ts passes --ImageReader.camera_model SIMPLE_RADIAL, whose
+  // params are [f, cx, cy, k1]: one focal length shared by both axes.
+  const bytes = encodeCamerasBin([{ id: 1, model: 2, w: 720, h: 960, params: [812.5, 358.1, 483.7, -0.021] }])
+  const cams = parseCamerasBin(bytes)
+  assertEquals(cams.length, 1)
+  assertEquals(cams[0].fx, 812.5)
+  assertEquals(cams[0].fy, 812.5)
+  assertEquals(cams[0].width, 720)
+  assertEquals(cams[0].height, 960)
+  // The whole point of reading this file: a principal point that is NOT w/2, h/2.
+  assert(cams[0].cx !== 360)
+  assert(cams[0].cy !== 480)
+})
+
+test('parseCamerasBin reads PINHOLE with independent fx/fy', () => {
+  const bytes = encodeCamerasBin([{ id: 3, model: 1, w: 1280, h: 720, params: [900, 910, 640, 360] }])
+  const cams = parseCamerasBin(bytes)
+  assertEquals(cams[0].fx, 900)
+  assertEquals(cams[0].fy, 910)
+  assertEquals(cams[0].cameraId, 3)
+})
+
+test('parseCamerasBin walks multiple records of differing models', () => {
+  // Each model has a different params length, so a wrong stride would corrupt
+  // every record after the first rather than fail loudly.
+  const bytes = encodeCamerasBin([
+    { id: 1, model: 0, w: 640, h: 480, params: [500, 320, 240] },
+    { id: 2, model: 4, w: 800, h: 600, params: [700, 701, 400, 300, 0, 0, 0, 0] },
+  ])
+  const cams = parseCamerasBin(bytes)
+  assertEquals(cams.length, 2)
+  assertEquals(cams[1].cameraId, 2)
+  assertEquals(cams[1].fx, 700)
+  assertEquals(cams[1].fy, 701)
+})
+
+test('parseCamerasBin stops at an unknown model rather than misaligning', () => {
+  // An unknown model's params length is unknown, so there is no safe way to find
+  // the next record. Returning the good prefix beats inventing focal lengths
+  // from misaligned bytes, which would look plausible and be wrong.
+  const bytes = encodeCamerasBin([
+    { id: 1, model: 2, w: 720, h: 960, params: [800, 360, 480, 0] },
+    { id: 2, model: 99, w: 720, h: 960, params: [1, 2, 3] },
+  ])
+  const cams = parseCamerasBin(bytes)
+  assertEquals(cams.length, 1)
+  assertEquals(cams[0].cameraId, 1)
+})
+
+test('parseCamerasBin handles an empty model file', () => {
+  assertEquals(parseCamerasBin(encodeCamerasBin([])).length, 0)
+})
+
+test('camera model param counts match COLMAP', () => {
+  assertEquals(colmapCameraModelParamCount(0), 3)  // SIMPLE_PINHOLE f,cx,cy
+  assertEquals(colmapCameraModelParamCount(1), 4)  // PINHOLE fx,fy,cx,cy
+  assertEquals(colmapCameraModelParamCount(2), 4)  // SIMPLE_RADIAL f,cx,cy,k1
+  assertEquals(colmapCameraModelParamCount(3), 5)  // RADIAL f,cx,cy,k1,k2
+  assertEquals(colmapCameraModelParamCount(4), 8)  // OPENCV fx,fy,cx,cy,k1,k2,p1,p2
+  assertEquals(colmapCameraModelParamCount(99), null)
+})
+
+test('buildPosesJson carries the solved camera, and omits it when absent', () => {
+  const imgs = parseImagesBin(encodeImagesBin([{ id: 1, q: [1, 0, 0, 0], t: [0, 0, 0], cam: 1, name: 'kf-00000.jpg' }]))
+  const withCam = buildPosesJson(imgs, 'colmap', {
+    cameraId: 1, modelId: 2, width: 720, height: 960, fx: 812.5, fy: 812.5, cx: 358.1, cy: 483.7,
+  })
+  assertEquals(withCam.camera?.fx, 812.5)
+  assertEquals(withCam.camera?.cx, 358.1)
+  // Absent means "not solved" — distinguishable from solved-as-zero.
+  assertEquals(buildPosesJson(imgs).camera, undefined)
+})
+
+test('readSolvedCamera prefers COLMAP and ignores a camera-less pose file', async () => {
+  const dir = await makeTempDir()
+  try {
+    await fs.writeFile(`${dir}/${POSE_SOURCES[0]}`, JSON.stringify({
+      tool: 'colmap',
+      camera: { fx: 800, fy: 800, cx: 355, cy: 470, width: 720, height: 960 },
+      frames: [],
+    }))
+    const cam = await readSolvedCamera(dir)
+    assertEquals(cam?.fx, 800)
+    assertEquals(cam?.cx, 355)
+
+    // A pose file with no camera block must not masquerade as a solved lens.
+    const bare = await makeTempDir()
+    await fs.writeFile(`${bare}/${POSE_SOURCES[0]}`, JSON.stringify({ tool: 'colmap', frames: [] }))
+    assertEquals(await readSolvedCamera(bare), null)
+    await fs.rm(bare, { recursive: true })
+  } finally {
+    await fs.rm(dir, { recursive: true })
+  }
+})
+
+test('readSolvedCamera rejects a partial or nonsense camera block', async () => {
+  const dir = await makeTempDir()
+  try {
+    // Missing cy, and a zero focal length: either would silently produce a
+    // garbage lens if it were allowed through.
+    for (const cam of [
+      { fx: 800, fy: 800, cx: 355, width: 720, height: 960 },
+      { fx: 0, fy: 800, cx: 355, cy: 470, width: 720, height: 960 },
+    ]) {
+      await fs.writeFile(`${dir}/${POSE_SOURCES[0]}`, JSON.stringify({ tool: 'colmap', camera: cam, frames: [] }))
+      assertEquals(await readSolvedCamera(dir), null)
+    }
+  } finally {
+    await fs.rm(dir, { recursive: true })
+  }
+})
+
+test('a solved camera beats the FOV fallback, and rescales to the actual image', () => {
+  // The fallback can only ever centre the principal point; the solved lens does not.
+  const fallback = deriveIntrinsics({ fovYDeg: 64.577, width: 720, height: 960 }, 720, 960)
+  assertEquals(fallback.cx, 360)
+  assertEquals(fallback.cy, 480)
+
+  const solved = deriveIntrinsics({ fx: 812.5, fy: 812.5, cx: 358.1, cy: 483.7, width: 720, height: 960 }, 720, 960)
+  assertEquals(solved.cx, 358.1)
+  assertEquals(solved.flX, 812.5)
+
+  // Half-size image => every pixel quantity halves.
+  const half = deriveIntrinsics({ fx: 812.5, fy: 812.5, cx: 358.1, cy: 483.7, width: 720, height: 960 }, 360, 480)
+  assertEquals(half.flX, 406.25)
+  assertEquals(half.cx, 179.05)
+})
+
+// ─── Reconstruction quality ───────────────────────────────────────────────────
+// A COLMAP run that registers a handful of frames exits 0 and writes a real
+// poses.json, so before this gate existed the only difference between a good
+// solve and a useless one was numbers nobody compared. The two runs asserted on
+// below are the measured ones (2026-08-30); they are the whole evidence base for
+// the thresholds, so they are pinned here rather than paraphrased.
+
+const GOOD_RUN = { registeredImages: 32, frameCount: 32, pointCount: 9362 }
+const BAD_RUN = { registeredImages: 3, frameCount: 17, pointCount: 1 }
+
+test('assessColmapQuality passes the measured good solve', () => {
+  const q = assessColmapQuality(GOOD_RUN, { minRegistrationRatio: 0.6, minPoints3D: 100, minStationSeparationRatio: DEFAULT_MIN_STATION_SEPARATION_RATIO })
+  assertEquals(q.degenerate, false)
+  assertEquals(q.status, 'ready')
+  assertEquals(q.registrationRatio, 1)
+  assertEquals(q.reasons, [])
+})
+
+test('assessColmapQuality condemns the measured 3-of-17 solve', () => {
+  const q = assessColmapQuality(BAD_RUN, { minRegistrationRatio: 0.6, minPoints3D: 100, minStationSeparationRatio: DEFAULT_MIN_STATION_SEPARATION_RATIO })
+  assertEquals(q.degenerate, true)
+  assertEquals(q.status, 'needs-rescan')
+  assertEquals(q.registrationRatio, 0.176)
+  assertEquals(q.reasons, ['low-registration-ratio', 'too-few-points'])
+  // The verdict has to carry what it was judged against, or a manifest read
+  // months later cannot say whether the bar moved or the capture did.
+  assertEquals(q.thresholds.minRegistrationRatio, 0.6)
+})
+
+test('the ratio gate carries a bad capture the point floor lets through', () => {
+  // Re-running the same 17 phone keyframes through the real solver produced
+  // 2/17 with 159 points, not 3/17 with 1 — the mapper's initialisation is
+  // stochastic and a capture this weak has no dominant solution to settle on.
+  // 159 clears minPoints3D, so a points-only gate would have called that run
+  // fine. This is the case that says both thresholds have to stay.
+  const q = assessColmapQuality({ registeredImages: 2, frameCount: 17, pointCount: 159 })
+  assertEquals(q.degenerate, true)
+  assertEquals(q.reasons, ['low-registration-ratio'])
+})
+
+test('a single triangulated point is degenerate at any registration ratio', () => {
+  // The ratio gate alone would wave this through: every frame is posed, and the
+  // model still has no structure. That is why there are two thresholds.
+  const q = assessColmapQuality({ registeredImages: 8, frameCount: 8, pointCount: 1 })
+  assertEquals(q.degenerate, true)
+  assertEquals(q.reasons, ['too-few-points'])
+})
+
+test('quality thresholds are overridable, including disabling the point floor', () => {
+  const prevRatio = process.env.COLMAP_MIN_REGISTRATION_RATIO
+  const prevPts = process.env.COLMAP_MIN_POINTS3D
+  try {
+    // Defaults first, so the override below is demonstrably doing the work.
+    assertEquals(resolveQualityThresholds().minRegistrationRatio, DEFAULT_MIN_REGISTRATION_RATIO)
+    assertEquals(resolveQualityThresholds().minPoints3D, DEFAULT_MIN_POINTS_3D)
+
+    process.env.COLMAP_MIN_REGISTRATION_RATIO = '0.15'
+    // 0 must survive: it is the documented way to turn the point floor off, and
+    // the int helper next to it would have silently restored the default.
+    process.env.COLMAP_MIN_POINTS3D = '0'
+    const t = resolveQualityThresholds()
+    assertEquals(t.minRegistrationRatio, 0.15)
+    assertEquals(t.minPoints3D, 0)
+    assertEquals(assessColmapQuality(BAD_RUN, t).degenerate, false, 'a loosened gate must actually loosen')
+
+    // Garbage falls back rather than producing a threshold of NaN, which would
+    // compare false against everything and disable the gate by accident.
+    process.env.COLMAP_MIN_REGISTRATION_RATIO = 'soon'
+    assertEquals(resolveQualityThresholds().minRegistrationRatio, DEFAULT_MIN_REGISTRATION_RATIO)
+  } finally {
+    if (prevRatio === undefined) delete process.env.COLMAP_MIN_REGISTRATION_RATIO
+    else process.env.COLMAP_MIN_REGISTRATION_RATIO = prevRatio
+    if (prevPts === undefined) delete process.env.COLMAP_MIN_POINTS3D
+    else process.env.COLMAP_MIN_POINTS3D = prevPts
+  }
+})
+
+test('the remediation tells a non-expert what to do in the room', () => {
+  const q = assessColmapQuality(BAD_RUN, { minRegistrationRatio: 0.6, minPoints3D: 100, minStationSeparationRatio: DEFAULT_MIN_STATION_SEPARATION_RATIO })
+  const msg = degenerateRemediation(q, BAD_RUN)
+  // The real cause on 2026-08-30 was a dim, low-texture room (50–330 SIFT
+  // features per frame), so light, texture and parallax are the three things
+  // the message has to name. Someone holding a phone cannot act on anything else.
+  for (const cue of ['light', 'pattern', 'walk sideways']) {
+    assert(msg.toLowerCase().includes(cue), `remediation must mention "${cue}": ${msg}`)
+  }
+  // The counts belong in it too — "3 of 17" is what makes it credible.
+  assert(msg.includes('3 of 17'))
+  // And jargon must stay out: naming the algorithm is not an instruction.
+  for (const jargon of ['structure-from-motion', 'sfm', 'colmap', 'triangulat']) {
+    assert(!msg.toLowerCase().includes(jargon), `remediation must avoid jargon "${jargon}": ${msg}`)
+  }
+})
+
+/** Encode a points3D.bin holding `n` points, tracks empty. */
+function encodePoints3DBin(n: number): Uint8Array {
+  const rec = 8 + 24 + 3 + 8 + 8
+  const buf = new Uint8Array(8 + n * rec)
+  const dv = new DataView(buf.buffer)
+  dv.setBigUint64(0, BigInt(n), true)
+  for (let i = 0; i < n; i++) {
+    let o = 8 + i * rec
+    dv.setBigUint64(o, BigInt(i + 1), true); o += 8
+    dv.setFloat64(o, i, true); dv.setFloat64(o + 8, 0, true); dv.setFloat64(o + 16, 0, true); o += 24
+    buf[o] = 128; buf[o + 1] = 128; buf[o + 2] = 128; o += 3
+    dv.setFloat64(o, 0.5, true); o += 8
+    dv.setBigUint64(o, 0n, true)
+  }
+  return buf
+}
+
+/**
+ * Drive `runColmapPoses` end to end against a stubbed COLMAP that emits a model
+ * of exactly the shape asked for. This is the part the pure-function tests
+ * cannot cover: that the verdict actually reaches the manifest on disk, which
+ * is the only thing the world-job coordinator and splat_train ever read.
+ */
+async function runWithStubbedModel(
+  opts: { keyframes: number; registered: number; points: number },
+  // The GLB half of the run, when a test wants it. `_buildScanGlb` is stubbed
+  // rather than real because the real builder imports
+  // @gltf-transform/functions, which eagerly loads `sharp` and cannot come up
+  // under `npm run test:server` — the GLB's *contents* are covered by
+  // tests/unit/node/lingbot_map_glb.test.ts, which runs under Node for exactly
+  // that reason. What is covered here is the wiring: what the driver hands the
+  // builder, where the bytes land, and what a failed build does to the run.
+  glb: Pick<ColmapPosesRunOptions, 'glbOutPath' | 'glbProvenance' | '_buildScanGlb'> = {},
+): Promise<{ dir: string; result: Awaited<ReturnType<typeof runColmapPoses>> }> {
+  const dir = await makeTempDir()
+  const sessionDir = `${dir}/sess-photo-stub`
+  await fs.mkdir(sessionDir)
+  for (let i = 0; i < opts.keyframes; i++) {
+    await fs.writeFile(`${sessionDir}/kf-${String(i).padStart(5, '0')}.jpg`, new Uint8Array([0xff, 0xd8]))
+  }
+  const images = Array.from({ length: opts.registered }, (_, i) => ({
+    id: i + 1,
+    q: [1, 0, 0, 0],
+    t: [i, 0, 0],
+    cam: 1,
+    name: `kf-${String(i).padStart(5, '0')}.jpg`,
+  }))
+
+  const result = await runColmapPoses({
+    ...glb,
+    sessionDir,
+    colmapBin: process.execPath, // any runnable binary: the spawn is stubbed below
+    _spawn: async (_bin, args) => {
+      if (args[0] === 'mapper') {
+        const out = args[args.indexOf('--output_path') + 1]
+        const model = `${out}/0`
+        await fs.mkdir(model, { recursive: true })
+        await fs.writeFile(`${model}/images.bin`, encodeImagesBin(images))
+        await fs.writeFile(`${model}/points3D.bin`, encodePoints3DBin(opts.points))
+      }
+      return { code: 0, stderr: '' }
+    },
+  })
+  return { dir, result }
+}
+
+test('a degenerate solve stays status ok but is flagged, with a remediation on disk', async () => {
+  // The exact run that motivated this: 3 of 17 posed, 1 point, exit 0.
+  const { dir, result } = await runWithStubbedModel({ keyframes: 17, registered: 3, points: 1 })
+  try {
+    // 'ok' is correct and deliberate: COLMAP ran every step and wrote real
+    // files. 'error' would blame the tool, 'skipped' would deny it ran.
+    assertEquals(result.status, 'ok')
+    assertEquals(result.exitCode, 0)
+    assertEquals(result.quality?.degenerate, true)
+    assertEquals(result.quality?.status, 'needs-rescan')
+    assertEquals(result.registeredImages, 3)
+
+    const written = JSON.parse(await fs.readFile(`${dir}/sess-photo-stub/colmap-poses.manifest.json`, 'utf8'))
+    assertEquals(written.status, 'ok')
+    assertEquals(written.frameCount, 17)
+    assertEquals(written.registeredImages, 3)
+    assertEquals(written.quality.degenerate, true)
+    assertEquals(written.quality.registrationRatio, 0.176)
+    assert(written.remediation?.includes('3 of 17'), 'the envelope slot every consumer already reads must carry the fix')
+    // The poses are still written: a bad model is the best diagnostic there is.
+    assertEquals(written.posesPath, 'colmap.poses.json')
+  } finally {
+    await fs.rm(dir, { recursive: true })
+  }
+})
+
+test('a healthy solve carries a ready verdict and no remediation', async () => {
+  const { dir, result } = await runWithStubbedModel({ keyframes: 12, registered: 12, points: 4000 })
+  try {
+    assertEquals(result.status, 'ok')
+    assertEquals(result.quality?.degenerate, false)
+    assertEquals(result.quality?.status, 'ready')
+    const written = JSON.parse(await fs.readFile(`${dir}/sess-photo-stub/colmap-poses.manifest.json`, 'utf8'))
+    // Absent, not empty-string: "nothing to remedy" must not read as advice.
+    assertEquals(written.remediation, undefined)
+    assertEquals(written.quality.reasons, [])
+  } finally {
+    await fs.rm(dir, { recursive: true })
+  }
+})
+
+/**
+ * The gap this stage closes: a video- or photo-ingest scan advertises
+ * `<sessionId>.glb` from the moment it is registered, and nothing on the COLMAP
+ * path ever wrote that file. Measured 2026-08-30 on sess-video-20260830-033839
+ * — colmap.point-cloud.ply (140 KB, 9362 points), a 37.5 MB trained splat, and
+ * no GLB — so the editor 404'd and panoptic-lift raycast against nothing.
+ */
+test('a solved seed cloud becomes the scan GLB, with node-level provenance', async () => {
+  const outDir = await makeTempDir()
+  const glbOutPath = `${outDir}/scan-stub.glb`
+  const handed: Array<{ ply: Uint8Array; extras: Record<string, unknown>; options: unknown }> = []
+
+  const { dir, result } = await runWithStubbedModel(
+    { keyframes: 12, registered: 12, points: 4000 },
+    {
+      glbOutPath,
+      glbProvenance: {
+        sessionId: 'sess-video-20260830-033839',
+        scanId: 'scan-sess-video-20260830-033839',
+        capturedAt: '2026-08-30T03:38:40.398Z',
+      },
+      _buildScanGlb: (ply, extras, options) => {
+        handed.push({ ply, extras: extras as unknown as Record<string, unknown>, options })
+        return Promise.resolve({ bytes: new Uint8Array([0x67, 0x6c, 0x54, 0x46]), pointCount: 4000, quantized: false })
+      },
+    },
+  )
+  try {
+    assertEquals(result.status, 'ok')
+    assertEquals(result.glbPath, glbOutPath)
+    assertEquals(result.glbPointCount, 4000)
+    assertEquals(result.glbError, undefined)
+    assertEquals((await readBytes(glbOutPath)).length, 4)
+
+    assertEquals(handed.length, 1)
+    // The bytes handed over are the seed cloud that was just written, not a
+    // re-serialisation of it — the whole point of reusing one PLY reader.
+    assertEquals(new TextDecoder().decode(handed[0].ply.subarray(0, 3)), 'ply')
+    // Provenance the lift and the editor both read off the node.
+    assertEquals(handed[0].extras.source, 'colmap')
+    assertEquals(handed[0].extras.sessionId, 'sess-video-20260830-033839')
+    assertEquals(handed[0].extras.scanId, 'scan-sess-video-20260830-033839')
+    assertEquals(handed[0].extras.capturedAt, '2026-08-30T03:38:40.398Z')
+    assertEquals(handed[0].extras.pointCount, 4000)
+    assertEquals(handed[0].extras.poseCount, 12)
+    // Unquantized: this GLB *is* the scan, and a reader that takes POSITION at
+    // face value must see metres. See LingBotMapGlbOptions.quantize.
+    assertEquals(handed[0].options, { quantize: false })
+
+    const written = JSON.parse(await fs.readFile(`${dir}/sess-photo-stub/colmap-poses.manifest.json`, 'utf8'))
+    assertEquals(written.glbPath, glbOutPath)
+    assertEquals(written.glbError, undefined)
+  } finally {
+    await fs.rm(dir, { recursive: true })
+    await fs.rm(outDir, { recursive: true })
+  }
+})
+
+test('a GLB that will not build does not fail a good solve', async () => {
+  const outDir = await makeTempDir()
+  const glbOutPath = `${outDir}/scan-stub.glb`
+  const { dir, result } = await runWithStubbedModel(
+    { keyframes: 12, registered: 12, points: 4000 },
+    { glbOutPath, _buildScanGlb: () => Promise.reject(new Error('gltf-transform exploded')) },
+  )
+  try {
+    // The poses and the PLY are the canonical artifacts; the GLB is the
+    // sidecar-shaped concern, exactly as in lingbot_map.ts. Demoting a solved
+    // reconstruction to 'error' over a failed conversion would throw away the
+    // poses the splat chain needs.
+    assertEquals(result.status, 'ok')
+    assertEquals(result.registeredImages, 12)
+    assertEquals(result.glbPath, undefined)
+    assert(result.glbError?.includes('gltf-transform exploded'))
+    // And no truncated file left at the URL the scan advertises.
+    await assertRejects(() => fs.stat(glbOutPath))
+
+    const written = JSON.parse(await fs.readFile(`${dir}/sess-photo-stub/colmap-poses.manifest.json`, 'utf8'))
+    assertEquals(written.status, 'ok')
+    assertEquals(written.glbPath, undefined)
+    assert(String(written.glbError).includes('gltf-transform exploded'))
+  } finally {
+    await fs.rm(dir, { recursive: true })
+    await fs.rm(outDir, { recursive: true })
+  }
+})
+
+test('no GLB destination means no GLB — the pre-existing behaviour', async () => {
+  const { dir, result } = await runWithStubbedModel({ keyframes: 12, registered: 12, points: 4000 })
+  try {
+    assertEquals(result.glbPath, undefined)
+    assertEquals(result.glbError, undefined)
+    const written = JSON.parse(await fs.readFile(`${dir}/sess-photo-stub/colmap-poses.manifest.json`, 'utf8'))
+    assertEquals(written.glbPath, undefined)
+  } finally {
+    await fs.rm(dir, { recursive: true })
+  }
+})
+
+// ─── The baseline gate: did the tripod actually move? ─────────────────────────
+//
+// Measured on a real gimbal-on-a-tripod dome, 2026-08-30. The same room, the
+// same 6 pan columns, twice, 12 photos declared as 2 spots each time:
+//
+//                          within-spot spread   spot separation   ratio
+//   RUN A (tripod NOT moved)   5.19 / 5.01           0.106        0.020
+//   RUN B (tripod moved 1.8m)  0.069 / 0.139         9.863        70.9
+//
+// RUN A came back 12/12 registered, 4410 points, registrationRatio 1.000,
+// degenerate false, status 'ready' — every existing gate passed a capture that
+// cannot support a reconstruction at all. RUN B is the opposite trap: a weak
+// but valid solve (9/12, 372 points, a real room with blank walls) that must
+// keep passing. Both numbers appear literally below so a future change to the
+// threshold has to argue with the evidence.
+
+/** Camera centres for `n` frames at the given x offsets, via the real conversion. */
+function centresAt(files: string[], xs: number[]): Map<string, [number, number, number]> {
+  // Identity rotation, so the OpenCV world-to-camera translation is -centre.
+  const images = files.map((name, i) => ({
+    imageId: i + 1,
+    qvec: [1, 0, 0, 0] as [number, number, number, number],
+    tvec: [-xs[i], 0, 0] as [number, number, number],
+    cameraId: 1,
+    name,
+  }))
+  return cameraCentres(images)
+}
+
+test('cameraCentres inverts the pose rather than reading the translation', () => {
+  // A 90° yaw about Y with a non-zero translation: -Rᵀ·t is (0, 0, -1) while t
+  // is (1, 0, 0), so a reader that took the translation column for the camera
+  // centre would place this camera a unit away along the wrong axis — a
+  // plausible, wrong answer, and one the identity rotations every other test
+  // here uses cannot expose.
+  const s = Math.SQRT1_2
+  const centres = cameraCentres([
+    { imageId: 1, qvec: [s, 0, s, 0], tvec: [1, 0, 0], cameraId: 1, name: 'kf-00000.jpg' },
+  ])
+  const c = centres.get('kf-00000.jpg')!
+  assert(
+    close(c[0], 0, 1e-9) && close(c[1], 0, 1e-9) && close(c[2], -1, 1e-9),
+    `centre was ${JSON.stringify(c)}, expected (0, 0, -1)`,
+  )
+})
+
+test('measureStationBaseline sees RUN A standing still and RUN B moving', () => {
+  const spot0 = ['kf-00000.jpg', 'kf-00001.jpg', 'kf-00002.jpg']
+  const spot1 = ['kf-00003.jpg', 'kf-00004.jpg', 'kf-00005.jpg']
+  const viewpoints = [{ id: 'station-0', files: spot0 }, { id: 'station-1', files: spot1 }]
+
+  // RUN A: the two spots' centroids land 0.1 apart while each spot's own photos
+  // are scattered 5 across — the solve cannot tell the spots from the noise.
+  const runA = new Map([
+    ...centresAt(spot0, [-5, 5, 0]),
+    ...centresAt(spot1, [-4.9, 5.1, 0.1]),
+  ])
+  const a = measureStationBaseline(runA, viewpoints)!
+  assertEquals(a.stationCount, 2)
+  assertEquals(a.placedFrameCount, 6)
+  assert(close(a.maxSpread, Math.sqrt(50 / 3), 1e-3), `spread was ${a.maxSpread}`)
+  assert(close(a.minSeparation, 0.1, 1e-9), `separation was ${a.minSeparation}`)
+  assert(a.separationRatio !== null && a.separationRatio < 1, `ratio was ${a.separationRatio}`)
+
+  // RUN B: the same photos, taken from spots 10 apart.
+  const runB = new Map([
+    ...centresAt(spot0, [-0.05, 0.05, 0]),
+    ...centresAt(spot1, [9.95, 10.05, 10]),
+  ])
+  const b = measureStationBaseline(runB, viewpoints)!
+  assert(close(b.minSeparation, 10, 1e-9), `separation was ${b.minSeparation}`)
+  assert(b.separationRatio !== null && b.separationRatio > 1, `ratio was ${b.separationRatio}`)
+})
+
+test('a walkthrough has no spots to measure between, and is not judged on them', () => {
+  // No station labels → no viewpoints → nothing measurable. The null must read
+  // as "not asked", never as "asked and fine".
+  assertEquals(measureStationBaseline(centresAt(['kf-00000.jpg'], [0]), []), null)
+  // One spot placed is not a baseline either: it takes two to be apart.
+  assertEquals(
+    measureStationBaseline(centresAt(['kf-00000.jpg'], [0]), [
+      { id: 'station-0', files: ['kf-00000.jpg'] },
+      { id: 'station-1', files: ['kf-00009.jpg'] }, // never registered
+    ]),
+    null,
+  )
+})
+
+test('one camera per spot leaves the ratio unmeasurable rather than infinite', () => {
+  // JSON.stringify(Infinity) is `null` anyway; saying null deliberately is the
+  // difference between "not measurable" and a number that got mangled in transit.
+  const b = measureStationBaseline(
+    new Map([...centresAt(['kf-00000.jpg'], [0]), ...centresAt(['kf-00001.jpg'], [3])]),
+    [{ id: 'station-0', files: ['kf-00000.jpg'] }, { id: 'station-1', files: ['kf-00001.jpg'] }],
+  )!
+  assertEquals(b.maxSpread, 0)
+  assertEquals(b.separationRatio, null)
+  assertEquals(assessColmapQuality({ registeredImages: 2, frameCount: 2, pointCount: 500, baseline: b }).degenerate, false)
+})
+
+test('RUN A: 12/12 registered and 4410 points is still degenerate without a baseline', () => {
+  const q = assessColmapQuality({
+    registeredImages: 12,
+    frameCount: 12,
+    pointCount: 4410,
+    baseline: { stationCount: 2, placedFrameCount: 12, minSeparation: 0.106, maxSpread: 5.19, separationRatio: 0.0204 },
+  })
+  // The two older gates see nothing wrong, and that is the point.
+  assertEquals(q.registrationRatio, 1)
+  assertEquals(q.reasons, ['no-station-baseline'])
+  assertEquals(q.degenerate, true)
+  assertEquals(q.status, 'needs-rescan')
+  // The verdict carries the measurement that produced it (ADR 0005 rule 3).
+  assertEquals(q.baseline?.separationRatio, 0.0204)
+  assertEquals(q.thresholds.minStationSeparationRatio, DEFAULT_MIN_STATION_SEPARATION_RATIO)
+})
+
+test('RUN B: a weak but real solve with a genuine baseline passes', () => {
+  // 9 of 12 and 372 points — a real room has blank walls, and this must not be
+  // held to the synthetic fixture's 36/36 and 9,914 points.
+  const q = assessColmapQuality({
+    registeredImages: 9,
+    frameCount: 12,
+    pointCount: 372,
+    baseline: { stationCount: 2, placedFrameCount: 9, minSeparation: 9.863, maxSpread: 0.139, separationRatio: 70.9568 },
+  })
+  assertEquals(q.reasons, [])
+  assertEquals(q.degenerate, false)
+  assertEquals(q.status, 'ready')
+})
+
+test('the baseline threshold is overridable like the other two', () => {
+  const prev = process.env.COLMAP_MIN_STATION_SEPARATION_RATIO
+  try {
+    assertEquals(resolveQualityThresholds().minStationSeparationRatio, DEFAULT_MIN_STATION_SEPARATION_RATIO)
+    process.env.COLMAP_MIN_STATION_SEPARATION_RATIO = '0.01'
+    const t = resolveQualityThresholds()
+    assertEquals(t.minStationSeparationRatio, 0.01)
+    const runA = {
+      registeredImages: 12,
+      frameCount: 12,
+      pointCount: 4410,
+      baseline: { stationCount: 2, placedFrameCount: 12, minSeparation: 0.106, maxSpread: 5.19, separationRatio: 0.0204 },
+    }
+    assertEquals(assessColmapQuality(runA, t).degenerate, false, 'a loosened gate must actually loosen')
+  } finally {
+    if (prev === undefined) delete process.env.COLMAP_MIN_STATION_SEPARATION_RATIO
+    else process.env.COLMAP_MIN_STATION_SEPARATION_RATIO = prev
+  }
+})
+
+test('the baseline remediation tells the operator to move the tripod', () => {
+  const runA = {
+    registeredImages: 12,
+    frameCount: 12,
+    pointCount: 4410,
+    baseline: { stationCount: 2, placedFrameCount: 12, minSeparation: 0.106, maxSpread: 5.19, separationRatio: 0.0204 },
+  }
+  const msg = degenerateRemediation(assessColmapQuality(runA), runA)
+  for (const cue of ['move it', 'spots', 'never really moved']) {
+    assert(msg.toLowerCase().includes(cue), `remediation must mention "${cue}": ${msg}`)
+  }
+  // It must not recycle the dark-room advice: the room was fine, the tripod
+  // was not moved, and telling someone to turn the lights on wastes their time.
+  assert(!msg.includes('turn on every light'), `wrong advice for this failure: ${msg}`)
+  for (const jargon of ['baseline', 'parallax', 'structure-from-motion', 'sfm', 'colmap', 'pose']) {
+    assert(!msg.toLowerCase().includes(jargon), `remediation must avoid jargon "${jargon}": ${msg}`)
+  }
+  // The numbers that back the claim travel with it.
+  assert(msg.includes('0.106') && msg.includes('5.19'), msg)
+})
+
+// ─── Not solving one capture and reporting another's answer ───────────────────
+
+test('frameFingerprint changes with the bytes, not just the count', async () => {
+  const dir = await makeTempDir()
+  try {
+    const names = ['kf-00000.jpg', 'kf-00001.jpg']
+    await fs.writeFile(`${dir}/kf-00000.jpg`, new Uint8Array([1, 2, 3]))
+    await fs.writeFile(`${dir}/kf-00001.jpg`, new Uint8Array([4, 5, 6]))
+    const first = await frameFingerprint(dir, names)
+    assertEquals(await frameFingerprint(dir, names), first, 'unchanged frames must fingerprint the same')
+    // The RUN A → RUN B case: same count, same names, same sizes, different photos.
+    await fs.writeFile(`${dir}/kf-00001.jpg`, new Uint8Array([4, 5, 7]))
+    assert(await frameFingerprint(dir, names) !== first, 'changed pixels must change the fingerprint')
+  } finally {
+    await fs.rm(dir, { recursive: true })
+  }
+})
+
+/**
+ * A stubbed COLMAP that behaves the way the real one does over a workspace
+ * somebody else's capture left behind: `mapper` writes a model only when the
+ * sparse directory has none, because the feature database it reads is keyed by
+ * image *filename* and already holds the previous capture's features under
+ * those same names. That is precisely how RUN B's photos produced RUN A's
+ * answer in 4.8 s.
+ *
+ * The model it does write is derived from the first byte of the first
+ * keyframe, so "which capture is this?" is answerable from the images alone.
+ */
+function replayingSpawn(): (bin: string, args: string[]) => Promise<{ code: number; stderr: string }> {
+  return async (_bin, args) => {
+    if (args[0] !== 'mapper') return { code: 0, stderr: '' }
+    const out = args[args.indexOf('--output_path') + 1]
+    const imagesDir = args[args.indexOf('--image_path') + 1]
+    for (const entry of await fs.readdir(out, { withFileTypes: true })) {
+      if (entry.isDirectory()) return { code: 0, stderr: '' } // a model is already here — leave it
+    }
+    const marker = (await readBytes(`${imagesDir}/kf-00000.jpg`))[0]
+    const registered = marker === 0xa1 ? 12 : 9
+    const points = marker === 0xa1 ? 4410 : 372
+    const model = `${out}/0`
+    await fs.mkdir(model, { recursive: true })
+    await fs.writeFile(`${model}/images.bin`, encodeImagesBin(
+        Array.from({ length: registered }, (_, i) => ({
+          id: i + 1,
+          q: [1, 0, 0, 0],
+          t: [i, 0, 0],
+          cam: 1,
+          name: `kf-${String(i).padStart(5, '0')}.jpg`,
+        })),
+      ))
+    await fs.writeFile(`${model}/points3D.bin`, encodePoints3DBin(points))
+    return { code: 0, stderr: '' }
+  }
+}
+
+/** Write 12 keyframes whose bytes identify the capture they came from. */
+async function writeCapture(sessionDir: string, marker: number): Promise<void> {
+  for (let i = 0; i < 12; i++) {
+    await fs.writeFile(`${sessionDir}/kf-${String(i).padStart(5, '0')}.jpg`, new Uint8Array([marker, 0xd8, i]))
+  }
+}
+
+test('a re-run over changed frames re-solves instead of replaying the last answer', async () => {
+  const dir = await makeTempDir()
+  const sessionDir = `${dir}/sess-photo-replay`
+  await fs.mkdir(sessionDir)
+  try {
+    await writeCapture(sessionDir, 0xa1)
+    const first = await runColmapPoses({ sessionDir, colmapBin: process.execPath, _spawn: replayingSpawn() })
+    assertEquals(first.registeredImages, 12)
+    assertEquals(first.pointCount, 4410)
+    assertEquals(first.manifest.reusedWorkspace, false)
+
+    // Re-queued over the SAME frames: reuse is legitimate here and stays.
+    const again = await runColmapPoses({ sessionDir, colmapBin: process.execPath, _spawn: replayingSpawn() })
+    assertEquals(again.manifest.reusedWorkspace, true)
+    assertEquals(again.manifest.inputFingerprint, first.manifest.inputFingerprint)
+
+    // A different capture, same 12 filenames — the case that shipped RUN A's
+    // answer for RUN B's photos.
+    await writeCapture(sessionDir, 0xb2)
+    const second = await runColmapPoses({ sessionDir, colmapBin: process.execPath, _spawn: replayingSpawn() })
+    assertEquals(second.manifest.reusedWorkspace, false, 'changed frames must not reuse the old workspace')
+    assert(
+      second.manifest.inputFingerprint !== first.manifest.inputFingerprint,
+      'the fingerprint is what makes the change visible',
+    )
+    assertEquals(second.registeredImages, 9, 'the second solve must describe the second capture')
+    assertEquals(second.pointCount, 372)
+  } finally {
+    await fs.rm(dir, { recursive: true })
+  }
+})
+
+test('the whole run condemns a capture that never left the spot', async () => {
+  const dir = await makeTempDir()
+  const sessionDir = `${dir}/sess-photo-tripod`
+  await fs.mkdir(sessionDir)
+  try {
+    // Six photos from each of two declared spots, and a solve that places all
+    // twelve — but places both spots on top of each other (x = ±5 about the
+    // same centroid, 0.1 apart), which is RUN A.
+    const xs = [-5, -3, -1, 1, 3, 5, -4.9, -2.9, -0.9, 1.1, 3.1, 5.1]
+    const records = xs.map((_, i) =>
+      JSON.stringify({
+        index: i,
+        file: `kf-${String(i).padStart(5, '0')}.jpg`,
+        timestamp: i,
+        sourcePhoto: `${i}.jpg`,
+        station: i < 6 ? 0 : 1,
+      })
+    )
+    await fs.writeFile(`${sessionDir}/keyframes.jsonl`, records.join('\n') + '\n')
+    for (let i = 0; i < 12; i++) {
+      await fs.writeFile(`${sessionDir}/kf-${String(i).padStart(5, '0')}.jpg`, new Uint8Array([0xff, 0xd8, i]))
+    }
+
+    const result = await runColmapPoses({
+      sessionDir,
+      colmapBin: process.execPath,
+      _spawn: async (_bin, args) => {
+        if (args[0] === 'mapper') {
+          const out = args[args.indexOf('--output_path') + 1]
+          const model = `${out}/0`
+          await fs.mkdir(model, { recursive: true })
+          await fs.writeFile(`${model}/images.bin`, encodeImagesBin(xs.map((x, i) => ({
+              id: i + 1,
+              q: [1, 0, 0, 0],
+              t: [-x, 0, 0], // identity rotation ⇒ centre = -t = x
+              cam: 1,
+              name: `kf-${String(i).padStart(5, '0')}.jpg`,
+            }))))
+          await fs.writeFile(`${model}/points3D.bin`, encodePoints3DBin(4410))
+        }
+        return { code: 0, stderr: '' }
+      },
+    })
+
+    // Everything the old gates look at is perfect, and the verdict is still no.
+    assertEquals(result.status, 'ok')
+    assertEquals(result.registeredImages, 12)
+    assertEquals(result.pointCount, 4410)
+    assertEquals(result.quality?.registrationRatio, 1)
+    assertEquals(result.quality?.reasons, ['no-station-baseline'])
+    assertEquals(result.quality?.degenerate, true)
+    assertEquals(result.quality?.status, 'needs-rescan')
+
+    const written = JSON.parse(await fs.readFile(`${sessionDir}/colmap-poses.manifest.json`, 'utf8'))
+    assertEquals(written.quality.reasons, ['no-station-baseline'])
+    assertEquals(written.quality.baseline.stationCount, 2)
+    assert(written.quality.baseline.separationRatio < 1, JSON.stringify(written.quality.baseline))
+    assert(
+      String(written.remediation).toLowerCase().includes('move it'),
+      `the envelope slot the UI already renders must carry the fix: ${written.remediation}`,
+    )
+  } finally {
+    await fs.rm(dir, { recursive: true })
+  }
+})

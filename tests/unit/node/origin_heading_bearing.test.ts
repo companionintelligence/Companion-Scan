@@ -19,7 +19,7 @@
  *     clockwise angle on the screen from the north tick to the arrow is read off the projected points. A compass
  *     bearing is the angle clockwise from north seen from above, and the tick is what marks north on the floor, so
  *     the needle must show exactly that angle. No yaw convention enters.
- *  2. THE WORLD. tests/unit/deno/physical_oracle.ts (it imports nothing from src/) says where north lies in a
+ *  2. THE WORLD. tests/unit/server/physical_oracle.ts (it imports nothing from src/) says where north lies in a
  *     session that started facing some bearing, and which session direction a given true bearing is. The arrow is
  *     set at a true bearing the test chose, so the right answer is the input.
  *  3. THE RECORD. The real modal is driven end to end. Its HUD value, the `projectBearingDeg` on the record it
@@ -64,7 +64,7 @@ import {
   enuToSession,
   rotateByQuat,
   trueSessionZBearing,
-} from '../deno/physical_oracle.ts'
+} from '../server/physical_oracle.ts'
 import { clockwiseFromTickToArrow } from './origin_picture.ts'
 import { bearingsAgree, constellation, nudge, norm360, startFlow, walk, type Enu } from './origin_rig.ts'
 

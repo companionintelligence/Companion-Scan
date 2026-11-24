@@ -18,7 +18,7 @@ Give the capture code's duplicated pose, frame and plumbing logic one home each,
 - Do not change a user-facing string or a console line unless this ticket says so. `src/main.ts` matches "Tracking lost", and `tests/unit/node/tracking_reason.test.ts` pins the 8th Wall log lines.
 - Do not flatten copies that differ. Where two copies differ on purpose (a threshold, a refusal, a degenerate-input rule), the shared helper takes the difference as a parameter, or a thin wrapper keeps each contract under its own name.
 - Do not switch the live resolver's point-cloud tier to `liftSegment` (FN-041). That changes live placement and has not been measured on the resolver's inputs.
-- Do not add gltf's extra labels to `CV_PALETTE` or change its colours. It is the mock detector's match table, and `tests/unit/deno/sync.test.ts` ties it to `public/test-fixtures/xr8-mock.js`.
+- Do not add gltf's extra labels to `CV_PALETTE` or change its colours. It is the mock detector's match table, and `tests/unit/server/sync.test.ts` ties it to `public/test-fixtures/xr8-mock.js`.
 
 ## Pinned conventions
 

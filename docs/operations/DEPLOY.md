@@ -1,7 +1,7 @@
 # Deploying CI-Spatial as a persistent server (Linux + systemd)
 
 Turn any Linux box on your tailnet into an always-on scan server: production
-web bundle over HTTPS on `:5173`, Deno API on `:8000`, GPU inference via the
+web bundle over HTTPS on `:5173`, the API server (Node) on `:8000`, GPU inference via the
 system Ollama service, weekly cert renewal. Nothing here is needed for the
 laptop dev workflow (`npm start` still works unchanged).
 
@@ -11,7 +11,7 @@ laptop dev workflow (`npm start` still works unchanged).
 phone (Safari / Chrome over Tailscale)
   └── https://<host>.ts.net:5173      cscan-web    (vite preview, prod bundle,
         │                                           TLS cert + API proxy)
-        └── http://127.0.0.1:8000     cscan-server (Deno API: infer, scans,
+        └── http://127.0.0.1:8000     cscan-server (Node API: infer, scans,
               │                                     worlds, sessions, jobs)
               └── http://127.0.0.1:11434  ollama.service (system unit, GPU0)
                      └── LingBot-Map torch worker (spawned per job, GPU1)
@@ -24,8 +24,8 @@ dev — no HMR, faster loads.
 ## One-time setup
 
 ```bash
-# 0. Prereqs: node ≥20, deno ≥2, tailscale up, and lingering so user services
-#    run without a login session:
+# 0. Prereqs: node ≥26.13 (nvm install 26.13.1), tailscale up, and lingering so
+#    user services run without a login session:
 sudo loginctl enable-linger $USER
 
 # 1. HTTPS cert for this machine (from the repo root; certs are gitignored):
@@ -42,12 +42,18 @@ scripts/install-services.sh
 ```
 
 The installer:
-- substitutes absolute `deno`/`npm` paths into the unit templates (user units
-  don't get your login PATH)
+- substitutes absolute `node`/`npm` paths into the unit templates (user units
+  don't get your login PATH), and stops if that `node` is older than 26
 - seeds `~/.config/cscan/env` from `deploy/cscan.env.example` (hostname
   auto-detected from `tailscale status`), merging `~/.config/cscan/env.lingbot`
   if the LingBot-Map setup produced one
 - enables `cscan-server`, `cscan-web`, and the weekly `cscan-cert.timer`
+
+**A box installed before wave 18** (when the server ran on Deno) still has a `cscan-server` unit
+that starts the `deno` binary, and that unit fails on its next restart. Re-run the installer under
+Node 26 (`nvm use 26.13.1`, then `scripts/install-services.sh`), after `npm ci`. It rewrites the
+units in `~/.config/systemd/user/`, reloads systemd and keeps the existing `~/.config/cscan/env`. A unit
+that is already running is not restarted by it: `systemctl --user restart cscan-server`.
 
 ## Configuration
 
@@ -57,7 +63,7 @@ All box-local config lives in `~/.config/cscan/env` (never in the repo):
 |-----|---------|
 | `TAILSCALE_HOSTNAME` | HTTPS hostname phones use (must match the cert) |
 | `ALLOWED_ORIGIN_PREFIX` | Origin accepted by CORS + used in share links |
-| `PORT` | Deno API port (default 8000) |
+| `PORT` | API server port (default 8000) |
 | `INFERENCE_MODE` | `ollama` \| `onnx` \| `mock` |
 | `OLLAMA_MODEL` | vision model tag (install candidates with `npm run setup:models`, pick with `npm run bench:models`) |
 | `CSCAN_SKIP_BUILD` | `1` = skip `vite build` on cscan-web restart |
@@ -104,7 +110,7 @@ npm run build
 npx wrangler pages deploy dist --project-name=ci-spatial-scan --branch=main
 ```
 
-So the page runs there. Everything that needs the Deno server does not: sign-in,
+So the page runs there. Everything that needs the API server does not: sign-in,
 saved projects, Companion Memory and the vision model. The first-run screen says
 so with its Server row.
 
@@ -113,7 +119,7 @@ that file Pages serves `index.html` with a 200 for every path it has no file for
 so `/projects`, `/authenticate/status` and the model files under `/models/` all
 look like they exist.
 
-`public/_redirects` gives Pages the one rewrite the Deno server's static handler
+`public/_redirects` gives Pages the one rewrite the API server's static handler
 does: `/editor` serves the editor page. The start screen hides its editor card when
 `/health` is a 404, so the rewrite only matters for someone opening `/editor` directly.
 
@@ -169,5 +175,5 @@ session using [Brush](https://github.com/ArthurBrussee/brush). Full details in
 - **ollama.service restart-loops with `bind: address already in use`** → a
   stray user-level `ollama serve` owns :11434 → `sudo scripts/fix-ollama.sh`.
 - **Units dead after reboot** → lingering off: `sudo loginctl enable-linger $USER`.
-- **203/EXEC on unit start** → npm/deno moved (asdf/nvm switch): rerun
+- **203/EXEC on unit start** → npm/node moved (asdf/nvm switch): rerun
   `scripts/install-services.sh` to re-resolve absolute paths.

@@ -458,11 +458,11 @@ test('narrowing: after the predicate, the method is a member of the frame type',
 
 // ── The import graph of the schema ───────────────────────────────────────────────────────────────
 //
-// ADR 0002: what the browser imports, even for a type, lives in a file with no Deno reference, and so do the files
+// ADR 0002: what the browser imports, even for a type, lives in a file with no Node reference, and so do the files
 // that file imports. `ScanCalibration` stores a tap and a fit, which are built in modules that import the AR provider
 // (three.js, the DOM) and in `frame-fit.ts` (which imports `Vec3` from the hub), so the types are declared in a leaf
 // below both (src/world/calibration-evidence.ts) and re-exported. These tests hold the graph to that: nothing
-// reachable from the hub or from this module is a DOM or Deno module, and no cycle runs through them, type-only
+// reachable from the hub or from this module is a DOM or Node module, and no cycle runs through them, type-only
 // edges included (`import type` is not erased by the checker, and a cycle through the hub is a cycle everywhere).
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
@@ -500,15 +500,15 @@ function closure(start: string): { files: string[]; cyclic: boolean } {
 }
 
 const HOMES = [join(ROOT, 'src/world'), join(ROOT, 'src/shared')]
-const RUNTIME_SPECIFIC = /\b(Deno|window|document|navigator|localStorage|sessionStorage|indexedDB|HTMLElement|HTMLCanvasElement)\b/
+const RUNTIME_SPECIFIC = /\b(process|Buffer|window|document|navigator|localStorage|sessionStorage|indexedDB|HTMLElement|HTMLCanvasElement)\b|\bfrom\s+['"]node:/
 
 for (const entry of ['src/world/types.ts', 'src/world/spatial-frame.ts', 'src/world/calibration-evidence.ts']) {
-  test(`the modules ${entry} imports, all the way down, are Deno-API-free, in the shared homes, and acyclic`, () => {
+  test(`the modules ${entry} imports, all the way down, are Node-API-free, in the shared homes, and acyclic`, () => {
     const { files, cyclic } = closure(join(ROOT, entry))
     assert.equal(cyclic, false, `a cycle runs through ${entry}'s imports, type-only edges included`)
     for (const file of files) {
       assert.ok(HOMES.some((home) => file.startsWith(`${home}/`)), `${file} is not in src/world or src/shared (ADR 0002)`)
-      assert.equal(RUNTIME_SPECIFIC.test(code(file)), false, `${file} refers to Deno or the DOM`)
+      assert.equal(RUNTIME_SPECIFIC.test(code(file)), false, `${file} refers to Node or the DOM`)
     }
   })
 }

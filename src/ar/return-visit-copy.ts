@@ -2,7 +2,7 @@
  * What the calibration card says on a return visit to a Place that stores a two-point frame, and what its distance chip
  * and its photo hold say (WP-07).
  *
- * Pure, and Deno-free because the browser imports it (ADR 0002): the sentences sit here, beside the numbers they quote,
+ * Pure, and Node-free because the browser imports it (ADR 0002): the sentences sit here, beside the numbers they quote,
  * so each claim can be tested without a DOM and sits next to the reason it is true. `./project-calibration.ts` calls it
  * from the landmark and heading steps and `./return-visit-aids.ts` from the chip; `./reference-photo-flow.ts` asks it for
  * the hold. The style is `./alignment-status.ts`: short words, and nothing the code did not check.

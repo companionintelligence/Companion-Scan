@@ -4,7 +4,7 @@
  * Extracted from `main.ts` (rather than left as module-level state there) for
  * the same reason `world_job_pump.ts` was: so the membership rules can run as
  * real unit tests without pulling in `main.ts`'s unconditional top-level side
- * effects (hostname resolution, VLM engine load, `Deno.serve`).
+ * effects (hostname resolution, VLM engine load, `serve(...)`).
  *
  * ## Two room shapes, one relay
  *

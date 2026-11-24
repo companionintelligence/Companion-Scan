@@ -4,7 +4,7 @@
 # The problem this solves: `.mcp.json` is tracked, so every device token in it is
 # a `${...}` placeholder, and Claude Code expands those from its **process
 # environment** only. `.env` is not read by anything — not by Claude Code, not by
-# the Deno server (which calls Deno.env.get directly). So putting tokens in
+# the server (which reads process.env directly). So putting tokens in
 # `.env` and starting Claude Code does nothing on its own. This script is the
 # bridge: it keeps the secrets in one gitignored place and gets them into the
 # environment Claude Code actually inherits.

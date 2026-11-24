@@ -1,7 +1,7 @@
 import { geoToEnu, hasGeoPose } from '../../src/world/geo.ts'
 import type { GeoPose, ScanManifest, WorldProject } from '../../src/world/types.ts'
 
-export const WORLD_SCAN_MAX_RADIUS_M = Number(Deno.env.get('WORLD_SCAN_MAX_RADIUS_M') ?? 250)
+export const WORLD_SCAN_MAX_RADIUS_M = Number(process.env.WORLD_SCAN_MAX_RADIUS_M ?? 250)
 
 export interface StoredScanLike {
   filename: string

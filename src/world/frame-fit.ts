@@ -18,7 +18,7 @@
  * spacing, so "verified" says nothing about position or direction. Three or more
  * points leave redundant measurements that do.
  *
- * ## Conventions (all pinned by tests/unit/deno/frame_fit.test.ts)
+ * ## Conventions (all pinned by tests/unit/server/frame_fit.test.ts)
  *
  * - Points are `Vec3` in metres, y up. The fit uses x and z for the turn and shift;
  *   y sets the height offset and is checked (below). Order is load-bearing: index 0
@@ -224,7 +224,7 @@ export const MIN_RESIDUAL_DOF = 3
  * rejected a mirrored check point in every visit when the offset was 0.20 to 0.25 m,
  * but at 0.10 to 0.15 m the worst geometry rejected well under 95% (the test's seed
  * finds 60%). That is 4 x 5 cm. Both halves are reproduced by
- * tests/unit/deno/frame_fit.test.ts. **Adopted from a simulation, not measured
+ * tests/unit/server/frame_fit.test.ts. **Adopted from a simulation, not measured
  * (ADR 0005 rule 5).**
  *
  * It does not scale with sigma-hat, so a noisier visit tells the wrong side apart less

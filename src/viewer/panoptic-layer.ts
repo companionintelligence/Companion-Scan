@@ -58,7 +58,7 @@ import { isMatrix16 } from '../world/mat4.ts'
  *
  * Mirrors `PanopticDetectionRecord` (server/panoptic/panoptic_lift.ts:107-138),
  * which is the source of truth. Declared here rather than imported because that
- * module is a Deno driver — it pulls in `@std/path` and the glTF-Transform
+ * module is a server driver — it pulls in `@std/path` and the glTF-Transform
  * NodeIO — and the viewer has no business dragging either into its bundle to
  * read a JSON file. Only the fields this overlay uses are listed; the
  * diagnostics it does not draw are left off deliberately.

@@ -3,7 +3,7 @@
  * cannot disagree about where a scan is. They build on `liveScanPlacementPatches` (./scan-placement.ts), the one reader that knows an
  * undone move and the record of its undo are not moves that still count.
  *
- * Deno-API-free on purpose (ADR 0002): the editor imports this file, and so do Node tests and the server's placement
+ * Node-API-free on purpose (ADR 0002): the editor imports this file, and so do Node tests and the server's placement
  * (server/world/world_origin.ts, docs/adr/0015-scene-convention-and-georeference.md).
  *
  *  - {@link replayedScanPlacement} is where the editor puts a scan.

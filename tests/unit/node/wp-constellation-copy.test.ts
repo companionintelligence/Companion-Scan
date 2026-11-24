@@ -119,7 +119,7 @@ test('the review step\'s instruction is what it always was for two markers, and 
   assert.equal(REVIEW_MISMATCH_STATUS, 'These points do not match the stored ones yet.')
 })
 
-test('the markers are named the same way everywhere: a selection message and a label caption (the photo titles are in tests/unit/deno/reference_photos.test.ts)', () => {
+test('the markers are named the same way everywhere: a selection message and a label caption (the photo titles are in tests/unit/server/reference_photos.test.ts)', () => {
   assert.deepEqual((['landmark', 'heading', 'check'] as const).map(markerName), ['Landmark', 'Heading marker', 'Check point'])
   assert.deepEqual(
     (['landmark', 'heading', 'check'] as const).map(labelCaption),

@@ -2,7 +2,7 @@
  * The words the constellation flow adds to the calibration card (WP-04b): the check-point step, the readout of how
  * this visit's points sit against the stored ones, and the mismatch screen for them.
  *
- * Pure and Deno-free (ADR 0002), so the sentences can be tested without a DOM and the owner can read every one in one
+ * Pure and Node-free (ADR 0002), so the sentences can be tested without a DOM and the owner can read every one in one
  * place. The shell (./project-calibration.ts) draws them and decides nothing here.
  *
  * ## What may be said

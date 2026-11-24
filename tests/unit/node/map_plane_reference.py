@@ -12,7 +12,7 @@ to 60 digits):
    share no formula for the inverse. The sine and cosine are a Taylor series written out below.
 2. Tile ground width on the sphere Web Mercator is defined on: 2 pi a cos(lat) / 2^z, a = 6378137 m.
 3. ECEF and ENU on the WGS-84 ellipsoid (a = 6378137 m, 1/f = 298.257223563) from the closed forms, as in
-   tests/unit/deno/enu_reference.py, which tests the ENU module this one is built on.
+   tests/unit/server/enu_reference.py, which tests the ENU module this one is built on.
 4. The deviation of a four-corner tile quad from the exact positions inside it, sampled on a 17 x 17 grid: the
    bilinear patch east-north and up, which is the check research note R4 section 3 reports (56 um at z19 and
    51.5 N, 3.6 mm at z16), measured here a second way, and the quad drawn as two triangles in all three axes. The

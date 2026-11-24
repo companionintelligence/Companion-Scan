@@ -82,7 +82,7 @@
  * Nothing here says a session is aligned. It computes a transform and the numbers that say how well the two
  * descriptions of the cameras agree.
  *
- * Pure: no Deno API, no file access.
+ * Pure: no Node API, no file access.
  */
 import { type BoundedCorrection, isMatrix16 } from '../../src/world/register-proposal.ts'
 import {

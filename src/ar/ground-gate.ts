@@ -4,7 +4,7 @@
  *
  * Its own module rather than a private helper inside project-calibration.ts
  * because that file references `TouchEvent`, `PointerEvent` and
- * `HTMLCanvasElement`; importing it into a Deno test drags DOM lib types in
+ * `HTMLCanvasElement`; importing it into a server unit test drags DOM lib types in
  * and fails type-checking (ADR 0002). Keeping the decision pure and separate
  * is what makes the threshold testable at all — and this threshold is the one
  * most likely to need retuning against real device data.

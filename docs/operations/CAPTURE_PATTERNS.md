@@ -173,7 +173,7 @@ Carry the phone and walk the room, either in the live scanner or as a video you 
    reconstruction.
 3. Poll `GET /worlds/default/jobs` for that `jobId`.
 4. If you captured a room as several separate sessions, pool them into one before reconstructing:
-   `deno run -A scripts/scan-room.ts --pool <id-a> <id-b> … --as <new-id>`. Pooling is what lifted
+   `node scripts/scan-room.ts --pool <id-a> <id-b> … --as <new-id>`. Pooling is what lifted
    one reference capture from 4 of 9 registered to 20 of 22.
 
 ---

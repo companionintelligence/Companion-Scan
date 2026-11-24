@@ -3,7 +3,7 @@
 ## What this repo does
 
 A browser-based AR room scanner. A phone (Safari via 8th Wall SLAM, or Chrome/Quest via
-native WebXR) walks through a space; a Deno server (`server/main.ts`, `:8000`) receives
+native WebXR) walks through a space; a Node 26 server (`node server/main.ts`, `:8000`) receives
 keyframes and detections; a Vite/Three.js frontend (`:5173`) renders the scan and a
 multi-scan World Editor. Reconstruction runs through two independent pipelines — a
 fast GLB-optimizer (the `optimize-scan` `WorldJob` type → `server/pipeline.ts`) and a slower,
@@ -16,10 +16,10 @@ and CORS are all built around `*.ts.net`.
 ## Key commands
 
 ```bash
-npm start                    # Deno API (:8000) + Vite HTTPS dev server (:5173)
-deno task check              # type-check server/main.ts (do this after any server/main.ts change)
+npm start                    # API server (:8000) + Vite HTTPS dev server (:5173)
+npm run typecheck:server     # type-check the server and its suite (do this after any server change)
 npm run typecheck:tests      # type-check tests/*.spec.ts — `tsc --noEmit` does NOT
-deno task test                # Deno unit tests
+npm run test:server          # the server unit suite (tests/unit/server/, node:test)
 npm run test:viewport        # pinch-zoom must stay on (WCAG 1.4.4): viewport tags, root touch-action, iOS gesture* handlers, 16px text fields on touch screens. Local only: both workflows are manual
 npm run qr -- "/scanner.html?world=default"   # QR code for on-device testing
 npm run logs:watch           # stream a phone's console (?debug=remote on the page, CLIENT_LOGS_BROADCAST=1 on the server)
@@ -28,9 +28,9 @@ npm run logs:watch           # stream a phone's console (?debug=remote on the pa
 **`npx tsc --noEmit` covers `src/` only** — `tsconfig.json`'s `include` is `["src"]`, and
 Playwright transpiles specs without type-checking them. A type error in a spec is invisible to
 it, to `npm run build`, and to CI. `npm run typecheck:tests` is the one that covers
-`tests/*.spec.ts`; `npm run verify` runs both, so the pre-push hook does too. Deno unit tests
-under `tests/unit/deno/` stay out of it deliberately — `deno task check` and `deno task test`
-already own those.
+`tests/*.spec.ts`; `npm run verify` runs both, so the pre-push hook does too. The server and
+its unit suite under `tests/unit/server/` stay out of both: `npm run typecheck:server` and
+`npm run test:server` own those, and `npm run verify` runs them too.
 
 `OLLAMA_HOST` may be a full URL (`http://localhost:11434`) or a host:port bind
 address such as `0.0.0.0:11434`; the inference engine normalizes the latter to an
@@ -63,7 +63,7 @@ already does the job.** This codebase has two cautionary examples of not doing t
   retired — the class no longer exists, and `server/jobs.ts` now holds only the legacy
   `Job`/`JobStatus`/`OptimizeScanManifest` shape definitions the `/jobs` API shim and
   the on-disk manifest format still use. (Both files — and every other server-side
-  Deno module — were later grouped from the repo root into `server/`, in a separate,
+  module — were later grouped from the repo root into `server/`, in a separate,
   unrelated repo-tidy pass.)
 
 A third reconstruction path was added by wave 10: a **person** capture (a clip of a
@@ -115,28 +115,30 @@ about to create this codebase's third `ScanManifest` — don't.
 - Hostname resolution (`TAILSCALE_HOSTNAME`/`ALLOWED_ORIGIN_PREFIX`) must stay in sync
   between `vite.config.ts`'s `resolveHostname()` and `server/origin.ts`'s
   `resolveHostnameWith()` (`server/main.ts` only supplies its probes) — they're
-  deliberately parallel implementations (different runtimes), not a shared module. Both
+  deliberately parallel implementations, not a shared module: `vite.config.ts` runs in
+  Vite's config loader and `server/origin.ts` in the server, each with its own probes. Both
   fall back to `localhost` with a warning. See
   `docs/factory/foundation-updates/0002-fix-allowed-origin-prefix-autodetect.md`.
-- **Both npm and Deno materialise `node_modules`.** `deno.json:2` sets
-  `"nodeModulesDir": "auto"`, so `deno install` / any `deno task` builds its own
-  `node_modules/.deno/` layout for the eight `npm:` packages in its import map (hono,
-  onnxruntime-node, jimp, the `@gltf-transform/*` trio, draco3dgltf, jose). Only `hono` is
-  a runtime import of `server/main.ts` itself (it also has a type-only import from
-  `@gltf-transform/core`, which leaves nothing at run time); the rest arrive through the modules it pulls in
-  (`server/inference.ts`, `server/pipeline.ts`, `server/portal_auth.ts`, and the splat/lingbot runners). That setting
-  is load-bearing — it cannot simply be dropped — and `deno.json:27`'s `allowScripts`
-  expects `onnxruntime-node`'s install script to run, so Deno needs a real tree.
-  **Install with `npm ci`, not `npm install`.** `npm ci` rebuilds the tree wholesale from
-  the lockfile; `npm install` mutates an existing tree in place, which is what was once
-  observed to corrupt it. The symptom names the wrong cause: Playwright reports *"You have
-  two different versions of @playwright/test"* and points at a `test.describe()` call site,
-  while all three of `@playwright/test`, `playwright` and `playwright-core` report the same
-  version — the real state is one **incomplete** install, not two versions. Recovery is
-  `rm -rf node_modules && npm ci`. Running `npm ci` first and a `deno` task afterwards is
-  safe, and is the normal local sequence. CI never hits any of this:
-  `.github/workflows/deno-ci.yml` installs with `deno install` (lines 62-63, and 101-102 for
-  the detection-gate job) and never runs Playwright, which is why this only bites locally.
+- **One toolchain: Node 26 and `npm ci`.** The server, the scripts, Vite, Playwright and the
+  app builds all run on Node 26: `.node-version` is 26.13.1, and `package.json`'s `engines`
+  says `>=26.13.0`, with `engine-strict` on, so an older Node refuses to install. Until wave
+  18 the server ran on Deno (ADR 0016). On this machine, `nvm use 26.13.1`; other trees still
+  use 22.23.2 beside it.
+  **Install with `npm ci`, not `npm install`**, and export `ONNXRUNTIME_NODE_INSTALL_CUDA=skip`
+  first: onnxruntime-node's install script otherwise tries a CUDA download that answers 404.
+  `npm ci` rebuilds the tree wholesale from the lockfile; `npm install` mutates an existing
+  tree in place, which is what was once observed to corrupt it. The symptom names the wrong
+  cause: Playwright reports *"You have two different versions of @playwright/test"* and points
+  at a `test.describe()` call site, while all three of `@playwright/test`, `playwright` and
+  `playwright-core` report the same version — the real state is one **incomplete** install,
+  not two versions. Recovery is `rm -rf node_modules && npm ci`.
+  Node runs the server's TypeScript by stripping its types, so a server module may use
+  erasable syntax only (no `enum`, no `namespace`, no parameter properties), and a type-only
+  import must say `type`, or it fails at load. `npm run typecheck:server` checks both. The one
+  exception in the tree is the vendored QR encoder (`src/third-party/qrcodegen/`, namespaces,
+  not edited by hand): Node code that needs it, or `src/ui/qr-code.ts` above it, loads both
+  through `scripts/lib/qr-code-compiled.mjs`, which compiles them first. Node 26 has no
+  `--experimental-transform-types`.
 
 ## Do not rename
 

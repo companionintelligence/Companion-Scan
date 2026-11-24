@@ -9,7 +9,7 @@
  * check-point button should show; the DOM, the scene and the commit's records stay where they were
  * (./project-calibration.ts, ./calibration-commit.ts, ./constellation-ghosts.ts).
  *
- * Pure: no DOM, no Deno, no three.js, no clock (ADR 0002, and the purity scan in
+ * Pure: no DOM, no Node API, no three.js, no clock (ADR 0002, and the purity scan in
  * tests/unit/node/wp-constellation-flow.test.ts).
  *
  * ## A check point is never added to an existing frame

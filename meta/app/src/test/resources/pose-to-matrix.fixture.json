@@ -1,5 +1,5 @@
 {
-  "about": "Poses and the row-major camera-to-world matrix server/splat/splat_train_dataset.ts poseToMatrix() makes of each. tests/unit/deno/native_quest_pose_fixture.test.ts holds this file to the server function, and CoordinateConversionsTest holds the Kotlin restatement to it. Regenerate after a change to poseToMatrix: UPDATE_POSE_FIXTURE=1 deno test --allow-read --allow-write --allow-env tests/unit/deno/native_quest_pose_fixture.test.ts",
+  "about": "Poses and the row-major camera-to-world matrix server/splat/splat_train_dataset.ts poseToMatrix() makes of each. tests/unit/server/native_quest_pose_fixture.test.ts holds this file to the server function, and CoordinateConversionsTest holds the Kotlin restatement to it. Regenerate after a change to poseToMatrix: UPDATE_POSE_FIXTURE=1 node --test tests/unit/server/native_quest_pose_fixture.test.ts",
   "cases": [
     {
       "name": "identity",

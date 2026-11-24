@@ -49,7 +49,7 @@ const args = parseArgs(argv.slice(1))
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const SCANS_DIR = args['scans-dir'] || process.env.SCANS_DIR || path.join(ROOT, 'scans')
-// Must match main.ts's own SESSIONS_DIR resolution exactly (`Deno.env.get('SESSIONS_DIR')
+// Must match main.ts's own SESSIONS_DIR resolution exactly (`process.env.SESSIONS_DIR
 // ?? \`${SCANS_DIR}/sessions\``) — main.ts is where keyframePreflight/resolveSessionDirFor
 // look for what this script writes. Deployments that set SESSIONS_DIR independently of
 // SCANS_DIR (.env.example documents this as supported) need this script to land keyframes

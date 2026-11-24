@@ -62,6 +62,8 @@
 // so there is no cycle.
 import { frameFingerprint, type StationBaseline } from '../colmap/colmap_poses.ts'
 import { sampleEvenly } from '../sample_even.ts'
+import * as fs from 'node:fs/promises'
+import { readBytes } from '../fs_util.ts'
 
 /** Edge of the square greyscale thumbnail every frame is reduced to. */
 export const SIGNATURE_EDGE = 32
@@ -307,7 +309,7 @@ export async function frameSignature(bytes: Uint8Array): Promise<number[] | null
   try {
     // `fromBuffer`, not `read`: Jimp 1.x's `read` treats a Uint8Array as a URL
     // and fails with "Could not load Buffer from URL". The buffer is copied
-    // only when the array is a view onto a larger one, which Deno.readFile's
+    // only when the array is a view onto a larger one, which readBytes's
     // never is.
     const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
       ? bytes.buffer
@@ -322,8 +324,6 @@ export async function frameSignature(bytes: Uint8Array): Promise<number[] | null
     return null
   }
 }
-
-// deno-lint-ignore no-explicit-any
 type JimpModule = { fromBuffer: (input: ArrayBufferLike) => Promise<any> }
 let jimpCache: JimpModule | null | undefined
 
@@ -412,7 +412,7 @@ export async function measureSweepSeparation(
     const bytes: (Uint8Array | null)[] = []
     for (const file of s.files) {
       try {
-        const b = await Deno.readFile(`${sessionPath}/${file}`)
+        const b = await readBytes(`${sessionPath}/${file}`)
         bytes.push(b)
         keyParts.push(`${s.station}:${file}:${b.byteLength}:${await sha256Hex(b)}`)
       } catch {
@@ -529,7 +529,7 @@ export async function readSolvedSeparation(
 ): Promise<SolvedSeparation> {
   let manifest: Record<string, unknown>
   try {
-    manifest = JSON.parse(await Deno.readTextFile(`${sessionPath}/colmap-poses.manifest.json`))
+    manifest = JSON.parse(await fs.readFile(`${sessionPath}/colmap-poses.manifest.json`, 'utf8'))
   } catch {
     return { known: false, note: 'no camera solve has run on this capture yet' }
   }
@@ -634,14 +634,14 @@ const KEYFRAME_RE = /^kf-\d+\.jpg$/
 /** The solve's fingerprint of a session's keyframes, recomputed from disk. Throws if they cannot be read. */
 async function fingerprintSessionFrames(sessionPath: string): Promise<string> {
   const names: string[] = []
-  for await (const entry of Deno.readDir(sessionPath)) {
-    if (entry.isFile && KEYFRAME_RE.test(entry.name)) names.push(entry.name)
+  for (const entry of await fs.readdir(sessionPath, { withFileTypes: true })) {
+    if (entry.isFile() && KEYFRAME_RE.test(entry.name)) names.push(entry.name)
   }
   return await frameFingerprint(sessionPath, names)
 }
 
 /** Hex SHA-256 of one photograph, for the measurement cache's content key. */
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes as unknown as BufferSource)
+  const digest = await crypto.subtle.digest('SHA-256', bytes as unknown as NodeJS.BufferSource)
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('')
 }

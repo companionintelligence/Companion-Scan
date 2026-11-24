@@ -20,7 +20,7 @@
  * only path.
  *
  * Runs under the chromium-mock project (matches /mock-.*\.spec\.ts/). Needs the
- * Vite + Deno servers up (npm start), and --workers=1: these share server-side
+ * Vite + servers up (npm start), and --workers=1: these share server-side
  * session state with the other mock specs.
  *   PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64 \
  *     npx playwright test --project=chromium-mock mock-ui-mobile --workers=1

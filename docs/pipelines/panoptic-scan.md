@@ -112,11 +112,11 @@ transformers' `AutoImageProcessor` requires it and fails at `from_pretrained()`
 rather than at import, so leaving it out reads as a transformers bug rather than
 a missing package.
 
-The weights download on first run (HF cache). `npm run server`, `npm start` and
-`deno task dev|start` pass `--env-file`, so a `.env` file in the directory they start in is
-read by the server. A server started any other way (the systemd unit, the Docker image, a bare
-`deno run`) does not read it: export these into its environment (`set -a; . ./.env; set +a`
-works in a shell).
+The weights download on first run (HF cache). `npm run server` and `npm start` pass
+`--env-file-if-exists=.env`, so a `.env` file in the directory they start in is read by the
+server. A server started any other way (the systemd unit, the Docker image, a bare
+`node server/main.ts`) does not read it: export these into its environment
+(`set -a; . ./.env; set +a` works in a shell).
 
 Measured on an RTX 4080 Laptop (12 GB), Swin-L at fp16:
 
@@ -622,7 +622,7 @@ this stage confirm its own guesses.
 ### Why a sidecar and not the scan's meta JSON
 
 Ingest rewrites the whole `<base>.json` meta sidecar with an **unawaited**
-`Deno.writeTextFile`, outside the per-slug world lock ADR 0004 establishes. A
+file write, outside the per-slug world lock ADR 0004 establishes. A
 stage merging into that file would be last-write-wins against an ingest still in
 flight. A separate file per producer means no merge, no race, and a re-lift is an
 idempotent whole-file overwrite.
@@ -638,14 +638,14 @@ thing/stuff match and its taxonomy proof (`thingIds`/`names` in the generated
 list, `thingSource` in `panoptic.segments.json`, the fall-back warning),
 `summarizePanopticSegments`/`formatSegmentSummary` and the per-run `[panoptic]`
 log line that states the counts as sightings with a distinct-object lower bound,
-and 20 more Deno tests — 34 in `tests/unit/deno/panoptic_scan.test.ts`, still
+and 20 more server unit tests — 34 in `tests/unit/server/panoptic_scan.test.ts`, still
 with no model, venv or GPU present.
 
 Landed here: the lift — `src/shared/panoptic_lift.ts` (pure geometry +
-confidence, Deno- and `three`-free per ADR 0002), `server/panoptic/panoptic_lift.ts`
+confidence, free of server runtime APIs and of `three`, per ADR 0002), `server/panoptic/panoptic_lift.ts`
 (the driver), `PanopticLiftManifest` extending `PipelineManifestBase` in its
 canonical home, the worker's `bboxPx`/`centroidOnMask` fields, and 50 tests
-(30 Node on the shared policy, 20 Deno on the driver) that run with no model, no
+(30 in the Node suite on the shared policy, 20 in the server suite on the driver) that run with no model, no
 GPU and no GLB.
 
 Landed since: the `'panoptic-lift'` `WorldJob` type and `_runPanopticLiftJob`

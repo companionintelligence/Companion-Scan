@@ -3,7 +3,7 @@
  * splat-train integration test has something to serve, load, and screenshot.
  *
  * Why synthetic: the real trainer is Brush (a GPU binary) which can't run in
- * CI. The Deno driver's spawn surface is covered by splat_train.test.ts; what
+ * CI. The server driver's spawn surface is covered by splat_train.test.ts; what
  * the viewer test still needs is a *valid INRIA 3DGS .ply* on disk plus the
  * `<base>.splat-train.manifest.json` the world job writes. We synthesise both.
  * The data path (served .ply → SplatMesh) is identical to a real run.
@@ -277,7 +277,7 @@ async function main() {
 
   // Floor-plan sidecars: a synthetic 4 x 3 rectilinear plan in the schema scripts/floor_plan_worker.py writes, its
   // drawing, and the <base>.floor-plan.manifest.json the floor-plan job writes. Lets tests/mock-floor-plan.spec.ts
-  // assert the editor's Floor plan section offline. The worker itself is run by tests/unit/deno/floor_plan.test.ts.
+  // assert the editor's Floor plan section offline. The worker itself is run by tests/unit/server/floor_plan.test.ts.
   // Written as a plan fitted to a metric capture would be: in metres, in the AR session's frame, Y up.
   const FLOOR_PLAN_DISCLAIMER = "derived, not survey-grade; metres, from the capture's AR tracking"
   const planWalls = [

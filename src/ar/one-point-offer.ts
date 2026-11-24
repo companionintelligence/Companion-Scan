@@ -36,7 +36,7 @@
  * redraw, and asks it again when the button is clicked, so a click that reaches a hidden button (a script, or
  * a later caller of the click handler) is refused by the same rule and not only by the paint.
  */
-import type { ProjectSpatialFrame } from '../world/types'
+import type { ProjectSpatialFrame } from '../world/types.ts'
 
 /** The stages of the modal, as `./project-calibration.ts` names them. `'check'` is the optional step after the heading marker (./constellation-flow.ts). */
 export type CalibrationStage = 'ground' | 'landmark' | 'heading' | 'check' | 'review' | 'mismatch'

@@ -139,7 +139,7 @@ alone rather than opportunistically converting them.
 
 New:
 - `server/http_range.ts` — parse `Range`, build a `206` with `Content-Range`; pure, unit-tested
-- `tests/unit/deno/http_range.test.ts`
+- `tests/unit/server/http_range.test.ts`
 - `tests/api-person-capture.spec.ts` (one consolidated spec for the whole wave, rather than one per ticket)
 
 Changed:

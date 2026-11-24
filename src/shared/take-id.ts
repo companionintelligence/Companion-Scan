@@ -8,8 +8,8 @@
  * and means a take inherits the session directory's existing durability,
  * pruning and crash behaviour for free.
  *
- * Deno-API-free on purpose (ADR 0002): both `server/main.ts` and browser code
- * import this, so it can reach for neither `Deno` nor the DOM. Unlike
+ * Node-API-free on purpose (ADR 0002): both `server/main.ts` and browser code
+ * import this, so it can reach for neither `node:*` nor the DOM. Unlike
  * `session-id.ts` there is no filesystem-aware half — a take never names a
  * directory, precisely because it is derived rather than stored.
  *

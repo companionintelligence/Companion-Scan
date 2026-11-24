@@ -1,7 +1,7 @@
 /**
  * Placement guidance: where the calibration points should be, and what their placement is worth.
  *
- * Pure, and Deno-free because the browser imports it (ADR 0002). The copy lives here, beside the
+ * Pure, and Node-free because the browser imports it (ADR 0002). The copy lives here, beside the
  * numbers it quotes, so it can be tested without a DOM and each claim sits next to the reason it
  * is true. `src/ar/project-calibration.ts` calls it from its separation line and its heading step.
  *
@@ -20,7 +20,7 @@
  * It replaced `sessionDisagreementM` (WP-04b), which gave the same quantity for two points alone, as a root-mean-
  * square from a closed form fitted to the investigation's simulation. `frameUncertaintyAt` is that prediction for
  * any number of points, with the 95th percentile the product target is set against, and it is held to simulated
- * visit pairs in tests/unit/deno/frame_fit.test.ts.
+ * visit pairs in tests/unit/server/frame_fit.test.ts.
  *
  * ## A return visit does not choose its walk
  *

@@ -9,7 +9,7 @@
  *
  *   1. generates the synthetic test homes (scripts/generate-test-homes.mjs)
  *   2. places the first VIDEO_SCANS of them ADJACENT (see below)
- *   3. starts the Deno API on isolated data dirs, waits for /health
+ *   3. starts the API server (node server/main.ts) on isolated data dirs, waits for /health
  *   4. seeds those homes into world "default" and waits for the optimize jobs
  *   5. runs Vite in the foreground; SIGINT/SIGTERM tears the API down too
  *
@@ -170,9 +170,7 @@ rmSync(DATA, { recursive: true, force: true })
 for (const d of ['scans', 'worlds', 'summaries']) mkdirSync(join(DATA, d), { recursive: true })
 
 console.log(`[stage] starting API on ${api} (data: ${DATA})`)
-background('deno', [
-  'run', '--allow-net', '--allow-read', '--allow-write', '--allow-env', '--allow-ffi', '--allow-run', 'server/main.ts',
-], {
+background(process.execPath, ['server/main.ts'], {
   // The colour-blob engine: no model download, no GPU, and it recognises the
   // same palette the xr8 camera mock paints, so /infer is deterministic.
   INFERENCE_MODE: 'mock',
@@ -182,7 +180,7 @@ background('deno', [
   WORLDS_DIR: join(DATA, 'worlds'),
   SUMMARIES_DIR: join(DATA, 'summaries'),
 })
-await waitFor(`${api}/health`, 'Deno API')
+await waitFor(`${api}/health`, 'API server')
 
 // ── 4. seed ──────────────────────────────────────────────────────────────────
 console.log(`[stage] seeding ${SCAN_COUNT} homes`)

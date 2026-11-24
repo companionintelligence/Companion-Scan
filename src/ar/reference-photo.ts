@@ -15,7 +15,7 @@
  */
 import { viewportPointToImagePoint } from '../spatial/resolver.ts'
 import { twoPointSeparationM } from '../world/geo.ts'
-import type { CalibrationReferencePhoto, Vec3 } from '../world/types'
+import type { CalibrationReferencePhoto, Vec3 } from '../world/types.ts'
 import { conjugateQuat, rotateVectorByQuat } from '../shared/pose-math.ts'
 import type { ReferencePhotoRole } from '../project/project-store.ts'
 

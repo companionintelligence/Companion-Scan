@@ -51,7 +51,7 @@ import type { RawDetection } from './prompt'
 const webGpuPort = createWebGpuPort()
 
 // executionProviders: WebGPU only. The CPU/WASM path already exists as the
-// server's inference path (src/inference/server.ts → the Deno API); the
+// server's inference path (src/inference/server.ts → the API server); the
 // entire point of this worker is running on the phone's own GPU instead.
 const SESSION_OPTS = {
   executionProviders: ['webgpu'],

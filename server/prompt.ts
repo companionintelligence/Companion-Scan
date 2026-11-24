@@ -1,6 +1,6 @@
 /**
- * Shared prompt + parser for the Deno inference server.
- * Must stay in sync with src/inference/prompt.ts (same logic, Deno pathing).
+ * Shared prompt + parser for the inference server.
+ * Must stay in sync with src/inference/prompt.ts (same logic, the server's import paths).
  * sync.test.ts checks the two match past this comment.
  */
 

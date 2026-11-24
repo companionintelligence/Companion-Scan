@@ -12,7 +12,7 @@
  * The house contract is otherwise unchanged, and is deliberately copied from
  * `server/splat/splat_train.ts`:
  *
- *  - every knob resolves `opts.x ?? Deno.env.get('X') ?? DEFAULT`, once
+ *  - every knob resolves `opts.x ?? process.env.X ?? DEFAULT`, once
  *  - `buildSubmitRequest()` is pure, so it unit-tests without a network
  *  - a `_fetch` injection point for tests
  *  - a manifest is written on **every** path, including skip and error
@@ -34,6 +34,7 @@
  */
 import type { Person4DManifest } from '../../src/world/manifests.ts'
 import { abortReasonOf, budgetFromEnv, describeBudget, intFromEnv, writeRunnerManifest } from '../run_with_deadline.ts'
+import * as fs from 'node:fs/promises'
 
 export interface Person4DClip {
   clientId: string | null
@@ -131,8 +132,8 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 2 * 60 * 1000
 /** Resolve every knob in one place, `opts ?? env ?? default`. */
 export function resolveParams(opts: Person4DOptions): Person4DParams {
   return {
-    host: (opts.host ?? Deno.env.get('FDANYONE_HOST') ?? '').replace(/\/+$/, ''),
-    token: opts.token ?? Deno.env.get('FDANYONE_TOKEN') ?? null,
+    host: (opts.host ?? process.env.FDANYONE_HOST ?? '').replace(/\/+$/, ''),
+    token: opts.token ?? process.env.FDANYONE_TOKEN ?? null,
     viewsPerLayer: opts.viewsPerLayer ?? intFromEnv('FDANYONE_VIEWS_PER_LAYER', DEFAULT_VIEWS_PER_LAYER),
     timestepFps: opts.timestepFps ?? intFromEnv('FDANYONE_TIMESTEP_FPS', DEFAULT_TIMESTEP_FPS),
     // The poll sleep is a setTimeout, so it takes the same budget rule as the request
@@ -385,7 +386,7 @@ async function fetchSequence(
   const frames = Array.isArray(body.frames) ? body.frames.filter((f): f is string => typeof f === 'string') : []
   if (frames.length === 0) throw new Error('subsystem reported no frames')
 
-  await Deno.mkdir(opts.sequenceDir, { recursive: true })
+  await fs.mkdir(opts.sequenceDir, { recursive: true })
   let landed = 0
   for (const frame of frames) {
     // The names come from another machine, so they are validated rather than
@@ -403,7 +404,7 @@ async function fetchSequence(
         console.warn(`[person-4d] skipped ${frame}: subsystem returned HTTP ${fr.status}`)
         continue
       }
-      await Deno.writeFile(`${opts.sequenceDir}/${frame}`, new Uint8Array(await fr.arrayBuffer()))
+      await fs.writeFile(`${opts.sequenceDir}/${frame}`, new Uint8Array(await fr.arrayBuffer()))
       landed++
     } catch (err) {
       // Skipped, not fatal: the shortfall is counted in the manifest and the result log.

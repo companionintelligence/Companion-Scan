@@ -37,7 +37,7 @@ Let the common server turn a Thing seen in a keyframe into a textured, physicall
 
 ## Files impacted
 
-New: `server/physag3d/physag3d.ts`, `server/physag3d/asset_files.ts`, `tests/unit/deno/physag3d.test.ts`, `docs/pipelines/physag3d.md`.
+New: `server/physag3d/physag3d.ts`, `server/physag3d/asset_files.ts`, `tests/unit/server/physag3d.test.ts`, `docs/pipelines/physag3d.md`.
 Changed: `src/world/types.ts`, `server/main.ts`, `server/capabilities.ts`, `server/scan_deletion.ts`, `server/wp-a-keyframes.ts`, `server/run_with_deadline.ts`, `.env.example`, `docs/operations/PRIVACY.md`, and three Deno test files.
 
 ## Schema required
@@ -55,9 +55,9 @@ Changed: `src/world/types.ts`, `server/main.ts`, `server/capabilities.ts`, `serv
 
 ## Tests
 
-- [ ] `tests/unit/deno/physag3d.test.ts`
-- [ ] `tests/unit/deno/scan_deletion.test.ts`
-- [ ] `tests/unit/deno/keyframe_routes.test.ts`
+- [ ] `tests/unit/server/physag3d.test.ts`
+- [ ] `tests/unit/server/scan_deletion.test.ts`
+- [ ] `tests/unit/server/keyframe_routes.test.ts`
 
 ```
 deno task check

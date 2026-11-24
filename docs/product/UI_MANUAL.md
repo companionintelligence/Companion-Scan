@@ -12,7 +12,7 @@ the mobile AR scanner (`index.html` + `src/main.ts` + `src/ui/*`), the WebXR lan
 page (`webxr.html`), the phone smoke-test page (`public/smoke.html`), and the desktop
 Companion Scan Spatial Editor (`/editor`, implemented by `viewer.html` + `src/viewer/*`).
 
-All screenshots in `ui-manual/` were captured from a live instance (Deno API in
+All screenshots in `ui-manual/` were captured from a live instance (the API server in
 `INFERENCE_MODE=mock`, Vite dev server, seeded with the generated test-home corpus and
 the LingBot-Map fixture session) driven by Playwright — iPhone 15 viewport (393×852)
 for the scanner pages, 1440×900 for the editor. Because the shots come from the

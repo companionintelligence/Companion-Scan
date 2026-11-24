@@ -2,7 +2,7 @@
  * A Place's georeference: where its frame is on Earth, what may be stored as one, how sure it is, and what it
  * becomes in an export.
  *
- * Pure and browser-safe on purpose (ADR 0002): no Deno, Node or DOM reference. The server places scans through it
+ * Pure and browser-safe on purpose (ADR 0002): no Node or DOM reference. The server places scans through it
  * (server/world/world_origin.ts), validates and compare-and-swaps it (server/world/georef_write.ts), and the editor,
  * the scanner and a test read the same functions. The decision is docs/adr/0015-scene-convention-and-georeference.md.
  * The type is `ProjectGeoreference` in ./types.ts (ADR 0001: one record, not a second one beside it), and the

@@ -12,7 +12,7 @@
  * upload, when optimization completes, then the viewer's UI updates exactly
  * as it did before this wave."
  *
- * Requirements: Vite dev server (VITE_URL) + Deno server (API_URL), both
+ * Requirements: Vite dev server (VITE_URL) + server (API_URL), both
  * pointed at the same 'default' world.
  * Run:
  *   API_URL=http://localhost:8000 VITE_URL=https://localhost:5173 \
@@ -52,7 +52,7 @@ function makeMinimalGlb(): Buffer {
 const JOB_SETTLE_TIMEOUT_MS = 120_000
 
 test.describe('optimize-scan job-update event drives the viewer UI', () => {
-  test.skip(!API_URL, 'requires API_URL — set to a directly reachable Deno server')
+  test.skip(!API_URL, 'requires API_URL — set to a directly reachable server')
   test.setTimeout(JOB_SETTLE_TIMEOUT_MS * 2)
 
   test('re-optimizing a scan while the viewer is open updates the scan-status chip live', async ({ page, request }) => {

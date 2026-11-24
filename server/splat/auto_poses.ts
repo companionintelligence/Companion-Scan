@@ -42,7 +42,7 @@ export async function buildDatasetWithAutoPoses(
 ): Promise<DatasetOutcome> {
   const build = deps.build ?? buildBrushDataset
   const solve = deps.solve ?? runColmapPoses
-  const autoSolve = autoSolvePoses ?? Deno.env.get('SPLAT_TRAIN_AUTO_POSES') !== '0'
+  const autoSolve = autoSolvePoses ?? process.env.SPLAT_TRAIN_AUTO_POSES !== '0'
 
   try {
     return { ok: true, dataset: await build(datasetOpts) }

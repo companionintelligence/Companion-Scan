@@ -64,8 +64,9 @@ After wave 14 merged (`main` at `8deb264`), the workflows, started by hand, buil
 | Desktop Build | 45327841063 | Linux, Windows and macOS (universal): succeeded |
 
 Nothing built from it has run on a device. After the integration ticket (#292, `bd80f58`), Mobile Build
-(45330560945), Desktop Build (45330563893) and Deno CI (45330557474) passed again; Deno CI had
-failed at `8deb264` on `onnxruntime-node`'s install, which #292 fixed.
+(45330560945), Desktop Build (45330563893) and the server workflow (45330557474, then named Deno CI;
+Server CI since wave 18) passed again; the server workflow had failed at `8deb264` on
+`onnxruntime-node`'s install, which #292 fixed.
 
 ## Where the checklists are
 

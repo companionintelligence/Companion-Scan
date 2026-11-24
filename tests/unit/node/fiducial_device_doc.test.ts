@@ -397,7 +397,7 @@ test('the print commands in the document run, make the pages it says, and mount 
       const args = command.split(' ')
       const out = join(dir, args[args.indexOf('--out') + 1]!)
       args[args.indexOf('--out') + 1] = out
-      const run = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', SCRIPT, ...args], { encoding: 'utf8' })
+      const run = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' })
       assert.equal(run.status, 0, `${command}: ${run.stderr}`)
       const wrote = run.stderr.match(/wrote .*: (\w+) \(([0-9.]+) x ([0-9.]+) mm\), black square ([0-9.]+) mm/)
       assert.ok(wrote, run.stderr)

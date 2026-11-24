@@ -18,7 +18,7 @@
  * `src/ar/engine-config.ts` stamps onto a calibration, `src/export/gltf.ts` writes into the upload
  * sidecar, and `server/calibration_fields.ts` reads back onto the `ScanManifest`.
  *
- * Kept in `src/world` with no Deno references (ADR 0002): the scanner, the Node tests and the Deno
+ * Kept in `src/world` with no Node references (ADR 0002): the scanner, the Node tests and the
  * server all import it.
  */
 

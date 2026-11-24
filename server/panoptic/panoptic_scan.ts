@@ -52,6 +52,7 @@ import {
   type SplitSegments,
   summarizePanopticSegments,
 } from './panoptic_segments.ts'
+import * as fs from 'node:fs/promises'
 export type { PanopticScanManifest }
 
 /** The documented venv and checkout: the shared table's fallbacks (runnerToolLookups, server/exec_probe.ts). */
@@ -140,7 +141,7 @@ export interface PanopticScanRunOptions {
 
 async function exists(path: string): Promise<boolean> {
   try {
-    await Deno.stat(path)
+    await fs.stat(path)
     return true
   } catch {
     return false
@@ -153,7 +154,7 @@ const KEYFRAME_NAME = /^kf-\d+\.(jpe?g|png)$/i
 /** Whether a path is a regular file once any symlink in it is followed. A broken link is not. */
 async function isFileFollowingLinks(path: string): Promise<boolean> {
   try {
-    return (await Deno.stat(path)).isFile
+    return (await fs.stat(path)).isFile()
   } catch {
     return false
   }
@@ -174,11 +175,11 @@ async function isFileFollowingLinks(path: string): Promise<boolean> {
 export async function sessionKeyframes(sessionDir: string, limit: number): Promise<string[]> {
   const names: string[] = []
   try {
-    for await (const entry of Deno.readDir(sessionDir)) {
+    for (const entry of await fs.readdir(sessionDir, { withFileTypes: true })) {
       if (!KEYFRAME_NAME.test(entry.name)) continue
       // readDir reports a link as a link, not as the file behind it, so follow it.
-      const isFile = entry.isFile ||
-        (entry.isSymlink && (await isFileFollowingLinks(sessionDir + '/' + entry.name)))
+      const isFile = entry.isFile() ||
+        (entry.isSymbolicLink() && (await isFileFollowingLinks(sessionDir + '/' + entry.name)))
       if (isFile) names.push(entry.name)
     }
   } catch {
@@ -215,7 +216,7 @@ async function finish(
 ): Promise<PanopticScanManifest> {
   const full = { ...manifest, timing: { elapsedMs } }
   try {
-    await Deno.writeTextFile(manifestPath, JSON.stringify(full, null, 2))
+    await fs.writeFile(manifestPath, JSON.stringify(full, null, 2))
   } catch {
     // A manifest we cannot persist must not turn a completed run into a crash;
     // the returned value is still the job's result.
@@ -237,20 +238,20 @@ function wholeAtLeastOne(value: number, fallback: number): number {
 
 export function resolveParams(opts: PanopticScanRunOptions): PanopticScanManifest['params'] {
   return {
-    python: opts.python ?? Deno.env.get('PANOPTIC_PYTHON') ?? DEFAULT_PANOPTIC_PYTHON,
-    panopticDir: opts.panopticDir ?? Deno.env.get('PANOPTIC_DIR') ?? DEFAULT_PANOPTIC_DIR,
-    model: opts.model ?? Deno.env.get('PANOPTIC_MODEL') ?? DEFAULT_PANOPTIC_MODEL,
+    python: opts.python ?? process.env.PANOPTIC_PYTHON ?? DEFAULT_PANOPTIC_PYTHON,
+    panopticDir: opts.panopticDir ?? process.env.PANOPTIC_DIR ?? DEFAULT_PANOPTIC_DIR,
+    model: opts.model ?? process.env.PANOPTIC_MODEL ?? DEFAULT_PANOPTIC_MODEL,
     // The explicit option takes the same rule as the env var, because the job payload's
     // maxFrames reaches here unchecked.
     maxFrames: wholeAtLeastOne(
-      opts.maxFrames ?? Number(Deno.env.get('PANOPTIC_MAX_FRAMES') ?? DEFAULT_MAX_FRAMES),
+      opts.maxFrames ?? Number(process.env.PANOPTIC_MAX_FRAMES ?? DEFAULT_MAX_FRAMES),
       DEFAULT_MAX_FRAMES,
     ),
     minSegmentPixels: opts.minSegmentPixels ?? MIN_SEGMENT_PIXELS,
     // Kept verbatim, unvalidated: runPanopticScan turns an unrecognised value
     // into a skip, and that skip is only actionable if the manifest still shows
     // what was actually written.
-    device: opts.device ?? Deno.env.get('PANOPTIC_DEVICE') ?? DEFAULT_DEVICE,
+    device: opts.device ?? process.env.PANOPTIC_DEVICE ?? DEFAULT_DEVICE,
   }
 }
 
@@ -353,7 +354,7 @@ export async function runPanopticScan(opts: PanopticScanRunOptions): Promise<Pan
   // silently — a run reported "0 things" that looked like an empty room.
   // Hence `thingLabelsUsed` in the manifest below.
   const thingLabelsPath = opts.thingLabelsPath ??
-    Deno.env.get('PANOPTIC_THING_LABELS') ??
+    process.env.PANOPTIC_THING_LABELS ??
     new URL('./ade20k-things.json', import.meta.url).pathname
   const haveThingLabels = thingLabelsPath !== '' && await exists(thingLabelsPath)
 
@@ -466,7 +467,7 @@ export async function runPanopticScan(opts: PanopticScanRunOptions): Promise<Pan
   //    not an ok-with-zero — silence there would look like "no objects here".
   let payload: { frames?: RawPanopticFrame[]; thingSource?: unknown }
   try {
-    payload = JSON.parse(await Deno.readTextFile(segmentsPath)) as typeof payload
+    payload = JSON.parse(await fs.readFile(segmentsPath, 'utf8')) as typeof payload
   } catch (e) {
     return finish(manifestPath, {
       ...base,

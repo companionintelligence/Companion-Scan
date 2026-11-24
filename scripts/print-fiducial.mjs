@@ -8,8 +8,8 @@
  *
  *   npm run print:fiducial -- --ids 7,8 --spacing-mm 800 --size-mm 150 --place-id <place> [...the same]
  *
- * (`npm run print:fiducial` is `node --experimental-transform-types --no-warnings scripts/print-fiducial.mjs`;
- * run that directly where the npm script is not wired.)
+ * (`npm run print:fiducial` is `node scripts/print-fiducial.mjs`; run that directly where the npm script
+ * is not wired.)
  *
  * The sheet carries, at physical size (1 SVG user unit = 1 mm, `width`/`height` in mm):
  *   - the tag: a black square of exactly `--size-mm` edge length, `bits + 2` cells across, in the
@@ -49,16 +49,17 @@
  * Deterministic: the same arguments give the same bytes, so a sheet can be diffed and the QR code
  * does not change when nothing else did. No clock, no randomness.
  *
- * Needs `--experimental-transform-types` (the npm script passes it): the QR renderer it reuses,
- * `src/ui/qr-code.ts`, sits on the vendored Nayuki encoder, which uses a TypeScript namespace that
- * plain type-stripping cannot load. It is the repo's one SVG QR path; `npm run qr` (qrcode-terminal)
- * only draws to a terminal.
+ * The QR renderer it reuses, `src/ui/qr-code.ts`, sits on the vendored Nayuki encoder, which uses a
+ * TypeScript namespace that Node's type stripping cannot load, so it is compiled first
+ * (scripts/lib/qr-code-compiled.mjs). It is the repo's one SVG QR path; `npm run qr`
+ * (qrcode-terminal) only draws to a terminal.
  */
 import { writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import process from 'node:process'
 import { DEFAULT_TAG_FAMILY, DEFAULT_TAG_FAMILY_NAME, TAG_FAMILIES, tagFamilyByName } from '../src/ar/fiducial/families.ts'
 import { parseTagPayload, serializeTagPayload } from '../src/ar/fiducial/payload.ts'
+import { loadCompiledQrCode } from './lib/qr-code-compiled.mjs'
 
 /** Portrait page sizes, millimetres. */
 export const PAGES = {
@@ -154,20 +155,16 @@ function wrap(text, width) {
 }
 
 /**
- * The repo's QR renderer, loaded on demand so that building a sheet with an injected renderer (a
- * test, or a caller that has its own) does not need the transform flag.
+ * The repo's QR renderer, compiled and loaded on demand, so that building a sheet with an injected
+ * renderer (a test, or a caller that has its own) does not compile it.
  *
  * @returns {Promise<(text: string, options: { size: number, level: 'L'|'M'|'Q'|'H', label: string }) => string>}
  */
 export async function loadQrSvg() {
   try {
-    const mod = await import('../src/ui/qr-code.ts')
-    return mod.qrCodeSvg
+    return (await loadCompiledQrCode()).qrCodeSvg
   } catch (e) {
-    throw new Error(
-      `could not load src/ui/qr-code.ts (${e instanceof Error ? e.message.split('\n')[0] : e}). ` +
-        'Run this through npm run print:fiducial, which passes --experimental-transform-types.',
-    )
+    throw new Error(`could not load src/ui/qr-code.ts (${e instanceof Error ? e.message.split('\n')[0] : e}).`)
   }
 }
 
@@ -585,7 +582,7 @@ function usage() {
     '       npm run print:fiducial -- --ids <a>,<b> --spacing-mm <500..1200> --size-mm <edge> --place-id <id> [--room-id <id>]',
     '           [--family <name>] [--page auto|a4|a3|a2|a1|a0|letter|tabloid|<W>x<H>] [--quiet-cells 1]',
     '           [--mount wall|horizontal [--mount-height-mm <n>]] [--out file.svg]',
-    '       (or: node --experimental-transform-types --no-warnings scripts/print-fiducial.mjs <the same arguments>)',
+    '       (or: node scripts/print-fiducial.mjs <the same arguments>)',
     '',
     `  --family       ${TAG_FAMILIES.map((f) => f.dictionary.name).join(' | ')} (default ${DEFAULT_TAG_FAMILY_NAME}); ids are 0 to size - 1 of the family`,
     `  --size-mm      edge of the black square (its outer edge), ${MIN_SIZE_MM} to ${MAX_SIZE_MM} (default 200)`,

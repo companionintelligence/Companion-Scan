@@ -5,7 +5,7 @@
  * (./anchor-placement.ts) each used to keep their own copy of these (F-41, FN-081). One copy each now, here.
  *
  * Pure, and imported by the server (server/register/place_register.ts, through ./register-proposal.ts) and by the
- * browser, so it has no Deno, DOM or THREE reference (ADR 0002).
+ * browser, so it has no Node, DOM or THREE reference (ADR 0002).
  */
 
 /** Three numbers: a position or an axis length. */

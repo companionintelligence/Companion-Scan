@@ -15,7 +15,7 @@ shape future work, promote it to an ADR and link back to the issue.
 <!-- Add a line per ADR: `- [NNNN. Title](NNNN-title.md) — Status` -->
 
 - [0001. Reuse existing schema, variables, and connections — organize around things and places](0001-reuse-existing-domain-model.md) — Accepted
-- [0002. Shared types importable by the browser must live in Deno-API-free files](0002-shared-types-importable-by-the-browser-must-live-in-deno-api-free-files.md) — Accepted
+- [0002. Shared types importable by the browser must live in Deno-API-free files](0002-shared-types-importable-by-the-browser-must-live-in-deno-api-free-files.md) — Accepted; its rule is restated by 0016
 - [0003. Merged job system: WorldJob absorbs JobQueue](0003-merged-job-system.md) — Accepted
 - [0004. World-file writes are serialized per slug](0004-world-file-writes-are-serialized-per-slug.md) — Accepted
 - [0005. Spatial frames are established by geometry and verified by measurement](0005-spatial-frames-are-established-by-geometry-and-verified-by-measurement.md) — Proposed
@@ -29,3 +29,4 @@ shape future work, promote it to an ADR and link back to the issue.
 - [0013. The Quest app is a native Spatial SDK app that feeds the same server](0013-the-quest-app-is-a-native-spatial-sdk-app-that-feeds-the-same-server.md) — Accepted
 - [0014. locar.js is a geo viewer beside the AR runtimes, not a scanning provider](0014-locar-js-is-a-geo-viewer-not-a-scanning-provider.md) — Accepted
 - [0015. The scene is right-handed (x east, y up, z south), and a Place has one georeference](0015-scene-convention-and-georeference.md) — Proposed
+- [0016. The server runs on Node 26, and the repo has no Deno](0016-the-server-runs-on-node-26.md) — Accepted

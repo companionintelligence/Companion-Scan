@@ -32,7 +32,7 @@ solid-colour camera failures. The schema is enforced by
    record to the manifest. Run:
 
    ```powershell
-   deno test --allow-read real_camera_fixture_bank.test.ts
+   node --test tests/unit/server/real_camera_fixture_bank.test.ts
    ```
 
 Only deliberately approved, privacy-reviewed captures should be copied outside

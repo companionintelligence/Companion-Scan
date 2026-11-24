@@ -75,8 +75,8 @@ class CoordinateConversionsTest {
 
     /**
      * pose-to-matrix.fixture.json (src/test/resources) lists poses and the matrices the server's poseToMatrix makes of
-     * them, and tests/unit/deno/native_quest_pose_fixture.test.ts holds the file to the server function. A change to
-     * that function fails the Deno test; the fixture regenerated for it then fails this one, until the restatement above
+     * them, and tests/unit/server/native_quest_pose_fixture.test.ts holds the file to the server function. A change to
+     * that function fails the server test; the fixture regenerated for it then fails this one, until the restatement above
      * and Quat.toMatrix follow it (FN-171).
      */
     @Test

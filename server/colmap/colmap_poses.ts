@@ -73,6 +73,8 @@ import { sfmCentresFromPoses, type Vec3Tuple } from '../splat/splat_align.ts'
 // A solve over several sessions keys its frames by `<sessionId>/kf-NNNNN.jpg`; `cameraCentres` and
 // `measureSessionBaseline` take an option for that layout and nothing else here knows about it.
 import { keyedRecords } from '../register/session_priors.ts'
+import * as fs from 'node:fs/promises'
+import { readBytes } from '../fs_util.ts'
 
 export interface ColmapPosesRunOptions {
   /** Absolute path to the session directory (scans/sessions/<id>). */
@@ -107,7 +109,7 @@ export interface ColmapPosesRunOptions {
   /**
    * Injection seam for tests, mirroring `_spawn`: replaces the PLY→GLB build.
    * Needed because the real builder pulls in `@gltf-transform/functions`, which
-   * eagerly loads `sharp` and cannot be imported from a Deno unit test — the
+   * eagerly loads `sharp` and cannot be imported from a server unit test — the
    * same constraint that makes `lingbot_map.ts` import it lazily.
    */
   _buildScanGlb?: typeof import('../lingbot-map/lingbot_map_glb.ts').buildLingBotMapGlb
@@ -360,8 +362,8 @@ export function colmapNotFoundSkip(
 
 export function resolveParams(opts: ColmapPosesRunOptions) {
   return {
-    colmapBin: opts.colmapBin ?? Deno.env.get('COLMAP_BIN') ?? 'colmap',
-    featureType: opts.featureType ?? Deno.env.get('COLMAP_FEATURE_TYPE') ?? 'SIFT',
+    colmapBin: opts.colmapBin ?? process.env.COLMAP_BIN ?? 'colmap',
+    featureType: opts.featureType ?? process.env.COLMAP_FEATURE_TYPE ?? 'SIFT',
     // `SIFT`, not `SIFT_BRUTEFORCE`: FeatureMatcherType is an enum, and COLMAP
     // rejects an unknown member outright (`Failed to parse options - Unknown
     // string value: SIFT_BRUTEFORCE for enum: FeatureMatcherType.` → exit 1,
@@ -371,7 +373,7 @@ export function resolveParams(opts: ColmapPosesRunOptions) {
     // ALIKED_LIGHTGLUE are all rejected. Brute force is what SIFT matching does
     // by default anyway (SiftMatching.cpu_brute_force_matcher), so the old name
     // asked for the behaviour we still get, in a spelling nothing accepts.
-    matcherType: opts.matcherType ?? Deno.env.get('COLMAP_MATCHER_TYPE') ?? 'SIFT',
+    matcherType: opts.matcherType ?? process.env.COLMAP_MATCHER_TYPE ?? 'SIFT',
     maxImageSize: intFromEnv('COLMAP_MAX_IMAGE_SIZE', opts.maxImageSize ?? 1600),
   }
 }
@@ -722,7 +724,7 @@ export const KEYFRAME_RE = /^kf-\d+\.jpg$/
 export async function frameFingerprint(sessionDir: string, names: string[]): Promise<string> {
   const lines: string[] = []
   for (const name of [...names].sort()) {
-    const bytes = await Deno.readFile(`${sessionDir}/${name}`)
+    const bytes = await readBytes(`${sessionDir}/${name}`)
     lines.push(`${name} ${bytes.byteLength} ${await sha256Hex(bytes)}`)
   }
   return await sha256Hex(new TextEncoder().encode(lines.join('\n')))
@@ -936,8 +938,8 @@ export async function runColmapPoses(opts: ColmapPosesRunOptions): Promise<Colma
   const fingerprintPath = `${work}/input.fingerprint`
 
   const frameNames: string[] = []
-  for await (const entry of Deno.readDir(sessionDir)) {
-    if (entry.isFile && KEYFRAME_RE.test(entry.name)) frameNames.push(entry.name)
+  for (const entry of await fs.readdir(sessionDir, { withFileTypes: true })) {
+    if (entry.isFile() && KEYFRAME_RE.test(entry.name)) frameNames.push(entry.name)
   }
   frameNames.sort()
 
@@ -972,13 +974,13 @@ export async function runColmapPoses(opts: ColmapPosesRunOptions): Promise<Colma
   const fingerprint = await frameFingerprint(sessionDir, frameNames)
   let cachedFingerprint: string | null = null
   try {
-    cachedFingerprint = (await Deno.readTextFile(fingerprintPath)).trim()
+    cachedFingerprint = (await fs.readFile(fingerprintPath, 'utf8')).trim()
   } catch {
     // No record of what the workspace was built from.
   }
   let workspaceExists = true
   try {
-    await Deno.stat(work)
+    await fs.stat(work)
   } catch {
     workspaceExists = false
   }
@@ -991,23 +993,23 @@ export async function runColmapPoses(opts: ColmapPosesRunOptions): Promise<Colma
       `(${cachedFingerprint ? `${cachedFingerprint.slice(0, 12)} → ${fingerprint.slice(0, 12)}` : 'no recorded fingerprint'}) ` +
       '— discarding colmap-work/ and re-solving from scratch',
     )
-    await Deno.remove(work, { recursive: true })
+    await fs.rm(work, { recursive: true })
   }
-  await Deno.mkdir(imagesDir, { recursive: true })
-  await Deno.writeTextFile(fingerprintPath, fingerprint)
+  await fs.mkdir(imagesDir, { recursive: true })
+  await fs.writeFile(fingerprintPath, fingerprint)
 
   let linked = 0
   for (const name of frameNames) {
     const dest = `${imagesDir}/${name}`
     try {
-      await Deno.remove(dest)
+      await fs.rm(dest)
     } catch {
       // not present — fine
     }
     try {
-      await Deno.link(`${sessionDir}/${name}`, dest)
+      await fs.link(`${sessionDir}/${name}`, dest)
     } catch {
-      await Deno.copyFile(`${sessionDir}/${name}`, dest)
+      await fs.copyFile(`${sessionDir}/${name}`, dest)
     }
     linked++
   }
@@ -1028,7 +1030,7 @@ export async function runColmapPoses(opts: ColmapPosesRunOptions): Promise<Colma
   if (err) return finish(manifestPath, { ...base, status: 'error', error: err }, 2, logs.join('\n'), started)
 
   const sparse = `${work}/sparse`
-  await Deno.mkdir(sparse, { recursive: true })
+  await fs.mkdir(sparse, { recursive: true })
   err = await step('mapper', mapperArgs(db, imagesDir, sparse))
   if (err) return finish(manifestPath, { ...base, status: 'error', error: err }, 2, logs.join('\n'), started)
 
@@ -1047,20 +1049,20 @@ export async function runColmapPoses(opts: ColmapPosesRunOptions): Promise<Colma
 
   // Second pass, seeded from the best first-pass model — see the file header.
   const grown = `${work}/sparse_grown`
-  await Deno.mkdir(grown, { recursive: true })
+  await fs.mkdir(grown, { recursive: true })
   const growErr = await step('mapper(grow)', growMapperArgs(db, imagesDir, first.dir, grown))
   // A failed grow pass is not fatal: the first-pass model is still valid, so
   // fall back to it rather than discarding a usable reconstruction.
   const modelDir = growErr ? first.dir : await bestOf(grown, first.dir)
 
-  let images = parseImagesBin(await Deno.readFile(`${modelDir}/images.bin`))
+  let images = parseImagesBin(await readBytes(`${modelDir}/images.bin`))
   if (images.length === 0) {
     return finish(manifestPath, { ...base, status: 'error', error: 'model contains no registered images' }, 2, logs.join('\n'), started)
   }
 
   let pts: ReturnType<typeof parsePoints3DBin> = []
   try {
-    pts = parsePoints3DBin(await Deno.readFile(`${modelDir}/points3D.bin`))
+    pts = parsePoints3DBin(await readBytes(`${modelDir}/points3D.bin`))
   } catch {
     // No cloud is survivable — Brush random-inits inside the camera frustums.
   }
@@ -1096,19 +1098,19 @@ export async function runColmapPoses(opts: ColmapPosesRunOptions): Promise<Colma
   // consumers back on the old fallback rather than failing a good reconstruction.
   let camera: ColmapCamera | undefined
   try {
-    camera = parseCamerasBin(await Deno.readFile(`${modelDir}/cameras.bin`))[0]
+    camera = parseCamerasBin(await readBytes(`${modelDir}/cameras.bin`))[0]
   } catch {
     camera = undefined
   }
 
   const posesPath = `${sessionDir}/colmap.poses.json`
-  await Deno.writeTextFile(posesPath, JSON.stringify(buildPosesJson(images, 'colmap', camera), null, 2))
+  await fs.writeFile(posesPath, JSON.stringify(buildPosesJson(images, 'colmap', camera), null, 2))
 
   let pointCloudPath: string | undefined
   let pointCount = 0
   if (pts.length > 0) {
     pointCloudPath = `${sessionDir}/colmap.point-cloud.ply`
-    await Deno.writeFile(pointCloudPath, pointsToPly(pts))
+    await fs.writeFile(pointCloudPath, pointsToPly(pts))
     pointCount = pts.length
   }
 
@@ -1138,7 +1140,7 @@ export async function runColmapPoses(opts: ColmapPosesRunOptions): Promise<Colma
       const build = opts._buildScanGlb ??
         (await import('../lingbot-map/lingbot_map_glb.ts')).buildLingBotMapGlb
       const built = await build(
-        await Deno.readFile(pointCloudPath),
+        await readBytes(pointCloudPath),
         {
           source: 'colmap',
           pointCount,
@@ -1155,8 +1157,8 @@ export async function runColmapPoses(opts: ColmapPosesRunOptions): Promise<Colma
       // Write via a temp + rename so a reader mid-build never sees a truncated
       // GLB at the URL the scan has been advertising all along.
       const tmp = `${opts.glbOutPath}.${crypto.randomUUID()}.tmp`
-      await Deno.writeFile(tmp, built.bytes)
-      await Deno.rename(tmp, opts.glbOutPath)
+      await fs.writeFile(tmp, built.bytes)
+      await fs.rename(tmp, opts.glbOutPath)
       glbPath = opts.glbOutPath
       glbPointCount = built.pointCount
     } catch (e) {
@@ -1240,7 +1242,7 @@ export async function listModels(root: string): Promise<Array<{ dir: string; cou
 
   const consider = async (dir: string) => {
     try {
-      const imgs = parseImagesBin(await Deno.readFile(`${dir}/images.bin`))
+      const imgs = parseImagesBin(await readBytes(`${dir}/images.bin`))
       if (imgs.length > 0) out.push({ dir, count: imgs.length, names: new Set(imgs.map((img) => img.name)) })
     } catch {
       // absent or unreadable — not a model
@@ -1249,8 +1251,8 @@ export async function listModels(root: string): Promise<Array<{ dir: string; cou
 
   await consider(root)
   try {
-    for await (const entry of Deno.readDir(root)) {
-      if (entry.isDirectory) await consider(`${root}/${entry.name}`)
+    for (const entry of await fs.readdir(root, { withFileTypes: true })) {
+      if (entry.isDirectory()) await consider(`${root}/${entry.name}`)
     }
   } catch {
     // root missing entirely
@@ -1263,7 +1265,7 @@ export async function bestOf(grownRoot: string, fallbackDir: string): Promise<st
   const grown = await largestModel(grownRoot)
   if (!grown) return fallbackDir
   try {
-    const seedCount = parseImagesBin(await Deno.readFile(`${fallbackDir}/images.bin`)).length
+    const seedCount = parseImagesBin(await readBytes(`${fallbackDir}/images.bin`)).length
     return grown.count >= seedCount ? grown.dir : fallbackDir
   } catch {
     return grown.dir

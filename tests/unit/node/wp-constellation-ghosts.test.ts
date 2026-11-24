@@ -288,11 +288,11 @@ test('points that could not be fitted at all draw the pair\'s two rings and the 
 
 // ── Purity of the file itself ────────────────────────────────────────────────────────────────────────
 
-test('the file reads no DOM and no Deno API, and imports only three, the anchor decal, the flow\'s types and the shared dispose', () => {
+test('the file reads no DOM and no Node API, and imports only three, the anchor decal, the flow\'s types and the shared dispose', () => {
   const source = readFileSync(resolve(ROOT, 'src/ar/constellation-ghosts.ts'), 'utf8')
   const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
   assert.ok(!/\b(document|window|navigator|localStorage|sessionStorage)\b/.test(code), 'no DOM')
-  assert.ok(!/\bDeno\b/.test(code), 'no Deno API')
+  assert.ok(!/\bfrom\s+['"]node:|\bprocess\.|\bBuffer\./.test(code), 'no Node API')
   assert.deepEqual(
     [...code.matchAll(/^import\s+(?:type\s+)?[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1]),
     ['three', '../world/anchor-marker.ts', './constellation-flow.ts', '../scene/dispose.ts'],

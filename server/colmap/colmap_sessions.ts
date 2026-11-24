@@ -26,7 +26,7 @@
  * in two sizes (a phone turned between portrait and landscape mid-walk) keeps the size most of its frames have, and
  * the rest are left out and reported, {@link planSessionFrames}.
  *
- * Pure: no Deno API, no file access.
+ * Pure: no Node API, no file access.
  */
 import { deriveIntrinsics, type KeyframeRecord } from '../splat/splat_train_dataset.ts'
 

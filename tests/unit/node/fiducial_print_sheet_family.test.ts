@@ -8,7 +8,7 @@
  * detector, which is the check that finds a sheet that is mirrored, turned, or has its two markers the wrong way round.
  *
  * The QR code is a stub here (see `fiducial_print_sheet.test.ts`): the byte-for-byte snapshots and the command line, with the real renderer, are in
- * `fiducial_print_sheet_qr.test.ts`, which needs `--experimental-transform-types`. This file runs under the repo's standard `node --experimental-strip-types`.
+ * `fiducial_print_sheet_qr.test.ts`, which compiles the renderer first. This file runs as it is.
  *
  * Run: node --experimental-strip-types --no-warnings --test tests/unit/node/fiducial_print_sheet_family.test.ts
  */

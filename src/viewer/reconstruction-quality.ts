@@ -18,7 +18,7 @@
  * ## Why the types are re-declared rather than imported
  *
  * `ColmapReconstructionQuality` lives in `server/colmap/colmap_poses.ts`, a
- * Deno module that reads `Deno.env` at import time and uses `.ts` specifiers —
+ * server module that reads `process.env` at import time and uses `.ts` specifiers —
  * it cannot enter the Vite bundle. `src/viewer/lingbot-map.ts` hit exactly this
  * and resolved it the same way: declare the fields actually read, and say where
  * the writer is. `ScanReviewStatus` itself IS shared (src/world/types.ts), so

@@ -3,9 +3,9 @@
  * the Place holds, what a merge or a moved scan does when the frames differ, how a Place's scans are counted
  * by frame, and the sentences the answers carry.
  *
- * Pure, with no Deno API and no file access, for the reason `server/calibration_fields.ts` is its own module:
+ * Pure, with no Node API and no file access, for the reason `server/calibration_fields.ts` is its own module:
  * `server/main.ts` cannot be imported by a test without starting the server. `applySpatialFrameWrite`
- * (server/wp-a-projects.ts) and the routes in `server/main.ts` call these; tests/unit/deno/frame_generations.test.ts
+ * (server/wp-a-projects.ts) and the routes in `server/main.ts` call these; tests/unit/server/frame_generations.test.ts
  * holds them. The rules every writer shares (which write is another generation, the history's bound, which
  * scans are in a Place frame) are in src/world/frame-generations.ts, which the browser imports too.
  */

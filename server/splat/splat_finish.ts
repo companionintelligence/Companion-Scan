@@ -34,17 +34,19 @@ import { isNotFoundSpawnError, locateTool, runnerToolLookup, toolSkip } from '..
 import { countPlyVertices } from './splat_train.ts'
 import { budgetFromEnv, finishRun, intFromEnv, KILL_GRACE_MS, runWithDeadline, writeRunnerManifest } from '../run_with_deadline.ts'
 // The manifest types live in src/world/manifests.ts, not here — see that
-// file's header (it's the canonical, Deno-API-free home so the browser
-// viewer can type-import it without dragging this file's `Deno.*` calls into
+// file's header (it's the canonical, Node-API-free home so the browser
+// viewer can type-import it without dragging this file's `node:*` imports into
 // its DOM-lib type-check program). Re-exported below so
 // `import type { SplatFinishManifest } from './splat_finish.ts'` still works.
 import type { SplatFinishManifest, SplatFinishSizes } from '../../src/world/types.ts'
+import * as fs from 'node:fs/promises'
+import type { Stats } from 'node:fs'
 export type { SplatFinishManifest, SplatFinishSizes }
 
 /**
  * The devDependency's own CLI in this checkout's node_modules: the shared
  * table's fallback (runnerToolLookups, server/exec_probe.ts), which resolves it
- * against the repo root with fromFileUrl so a Windows path is not "/C:/…".
+ * against the repo root with fileURLToPath so a Windows path is not "/C:/…".
  */
 const DEFAULT_CLI_PATH = runnerToolLookup('splat-transform-cli').fallbacks[0]
 
@@ -103,9 +105,9 @@ export interface SplatFinishResult {
 }
 
 export function resolveParams(opts: SplatFinishRunOptions) {
-  const nodeBin = opts.nodeBin ?? Deno.env.get('SPLAT_FINISH_NODE') ?? 'node'
-  const cliPath = opts.cliPath ?? Deno.env.get('SPLAT_TRANSFORM_CLI') ?? DEFAULT_CLI_PATH
-  const gpu = opts.gpu ?? Deno.env.get('SPLAT_FINISH_GPU') ?? 'cpu'
+  const nodeBin = opts.nodeBin ?? process.env.SPLAT_FINISH_NODE ?? 'node'
+  const cliPath = opts.cliPath ?? process.env.SPLAT_TRANSFORM_CLI ?? DEFAULT_CLI_PATH
+  const gpu = opts.gpu ?? process.env.SPLAT_FINISH_GPU ?? 'cpu'
   const iterations = opts.iterations ?? intFromEnv('SPLAT_FINISH_SH_ITERS', 10)
   return { nodeBin, cliPath, gpu, iterations }
 }
@@ -155,7 +157,7 @@ export async function runSplatFinish(opts: SplatFinishRunOptions): Promise<Splat
   // 1. Guard: the trained splat must exist. Missing input is a *skip*, not an
   //    error — the server keeps running and the UI shows a remediation.
   const inputInfo = await statQuietly(opts.splatPlyPath)
-  if (!inputInfo || !inputInfo.isFile) {
+  if (!inputInfo || !inputInfo.isFile()) {
     return _finish(manifestPath, {
       ...baseManifest,
       status: 'skipped',
@@ -267,8 +269,8 @@ export async function runSplatFinish(opts: SplatFinishRunOptions): Promise<Splat
   // 6. Verify + size the outputs. A zero-exit run with no artifact is an error.
   const sogInfo = await statQuietly(opts.outputSogPath)
   const compressedInfo = await statQuietly(opts.outputCompressedPlyPath)
-  if (!sogInfo?.isFile || !compressedInfo?.isFile) {
-    const missing = !sogInfo?.isFile ? opts.outputSogPath : opts.outputCompressedPlyPath
+  if (!sogInfo?.isFile() || !compressedInfo?.isFile()) {
+    const missing = !sogInfo?.isFile() ? opts.outputSogPath : opts.outputCompressedPlyPath
     return _finish(manifestPath, {
       ...baseManifest,
       status: 'error',
@@ -303,9 +305,9 @@ export async function runSplatFinish(opts: SplatFinishRunOptions): Promise<Splat
   }
 }
 
-async function statQuietly(path: string): Promise<Deno.FileInfo | null> {
+async function statQuietly(path: string): Promise<Stats | null> {
   try {
-    return await Deno.stat(path)
+    return await fs.stat(path)
   } catch {
     return null
   }
@@ -317,18 +319,18 @@ async function exists(path: string): Promise<boolean> {
 
 /** Read at most `n` bytes from the start of a file (enough for a PLY header). */
 async function readPrefix(path: string, n: number): Promise<Uint8Array> {
-  const file = await Deno.open(path, { read: true })
+  const file = await fs.open(path, 'r')
   try {
     const buf = new Uint8Array(n)
     let read = 0
     while (read < n) {
-      const got = await file.read(buf.subarray(read))
-      if (got === null) break
-      read += got
+      const { bytesRead } = await file.read(buf, read, n - read)
+      if (bytesRead === 0) break
+      read += bytesRead
     }
     return buf.subarray(0, read)
   } finally {
-    file.close()
+    await file.close()
   }
 }
 
