@@ -1069,6 +1069,9 @@ async function main() {
     // an advertised AR session is not a proven one lives in one tested place.
     setCaptureDevice(deviceFromProbe(probeEnv))
   }
+  // The start screen now says what the probe found. Onboarding opens before the probe (F-14), so for that moment the
+  // screen reads every path as unknown; a test that measures the screen waits for this marker to read it settled.
+  document.getElementById('start-screen')?.setAttribute('data-probe', 'settled')
 
   // ── 4. AR Overlay & Capture setup ──────────────────────────────────────────
   keyframes = new KeyframeStreamer(provider, { hold: () => reanchor.recordingHeld, runId: () => store.arRunId })
