@@ -243,8 +243,14 @@ export default defineConfig({
         viewer: path.resolve(process.cwd(), 'viewer.html'),
         webxr: path.resolve(process.cwd(), 'webxr.html'),
         xrWorld: path.resolve(process.cwd(), 'xr-world.html'),
-        arHittestSphere: path.resolve(process.cwd(), 'ar-hittest-sphere.html'),
-        arGroundAnchor: path.resolve(process.cwd(), 'ar-ground-anchor.html'),
+        // The two 8th Wall diagnostics are device-test pages that no page links to. A native build
+        // (VITE_DISABLE_PWA, set only by scripts/native/build-web.mjs) leaves them out, so their script
+        // chunks never ride along into an APK or an installer. build-web.mjs's DEV_PAGES still deletes
+        // any of their HTML that reaches the output.
+        ...(process.env.VITE_DISABLE_PWA ? {} : {
+          arHittestSphere: path.resolve(process.cwd(), 'ar-hittest-sphere.html'),
+          arGroundAnchor: path.resolve(process.cwd(), 'ar-ground-anchor.html'),
+        }),
       },
     },
   },
