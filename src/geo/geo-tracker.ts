@@ -140,6 +140,7 @@ export class GeoTracker {
   /** Cells whose last lookup failed: how many times in a row, and when the next try may start (on the performance.now() clock). */
   private _lookupFailures = new Map<string, { count: number, retryAt: number }>()
   private _onUpdate: ((fix: GeoFix) => void) | null = null
+  private _onPosition: ((fix: GeoFix, takenAtMs: number) => void) | null = null
 
   /**
    * `geocodeConsent` is what the address lookups ask first: by default this page's (localStorage for the answer, a card
@@ -152,6 +153,13 @@ export class GeoTracker {
 
   /** Callback invoked whenever the fix updates (position, bearing, or address) */
   set onUpdate(fn: (fix: GeoFix) => void) { this._onUpdate = fn }
+
+  /**
+   * Callback invoked for each new POSITION the platform delivers, with the time it was taken (`GeolocationPosition.timestamp`, ms since
+   * the epoch), and for nothing else: a compass event or an address lookup updates the fix but is no new position. A session
+   * samples these (src/geo/session-seed.ts).
+   */
+  set onPosition(fn: (fix: GeoFix, takenAtMs: number) => void) { this._onPosition = fn }
 
   get fix(): GeoFix | null { return this._fix }
 
@@ -318,6 +326,7 @@ export class GeoTracker {
     this._fix = fix
     this._persist()
     this._onUpdate?.(fix)
+    this._onPosition?.(fix, pos.timestamp)
     return fix
   }
 

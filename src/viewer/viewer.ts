@@ -62,7 +62,12 @@ import { readReconstructionQuality, reconstructionVerdictFor } from './reconstru
 import { redrawScanMeta, scanMetaHtmlFor } from './scan-calibration-chip'
 import { createFrameReference } from './frame-banner'
 import { jobRowMarkup } from './job-row'
-import { distanceM, enuToGeo, hasGeoPose, matrixTranslation, originDecalPlan } from '../world/geo'
+import { distanceM, matrixTranslation, originDecalPlan } from '../world/geo'
+import { mirroredPlacementCount, placementFlagHtml, worldReadoutHtml } from './georef-hud'
+import { placeFrameToScene, placeFrameToSceneFor, sessionToProjectOfPlacement } from '../world/georef'
+import { isHandPlaced, replayedScanPlacement } from '../world/scan-hand-placement'
+import { isEarlierFrame } from './georeference-form'
+import { type LocationPanel, mountLocationPanel } from './georeference-panel'
 import { compassNeedleRad } from '../world/enu'
 import {
   FLAG_LAYER,
@@ -1568,6 +1573,7 @@ function refreshScanMeta(): void {
     scanId => scanItems.get(scanId)?.querySelector('.scan-meta-block'),
     currentProject?.spatialFrame?.method,
     escHtml,
+    (scan) => isHandPlaced(world?.editPatches ?? [], scan as ScanManifest),
   )
   // The Place's frame can have been replaced too, which changes which scans are of a previous reference.
   frameReference.sync()
@@ -1601,7 +1607,7 @@ function buildScanItem(scan: ScanManifest): HTMLElement {
     : scan.status.replace('-', ' ')
   details.innerHTML = `
     <div class="scan-name" title="${escHtml(scan.filename)}">${escHtml(scan.name || scan.filename.replace(/\\.glb$/, ''))}</div>
-    <div class="scan-meta-block">${scanMetaHtmlFor(scan, currentProject?.spatialFrame?.method, escHtml)}</div>
+    <div class="scan-meta-block">${scanMetaHtmlFor(scan, currentProject?.spatialFrame?.method, escHtml, isHandPlaced(world?.editPatches ?? [], scan))}</div>
     <div class="scan-status" data-review-status="${escHtml(scan.status)}">${escHtml(qualityLabel)}</div>
   `
 
@@ -1935,14 +1941,15 @@ function applyStoredPatches(root: THREE.Object3D, scan: ScanManifest): void {
     scan.scanId,
   )
 
+  // The scan's placement is the matrix the world holds with the moves that still count replayed over it. An undone move, and the record
+  // of its undo, are not replayed (replayedScanPlacement): the record carries a placement the server may since have replaced.
+  applyMatrix(root, replayedScanPlacement(world.editPatches, scan))
+
   for (const patch of world.editPatches) {
     if (patch.scope === 'thing') continue
     if (patch.scanId && patch.scanId !== scan.scanId && patch.scanId !== scan.filename) continue
 
-    if (patch.scope === 'scan' && (patch.targetId === scan.filename || patch.scanId === scan.scanId)) {
-      if (patch.transform?.matrix) applyMatrix(root, patch.transform.matrix)
-      continue
-    }
+    if (patch.scope === 'scan' && (patch.targetId === scan.filename || patch.scanId === scan.scanId)) continue
 
     if (patch.scope !== 'object') continue
     const target = findObjectByTargetId(root, patch.targetId)
@@ -2167,6 +2174,11 @@ function createCameraFrustumMesh(size: number, depth: number): THREE.LineSegment
  * would stay on project zero instead of following the landmark. A scan from
  * before that field existed falls back to localToWorld, as this always did.
  *
+ * In a georeferenced Place that field is the georeference's turn times the
+ * session-to-project matrix (`Ry(180 - bearing) x M`, server/world/world_origin.ts),
+ * and the pins are read from M alone (`sessionToProjectOfPlacement` takes the turn
+ * off), or the heading marker lands metres from where the person tapped.
+ *
  * The marker is the shared origin decal (`buildOriginDecal` in
  * src/world/origin-decal.ts), the one the scanner commits. Its heading arrow
  * runs from the landmark to the heading marker, both in the root's own
@@ -2190,8 +2202,13 @@ function addAnchorMarker(
   // server/calibration_fields.ts, which passes every tier a sidecar can carry
   // through); one it does not pass through reads as undefined here, and that scan
   // gets the decal without red pins.
+  // A georeferenced scan's calibrated placement is the georeference's turn times its calibration, and the pins are read from the
+  // calibration alone (the heading marker is a Place-frame point), so the turn is taken off first or the marker lands off the tap.
   const { landmark, headingMarker } = sessionAnchorPositions(
-    scan.calibratedLocalToWorld ?? scan.localToWorld,
+    sessionToProjectOfPlacement(
+      scan.calibratedLocalToWorld ?? scan.localToWorld,
+      placeFrameToSceneFor(world?.georeference, scan, currentProject?.spatialFrame),
+    ),
     scan.calibrationMethod === 'two-point-ground' ? scan.calibrationSeparationM : null,
   )
 
@@ -2271,6 +2288,8 @@ function refreshExpectedAnchorPins(): void {
     pin.position.set(point.x, point.y, point.z)
     group.add(pin)
   }
+  // The stored points are Place-frame points: in a georeferenced world the scene is turned from the Place frame by the georeference.
+  if (world?.georeference) applyMatrix(group, placeFrameToScene(world.georeference))
   worldGroup.add(group)
 }
 
@@ -3820,6 +3839,7 @@ async function postEditPatch(body: Partial<EditPatch> & { targetId: string; scop
   // loaders do, or a save would pull other places' scans into this view.
   world = scopeWorldToActiveProject(payload.world)
   renderWorldPanel()
+  refreshScanMeta()
   stitch?.refresh()
 }
 
@@ -3843,6 +3863,7 @@ async function postPatchRevert(scanId: string, patchId: string): Promise<void> {
     take: (answered) => {
       world = scopeWorldToActiveProject(answered)
       renderWorldPanel()
+      refreshScanMeta()
       stitch?.refresh()
     },
   }, scanId, patchId)
@@ -4231,6 +4252,7 @@ function renderWorldPanel(): void {
   const queueJobs = world.jobs.filter(job => job.type !== 'optimize-scan')
   // The World tab's four tiles (scans, layers, jobs, origin) are gone from viewer.html; the toolbar carries the counts,
   // so their four writes went with them (F-19).
+  renderPlacementFlag()
   renderToolbarSummary(queueJobs)
   renderJobs(queueJobs)
   renderJobTypeHint()
@@ -4971,13 +4993,31 @@ function updateWorldHud(): void {
 
   const readout = document.getElementById('coord-readout')
   if (!readout || !world) return
-  const target = controls.target
-  let text = `ENU ${target.x.toFixed(2)}, ${target.y.toFixed(2)}, ${target.z.toFixed(2)}m`
-  if (hasGeoPose(world.originGeoPose)) {
-    const geo = enuToGeo(world.originGeoPose, { x: target.x, y: target.y, z: target.z })
-    if (hasGeoPose(geo)) text += `<br>${geo.lat.toFixed(6)}, ${geo.lng.toFixed(6)}`
+  // A latitude and longitude only for a world whose Place has a georeference; otherwise "Local (no georeference)" (src/viewer/georef-hud.ts).
+  readout.innerHTML = worldReadoutHtml(world, controls.target)
+}
+
+/** The Place location and heading panel (src/viewer/georeference-panel.ts): a location saved there places the world's scans again. */
+let locationPanel: LocationPanel | null | undefined
+
+/** The "Mirrored placement" flag of an older world, and the action that opens the Place location panel. */
+function renderPlacementFlag(): void {
+  const host = document.getElementById('placement-flag')
+  if (!host || !world) return
+  // The Place's own record says whether its location is for an earlier alignment, which the world no longer uses (src/viewer/georef-hud.ts).
+  host.innerHTML = placementFlagHtml(world, Boolean(activeProjectId), { earlierAlignment: currentProject !== null && isEarlierFrame(currentProject) })
+  host.hidden = host.innerHTML === ''
+  if (locationPanel === undefined) {
+    locationPanel = mountLocationPanel({
+      projectId: () => activeProjectId,
+      worldIsMirrored: () => world !== null && mirroredPlacementCount(world) > 0,
+      worldChanged: () => void loadWorldProject(),
+    })
+    host.addEventListener('click', (event) => {
+      if ((event.target as HTMLElement).closest('[data-action="replace-by-gps"]')) locationPanel?.open()
+    })
   }
-  readout.innerHTML = text
+  void locationPanel?.refresh()
 }
 
 function updateScaleWidget(): void {

@@ -196,20 +196,20 @@ export interface Project {
   frameHistory?: FrameHistoryEntry[]
   /**
    * Where this Place is on Earth: its frame registered onto the map (see {@link ProjectGeoreference}).
-   * Only `PUT /projects/:id/georeference` will write it (WP-11), never the whole-record PUT, which carries
-   * the stored value over. The server will read it when it places a calibrated scan (`resolveWorldOrigin`,
-   * `placeCalibratedScan`), and the editor's location readout, the map registration editor (WP-13) and the
-   * GeoPose and Companion Memory exports will too. Nothing writes or reads it yet. Absent until a registration
-   * is stored, and then every placement stays what it is today. `geoPose` above is the creating phone's
+   * Only `PUT /projects/:id/georeference` writes it (`applyGeoreferenceWrite`, server/world/georef_write.ts), never the
+   * whole-record PUT, which carries the stored value over. The server reads it when it places a calibrated scan
+   * (`resolveWorldOrigin`, `placeCalibratedScan`), and the editor's location readout and the GeoPose and Companion Memory
+   * exports do too; the map registration editor (WP-13) will write it as the Place location panel does now. Absent until a
+   * registration is stored, and then every placement stays what it is today. `geoPose` above is the creating phone's
    * one-shot fix, the Place's pin: this does not replace it.
    */
   georeference?: ProjectGeoreference
   /**
    * How many georeference writes the server has accepted for this Place, counted as `spatialFrameRevision`
    * counts frame writes: absent reads as 0, the server owns it, and a write must name the version it
-   * expects to find. The georeference route will write it (WP-11). The editor will read it, to name the
-   * version it saves over, and the scan refresh will, to place again a scan nothing has moved by hand when the
-   * version changes and to flag `ScanManifest.placementStale` on one something has.
+   * expects to find. The georeference route writes it. The editor reads it, to name the version it saves
+   * over, and the scan refresh does, to place again a scan nothing has moved by hand when the version
+   * changes and to flag `ScanManifest.placementStale` on one something has.
    */
   georefVersion?: number
   createdAt: number
@@ -932,11 +932,10 @@ export interface GeoreferenceOrigin {
  *
  * The origin is the Place frame's (0, 0, 0): the landmark, on the floor. `bearingDeg` is the TRUE bearing of
  * the frame's +Z axis, the landmark-to-heading-marker direction, which a compass reading of the session cannot
- * give (the session's +Z is wherever the AR runtime started). `PUT /projects/:id/georeference` will write it
- * (WP-11), with the map registration editor (WP-13) or the Place location panel as the usual client, and the
- * server will read it when it places a calibrated scan (`resolveWorldOrigin`, `placeCalibratedScan`), as will the
- * editor's location readout and the GeoPose and Companion Memory exports. Nothing writes or reads it yet.
- * `Project.georefVersion` counts the writes.
+ * give (the session's +Z is wherever the AR runtime started). `PUT /projects/:id/georeference` writes it, with the
+ * Place location panel (src/viewer/georeference-panel.ts) as its client and the map registration editor (WP-13) to
+ * follow, and the server reads it when it places a calibrated scan (`resolveWorldOrigin`, `placeCalibratedScan`), as do
+ * the editor's location readout and the GeoPose and Companion Memory exports. `Project.georefVersion` counts the writes.
  */
 export interface ProjectGeoreference {
   origin: GeoreferenceOrigin
@@ -1251,8 +1250,8 @@ export interface ScanManifest {
   calibrationFitRmsM?: number
   calibrationFitMaxM?: number
   /**
-   * How `localToWorld` was last set: see {@link ScanPlacementSource}. The server's placement step will write it
-   * (WP-11) and the scan list will read it, to show it beside `placementUncertaintyM`. Absent on a manifest
+   * How `localToWorld` was last set: see {@link ScanPlacementSource}. The server's placement step writes it
+   * (WP-11) and the scan list reads it, to show it beside `placementUncertaintyM`. Absent on a manifest
    * built before placements were recorded, which does not mean the scan was placed one way or another.
    */
   placementSource?: ScanPlacementSource
@@ -1260,14 +1259,16 @@ export interface ScanManifest {
    * How far from where `localToWorld` puts it the scan may be on Earth, in metres (R68), when the placement
    * can say. Null or absent when it cannot: a scan placed in the Place frame with no georeference has no
    * position on Earth to be uncertain about, and one on the grid has no estimate. The server's placement step
-   * will write it (WP-11) and the scan list will read it.
+   * writes it (WP-11) and the scan list reads it.
    */
   placementUncertaintyM?: number | null
   /**
    * True when the Place's georeference has changed since this scan was placed and the scan was not placed again
    * because a person had moved it by hand: its position on Earth is from an older georeference and the scan does
-   * not move. The scan refresh will write it when `Project.georefVersion` changes (WP-11) and the scan list will
-   * read it. Absent otherwise.
+   * not move. The scan refresh writes it when `Project.georefVersion` changes (WP-11), and only when the new
+   * georeference puts the scan somewhere other than where it is and somewhere other than where the version it
+   * was placed under put it (a version that changed nothing for the scan is no news), and the scan list reads
+   * it. Absent otherwise.
    */
   placementStale?: boolean
   /**
@@ -1388,6 +1389,15 @@ export interface WorldProject {
   projectId: string | null
   originGeoPose: GeoPose
   localFrame: LocalFrame
+  /**
+   * The Place's georeference as this world's placements were made under it, and its `Project.georefVersion`. The Place keeps
+   * the record (`Project.georeference`); the server copies it here whenever it reads the world and, when the version differs
+   * from the one stored here, places the scans again (`applyPlaceGeoreference`, server/world/world_origin.ts). The editor reads
+   * them to print a latitude and longitude only for a world that has one, and the exports carry them. Absent on a world whose
+   * Place has no georeference, and on every world file written before the field existed.
+   */
+  georeference?: ProjectGeoreference
+  georefVersion?: number
   scans: ScanManifest[]
   things: Thing[]
   thingObservations: ThingObservation[]

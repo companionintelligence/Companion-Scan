@@ -72,9 +72,13 @@ into scan regions such as a wing, floor, room, or outdoor zone.
 
 ## Spatial Alignment Contract
 
-Each Place has one metric local coordinate system: **ENU, Y-up, meters**. It is
-anchored to a geographic pose when one is available, but indoor accuracy comes
-from calibrated local references, not GPS.
+Each Place has one metric local coordinate system: **right-handed, Y-up, meters**.
+Placed on the map it is the scene of [ADR 0015](../adr/0015-scene-convention-and-georeference.md):
+x east, y up, z south, so a local east, north, up offset is (E, U, -N). Its origin
+is the landmark on the floor and its +Z is the landmark-to-heading-marker
+direction. It is anchored to a geographic pose by the Place's georeference (the
+origin's latitude and longitude, and the true bearing of +Z) once one is set, but
+indoor accuracy comes from calibrated local references, not GPS.
 
 - GPS, altitude, and compass provide a global suggestion and map anchor.
 - A repeatable in-place calibration uses measured raycast reference points to

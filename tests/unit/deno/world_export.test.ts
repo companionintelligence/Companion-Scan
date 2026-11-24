@@ -20,7 +20,7 @@ import { ALL_EXTENSIONS } from '@gltf-transform/extensions'
 import { composeWorldExport, readScanGlb } from '../../../server/world_export.ts'
 import { optimizeScan } from '../../../server/pipeline.ts'
 import { composeYUpTransform } from '../../../src/world/geo.ts'
-import type { ScanManifest, Thing, ThingObservation, WorldProject } from '../../../src/world/types.ts'
+import type { ProjectGeoreference, ScanManifest, Thing, ThingObservation, WorldProject } from '../../../src/world/types.ts'
 
 const EXPORTED_AT = '2026-11-13T12:00:00.000Z'
 
@@ -244,8 +244,96 @@ Deno.test('composeWorldExport: the scene carries one timestamp, the frame, and t
     scanCount: 2,
     thingCount: 2,
     missingScans: [],
+    // What the world declares its axes to be, and an explicit null where the Place has no georeference.
+    axes: { x: 'east', y: 'up', z: 'north' },
+    georeference: null,
   })
   assertEquals(scenes[0].listChildren().length, 4, 'two scan roots and two Thing nodes')
+})
+
+/** A georeference as a map click makes one: London, a long wall, imagery-limited accuracy, confirmed. */
+const GEOREFERENCE: ProjectGeoreference = {
+  origin: { lat: 51.5007, lng: -0.1246, altitudeM: 11, accuracyM: 3.5 },
+  heightDatum: 'ellipsoid',
+  bearingDeg: 30,
+  bearingAccuracyDeg: 1,
+  convention: 2,
+  datum: 'WGS84',
+  source: 'map-click',
+  registeredAt: '2026-11-17T10:00:00.000Z',
+  confirmedAt: '2026-11-17T10:00:00.000Z',
+  anchorRef: 'frame-1',
+}
+
+/** The world the server writes for a georeferenced Place: the right-handed scene, and the record it was placed under. */
+function georeferencedWorld(): WorldProject {
+  const world = makeWorld()
+  return { ...world, localFrame: { ...world.localFrame, axes: { x: 'east', y: 'up', z: 'south' } }, georeference: GEOREFERENCE, georefVersion: 3 }
+}
+
+Deno.test('composeWorldExport: a georeferenced Place says where it is on Earth in the scene extras, and what its axes and bearing are', async () => {
+  const scanGlbs = new Map([
+    ['scan-a', await readScanGlb(await triangleGlb('floor-a', [0, 0, 0, 1, 0, 0, 0, 1, 0]))],
+    ['scan-b', await readScanGlb(await triangleGlb('floor-b', [0, 0, 0, 0, 0, 1, 1, 0, 0]))],
+  ])
+  const result = await composeWorldExport(georeferencedWorld(), scanGlbs, { exportedAt: EXPORTED_AT })
+  const extras = (await readOutput(result.bytes)).getRoot().listScenes()[0].getExtras()
+
+  assertEquals(extras['frame'], 'place', 'it is still the Place frame')
+  assertEquals(extras['axes'], { x: 'east', y: 'up', z: 'south' })
+  const block = extras['georeference'] as Record<string, unknown>
+  assertEquals(block['crs'], 'WGS84')
+  assertEquals(block['origin'], { lat: 51.5007, lng: -0.1246, altitudeM: 11 })
+  assertEquals(block['heightDatum'], 'ellipsoid')
+  assertEquals(block['bearingDeg'], 30)
+  assertEquals(block['accuracy'], { positionM: 3.5, bearingDeg: 1 })
+  assertEquals(block['source'], 'map-click')
+  assertEquals(block['confirmedAt'], '2026-11-17T10:00:00.000Z')
+  assertEquals(block['georefVersion'], 3)
+  assertEquals(block['anchorRef'], 'frame-1')
+  // The convention is stated in words, exactly: which bearing, which axes, where the origin is.
+  const convention = String(block['convention'])
+  assert(convention.includes('true bearing'), convention)
+  assert(convention.includes('Place frame +Z'), convention)
+  assert(convention.includes('x east, y up, z south'), convention)
+  assert(convention.includes('scene origin'), convention)
+  // A GeoPose is not in it unless asked for.
+  assertEquals('geopose' in extras, false)
+})
+
+Deno.test('composeWorldExport: a Place with no georeference writes the key as an explicit null, which survives the file', async () => {
+  const scanGlbs = new Map([['scan-a', await readScanGlb(await triangleGlb('floor-a', [0, 0, 0, 1, 0, 0, 0, 1, 0]))]])
+  const result = await composeWorldExport(makeWorld(), scanGlbs, { exportedAt: EXPORTED_AT })
+  const extras = (await readOutput(result.bytes)).getRoot().listScenes()[0].getExtras()
+  assertEquals('georeference' in extras, true, 'the key is there')
+  assertEquals(extras['georeference'], null, 'and says none')
+  // An unconfirmed seed says so rather than leaving out the field.
+  const seed: ProjectGeoreference = { ...GEOREFERENCE, source: 'gps-compass', bearingAccuracyDeg: 25, origin: { ...GEOREFERENCE.origin, accuracyM: 25 }, confirmedAt: undefined }
+  const seeded = await composeWorldExport({ ...georeferencedWorld(), georeference: seed }, scanGlbs, { exportedAt: EXPORTED_AT })
+  const block = (await readOutput(seeded.bytes)).getRoot().listScenes()[0].getExtras()['georeference'] as Record<string, unknown>
+  assertEquals(block['confirmedAt'], null)
+  assertEquals(block['source'], 'gps-compass')
+})
+
+Deno.test('composeWorldExport: a GeoPose is written only when asked, as a Basic-Quaternion pose with its accuracy beside it', async () => {
+  const scanGlbs = new Map([['scan-a', await readScanGlb(await triangleGlb('floor-a', [0, 0, 0, 1, 0, 0, 0, 1, 0]))]])
+  const asked = await composeWorldExport(georeferencedWorld(), scanGlbs, { exportedAt: EXPORTED_AT, includeGeoPose: true })
+  const extras = (await readOutput(asked.bytes)).getRoot().listScenes()[0].getExtras()
+  const pose = extras['geopose'] as { geopose: { position: Record<string, number>; quaternion: Record<string, number> }; meta: Record<string, unknown> }
+  // The pose is exactly the fields GeoPose.Basic.Quaternion requires, so it validates against it and against its strict variant.
+  assertEquals(Object.keys(pose.geopose).sort(), ['position', 'quaternion'])
+  assertEquals(Object.keys(pose.geopose.position).sort(), ['h', 'lat', 'lon'])
+  assertEquals(Object.keys(pose.geopose.quaternion).sort(), ['w', 'x', 'y', 'z'])
+  assertEquals(pose.geopose.position, { lat: 51.5007, lon: -0.1246, h: 11 })
+  assertEquals(pose.geopose.quaternion['z'], 0.9659258262890683, 'sin of half 150 degrees: yaw = 180 - 30')
+  assertEquals(pose.meta['horizontalM68'], 3.5)
+  assertEquals(pose.meta['hSource'], 'ellipsoid')
+  // A Place with no georeference has no pose to give, whatever is asked.
+  const none = await composeWorldExport(makeWorld(), scanGlbs, { exportedAt: EXPORTED_AT, includeGeoPose: true })
+  assertEquals('geopose' in (await readOutput(none.bytes)).getRoot().listScenes()[0].getExtras(), false)
+  // Not asked: not written, even for a georeferenced Place (checked above), and the option's default is off.
+  const defaulted = await composeWorldExport(georeferencedWorld(), scanGlbs, { exportedAt: EXPORTED_AT })
+  assertEquals('geopose' in (await readOutput(defaulted.bytes)).getRoot().listScenes()[0].getExtras(), false)
 })
 
 Deno.test('composeWorldExport: the source documents are left as they were', async () => {

@@ -39,6 +39,7 @@ import type { ScanProvenance } from '../shared/provenance'
 import type { ScanEntry } from '../project/project-store'
 import type { GeoFix } from '../geo/geo-tracker'
 import type { ScanQualitySummary } from '../world/types'
+import type { GeoSession } from '../world/geo-session.ts'
 import type { FrameEpochsSidecar } from '../ar/frame-epoch'
 import { apiUrl } from '../shared/api-base.ts'
 // One colour per label, shared with the scanner's lists and the mock CV palette (F-44).
@@ -74,7 +75,8 @@ export interface ExportData {
   pointCloud: PointCloud
   poseHistory: Pose[]
   scanEntry?: ScanEntry   // project/floor/room assignment (optional)
-  geoFix?: GeoFix         // GPS/bearing/address at time of export (optional)
+  geoFix?: GeoFix         // GPS/bearing/address: the best fix of the walk's first minute, else the one at export (optional)
+  geoSession?: GeoSession | null   // what the walk recorded of where it was and which way it faced (src/world/geo-session.ts); absent or null: not recorded
   qualitySummary?: ScanQualitySummary
   /**
    * Which stretches of tracking the scan was recorded in, and the discontinuities between
@@ -125,7 +127,7 @@ export interface ExportResult {
 }
 
 export async function exportToGLB(data: ExportData, options: ExportOptions = {}): Promise<ExportResult> {
-  const { store, pointCloud, poseHistory, scanEntry, geoFix, qualitySummary, frameEpochs } = data
+  const { store, pointCloud, poseHistory, scanEntry, geoFix, geoSession, qualitySummary, frameEpochs } = data
   const {
     download = true,
     upload = true,
@@ -212,6 +214,8 @@ export async function exportToGLB(data: ExportData, options: ExportOptions = {})
     geoAddress:      geoFix?.address      ?? null,
     geoDisplayAddress: geoFix?.displayAddress ?? null,
     geoFixedAt:      geoFix?.fixedAt      ?? null,
+    // Only when the walk recorded one: a caller with none gets the keys it always had.
+    ...(geoSession ? { geoSession } : {}),
   }
 
   // ── Hierarchy: Scene > Floor group > Room group >Content ────────────────────
@@ -447,7 +451,7 @@ async function uploadToServer(
    */
   serverSessionId: string | null,
 ): Promise<{ filename?: string; outcome: UploadOutcome }> {
-  const { pointCloud, poseHistory, scanEntry, geoFix, qualitySummary, frameEpochs } = data
+  const { pointCloud, poseHistory, scanEntry, geoFix, geoSession, qualitySummary, frameEpochs } = data
   // The generation of the Place's reference the scan was measured against (WP-08), when its calibration names one.
   const calibrationFrameId = calibrationFrameIdOf(scanEntry?.calibration)
   try {
@@ -508,6 +512,9 @@ async function uploadToServer(
       geoAddress: geoFix?.address      ?? null,
       geoDisplayAddress: geoFix?.displayAddress ?? null,
       geoFixedAt: geoFix?.fixedAt      ?? null,
+      // What the walk recorded: the bearing of the session's +Z (true north) with its spread, the declination, the camera at the fix.
+      // Absent when there is none, so a caller that records none sends the keys it always sent.
+      ...(geoSession ? { geoSession } : {}),
     })
     const form = new FormData()
     form.append('file', new Blob([buffer], { type: 'model/gltf-binary' }), filename)

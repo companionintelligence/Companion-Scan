@@ -507,7 +507,8 @@ test('source shape: the editor draws the layer from its scan list, refresh and l
   assert.match(viewer, /styled: \(\) => frameReference\.apply\(\),/, 'and when the compare tools change a scan\'s style')
   const stitch = readFileSync(join(ROOT, 'src/viewer/stitch-tools.ts'), 'utf8')
   assert.match(stitch, /if \(loaded\?\.loaded\) applyCompareStyle\(loaded\.root, style\)\n\s+host\.styled\?\.\(\)/)
-  assert.match(viewer, /escHtml,\n  \)\n(?:\s+\/\/.*\n)?\s+frameReference\.sync\(\)\n\}/, 'when the scans\' meta is redrawn, which the world refresh does')
+  // The redraw may pass the hand-placement test after escHtml (WP-11b, src/viewer/placement-note.ts), and nothing else.
+  assert.match(viewer, /escHtml,\n(?:\s+\(scan\) => isHandPlaced\([^\n]*\),\n)?  \)\n(?:\s+\/\/.*\n)?\s+frameReference\.sync\(\)\n\}/, 'when the scans\' meta is redrawn, which the world refresh does')
   assert.match(viewer, /listEl\.prepend\(item\)[^]*?\n    \}\n    frameReference\.sync\(\)\n    updateHudInfo\(\)/, 'after a refresh brings new scans')
   assert.match(viewer, /stitch\?\.reapplyCompare\(\)\n  frameReference\.apply\(\)/, 'after the compare tools have reapplied theirs')
 
