@@ -78,7 +78,7 @@ test('the desktop bundle may not hold the AR engine; neither bundle may hold the
     assert.deepEqual(forbiddenInBundle(dir, 'mobile'), ['sw.js'], 'the Android app ships the engine, which it runs')
     assert.deepEqual(forbiddenInBundle(dir, 'mobile', '8thwall'), ['sw.js'], 'and so does its 8th Wall variant')
     assert.deepEqual(forbiddenInBundle(dir, 'mobile', 'webxr'), ['sw.js', 'xr.js', 'xr-slam.js', 'resources'],
-      'the XREAL Aura build runs WebXR alone, so it may not hold the engine either')
+      'the WebXR-only build may not hold the engine either')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -158,17 +158,17 @@ test('the 8th Wall variant is a mobile build with --ar-runtime=8thwall, and a mi
   assert.match(readFileSync(join(ROOT, '.github/workflows/mobile-build.yml'), 'utf8'), /npm run build:web:8thwall --prefix mobile/)
 })
 
-test('the XREAL Aura variant is a mobile build with --ar-runtime=webxr, synced into the Android project alone', () => {
+test('the WebXR-only variant (XREAL Aura, PICO) is a mobile build with --ar-runtime=webxr, synced into the Android project alone', () => {
   assert.deepEqual(parseBuildArgs(['mobile', '--ar-runtime=webxr']), { shell: 'mobile', arRuntime: 'webxr' })
   assert.throws(() => parseBuildArgs(['desktop', '--ar-runtime=webxr']), /mobile shell only/)
   const scripts = JSON.parse(readFileSync(join(ROOT, 'mobile/package.json'), 'utf8')).scripts
-  assert.equal(scripts['build:web:aura'], 'node ../scripts/native/build-web.mjs mobile --ar-runtime=webxr')
-  assert.equal(scripts['build:aura'], 'npm run build:web:aura && cap sync android', 'Aura runs Android XR, so the iOS project never gets this bundle')
+  assert.equal(scripts['build:web:webxr'], 'node ../scripts/native/build-web.mjs mobile --ar-runtime=webxr')
+  assert.equal(scripts['build:webxr'], 'npm run build:web:webxr && cap sync android', 'its devices run Android, so the iOS project never gets this bundle')
   // The mobile workflow builds its APK, from that bundle, and checks the engine was left out before Gradle runs.
   const workflow = readFileSync(join(ROOT, '.github/workflows/mobile-build.yml'), 'utf8').replace(/\r\n/g, '\n')
-  const job = workflow.slice(workflow.indexOf('\n  android-aura:\n'), workflow.indexOf('\n  ios:\n'))
-  assert.match(job, /npm run build:web:aura --prefix mobile\n\s+cd mobile && npx cap sync android/)
+  const job = workflow.slice(workflow.indexOf('\n  android-webxr:\n'), workflow.indexOf('\n  ios:\n'))
+  assert.match(job, /npm run build:web:webxr --prefix mobile\n\s+cd mobile && npx cap sync android/)
   assert.ok(job.includes(`for f in ${ENGINE_FILES.join(' ')}; do`), 'the job checks each of ENGINE_FILES')
   assert.ok(job.indexOf('for f in xr.js') < job.indexOf('./gradlew assembleDebug'), 'before the APK is built')
-  assert.match(job, /name: scan-android-aura-debug-apk/)
+  assert.match(job, /name: scan-android-webxr-debug-apk/)
 })

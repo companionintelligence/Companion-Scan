@@ -7,11 +7,11 @@
   "scripts": {
     "build:web": "node ../scripts/native/build-web.mjs mobile",
     "build:web:8thwall": "node ../scripts/native/build-web.mjs mobile --ar-runtime=8thwall",
-    "build:web:aura": "node ../scripts/native/build-web.mjs mobile --ar-runtime=webxr",
+    "build:web:webxr": "node ../scripts/native/build-web.mjs mobile --ar-runtime=webxr",
     "sync": "cap sync",
     "build": "npm run build:web && npm run sync",
     "build:8thwall": "npm run build:web:8thwall && npm run sync",
-    "build:aura": "npm run build:web:aura && cap sync android",
+    "build:webxr": "npm run build:web:webxr && cap sync android",
     "open:ios": "cap open ios",
     "open:android": "cap open android",
     "test:native": "node --test tests/*.test.mjs"

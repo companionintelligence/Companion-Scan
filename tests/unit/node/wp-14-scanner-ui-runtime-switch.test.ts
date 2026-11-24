@@ -50,7 +50,7 @@ test('source shape: the scanner points the switch through runtimeSwitchHref in b
   assert.doesNotMatch(body, /link\.href = '\//, 'no fixed href is left')
 })
 
-test('a build that forces WebXR (the XREAL Aura APK) hides the switch: its bundle has no 8th Wall to switch to', () => {
+test('a build that forces WebXR (the WebXR-only APK) hides the switch: its bundle has no 8th Wall to switch to', () => {
   const main = read('src/main.ts')
   assert.match(main, /const buildRuntime = buildForcedRuntime\(import\.meta\.env\.VITE_AR_RUNTIME\)\n\s+const forcedMode = pageForcedRuntime\(searchParams\.get\('ar'\), import\.meta\.env\.VITE_AR_RUNTIME\)\n\s+if \(buildRuntime === 'webxr'\) \{\n\s+const modeLink = document\.getElementById\('xr-mode-link'\)\n\s+if \(modeLink\) modeLink\.style\.display = 'none'\n\s+\}/,
     'hidden before the runtime is chosen, so a device with no WebXR, which returns early, never shows it either')

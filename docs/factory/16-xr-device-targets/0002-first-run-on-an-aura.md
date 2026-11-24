@@ -1,5 +1,5 @@
 > **Type:** Docs / device test
-> **Wave:** 16-xreal-aura
+> **Wave:** 16-xr-device-targets
 > **Branch:** `docs/aura-first-run`
 > **Commit style:** `docs(aura): summary`
 > **Design:** the first-run list in `docs/targets/xreal-aura.md`
@@ -7,7 +7,7 @@
 
 ## Goal
 
-Run the Aura build, and Chrome's `/webxr.html`, on a real XREAL Aura. Write down what the
+Run the WebXR-only build (`docs/targets/android-webxr.md`), and Chrome's `/webxr.html`, on a real XREAL Aura. Write down what the
 platform exposes, so ticket 0003 can be decided on facts rather than on the documents' gaps.
 
 ## Non-goals
@@ -33,8 +33,8 @@ platform exposes, so ticket 0003 can be decided on facts rather than on the docu
 
 ## Open questions & answers
 
-- Q: Which build goes on the device? — A: the Mobile Build `android-aura` artifact, or a local
-  `npm run build:aura` build. Builds signed with different keys replace each other only after an
+- Q: Which build goes on the device? — A: the Mobile Build `android-webxr` job's artifact,
+  `scan-android-webxr-debug-apk`, or a local `npm run build:webxr` build. Builds signed with different keys replace each other only after an
   uninstall, which removes the app's scans.
 - Q: Does the owner have the Aura on a computer that can run `adb`? — OPEN
 

@@ -19,7 +19,7 @@ import {
 
 test('a build made with VITE_AR_RUNTIME=8thwall or webxr forces that runtime, and no other value forces anything', () => {
   assert.equal(buildForcedRuntime('8thwall'), '8thwall')
-  assert.equal(buildForcedRuntime('webxr'), 'webxr', 'the XREAL Aura build')
+  assert.equal(buildForcedRuntime('webxr'), 'webxr', 'the WebXR-only build')
   assert.equal(buildForcedRuntime('native'), null)
   assert.equal(buildForcedRuntime('WebXR'), null, 'the values are exact')
   assert.equal(buildForcedRuntime(''), null)
@@ -39,7 +39,7 @@ test('the URL picks the runtime over an 8th Wall build, and never over a WebXR b
   // The 8th Wall APK: the build's runtime when the URL names none, and ?ar=webxr still reaches WebXR.
   assert.equal(pageForcedRuntime(null, '8thwall'), '8thwall')
   assert.equal(pageForcedRuntime('webxr', '8thwall'), 'webxr')
-  // The XREAL Aura APK: WebXR whatever the URL says, since its bundle leaves the 8th Wall engine out.
+  // The WebXR-only APK (XREAL Aura, PICO): WebXR whatever the URL says, since its bundle leaves the 8th Wall engine out.
   assert.equal(pageForcedRuntime(null, 'webxr'), 'webxr')
   assert.equal(pageForcedRuntime('8thwall', 'webxr'), 'webxr')
   assert.equal(pageForcedRuntime('anything', 'webxr'), 'webxr')

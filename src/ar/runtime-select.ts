@@ -26,7 +26,7 @@ export function preferNativeRuntime(choice: NativeRuntimeChoice): boolean {
  * The runtime a build forces when the page's URL names none. `VITE_AR_RUNTIME=8thwall` at build time makes
  * the 8th Wall engine the runtime, so the native runtime is never chosen (the Android 8th Wall APK).
  * `VITE_AR_RUNTIME=webxr` makes WebXR the only runtime: the native runtime is never chosen, and the bundle
- * leaves the 8th Wall engine out (the XREAL Aura APK, docs/targets/xreal-aura.md). Any other value, or no
+ * leaves the 8th Wall engine out (the WebXR-only APK, docs/targets/android-webxr.md). Any other value, or no
  * value, forces nothing.
  */
 export function buildForcedRuntime(buildValue: string | null | undefined): string | null {

@@ -45,7 +45,7 @@ export function engineExpected(forcedMode: string | null, desktopShell: boolean)
 
 /**
  * Whether this bundle carries the 8th Wall engine at all. The desktop app's bundle leaves it out, and so does a
- * build that forces WebXR (`VITE_AR_RUNTIME=webxr`, the XREAL Aura APK): scripts/native/build-web.mjs deletes the
+ * build that forces WebXR (`VITE_AR_RUNTIME=webxr`, the WebXR-only APK): scripts/native/build-web.mjs deletes the
  * engine's files from both, and neither ever runs it. The Legal notices view names the engine only where this is
  * true, as THIRD-PARTY-NOTICES.txt does.
  *

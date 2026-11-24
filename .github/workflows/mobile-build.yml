@@ -1,8 +1,8 @@
 name: Mobile Build
 
 # Debug artifacts for device QA, kept for 14 days: an Android debug APK, signed with the runner's
-# own debug key, the same app built as its 8th Wall variant and as its XREAL Aura variant
-# (docs/targets/xreal-aura.md), and an unsigned iOS Simulator app. The
+# own debug key, the same app built as its 8th Wall variant and as its WebXR-only variant
+# (docs/targets/android-webxr.md), and an unsigned iOS Simulator app. The
 # Android job also runs the app's JVM unit tests and compiles its instrumented tests. This does not
 # upload to Google Play or App Store Connect, and it publishes nothing: native-release.yml makes the
 # GitHub pre-release with a release APK. Scan AR capture has not run on a phone yet; mobile/README.md
@@ -132,8 +132,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  android-aura:
-    name: Android, XREAL Aura (debug APK)
+  android-webxr:
+    name: Android, WebXR only (debug APK)
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -146,19 +146,19 @@ jobs:
       - name: Install Android shell dependencies
         run: npm ci --prefix mobile
       # The same shell, built with VITE_AR_RUNTIME=webxr (scripts/native/build-web.mjs --ar-runtime=webxr) for
-      # XREAL Aura, which runs Android XR on its compute puck: the scanner starts on WebXR alone, never on
-      # ARCore or the 8th Wall engine, and the bundle leaves the engine out (docs/targets/xreal-aura.md). It has
-      # the ARCore build's applicationId, so it replaces that build on a device. The Android project is not
-      # changed: only the web bundle differs.
-      - name: Build the Aura web app and sync it into the Android project
+      # devices whose Android has no ARCore, XREAL Aura and PICO headsets (docs/targets/android-webxr.md): the
+      # scanner starts on WebXR alone, never on ARCore or the 8th Wall engine, and the bundle leaves the engine
+      # out. It has the ARCore build's applicationId, so it replaces that build on a device. The Android project
+      # is not changed: only the web bundle differs.
+      - name: Build the WebXR-only web app and sync it into the Android project
         run: |
-          npm run build:web:aura --prefix mobile
+          npm run build:web:webxr --prefix mobile
           cd mobile && npx cap sync android
       - name: Check the bundle left the 8th Wall engine out
         run: |
           for f in xr.js xr-slam.js xr-face.js resources; do
             if [ -e "mobile/android/app/src/main/assets/public/$f" ]; then
-              echo "::error::the Aura bundle carries $f, which it never loads"
+              echo "::error::the WebXR-only bundle carries $f, which it never loads"
               exit 1
             fi
           done
@@ -173,7 +173,7 @@ jobs:
         run: ./gradlew assembleDebug --no-daemon
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: scan-android-aura-debug-apk
+          name: scan-android-webxr-debug-apk
           path: mobile/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14

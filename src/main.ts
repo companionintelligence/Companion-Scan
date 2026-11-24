@@ -935,7 +935,7 @@ async function main() {
   // WebXR-capable iOS browsers (e.g. HelloXR) where the native WebXR session
   // beats the 8th Wall SLAM fallback.  ?ar=8thwall forces the inverse. A build made with
   // VITE_AR_RUNTIME=8thwall forces it too, when the URL names no runtime (the Android 8th Wall APK).
-  // A build made with VITE_AR_RUNTIME=webxr (the XREAL Aura APK) forces WebXR whatever the URL says:
+  // A build made with VITE_AR_RUNTIME=webxr (the WebXR-only APK) forces WebXR whatever the URL says:
   // its bundle leaves the 8th Wall engine out, so it has no other runtime, and no switch to one.
   const buildRuntime = buildForcedRuntime(import.meta.env.VITE_AR_RUNTIME)
   const forcedMode = pageForcedRuntime(searchParams.get('ar'), import.meta.env.VITE_AR_RUNTIME)

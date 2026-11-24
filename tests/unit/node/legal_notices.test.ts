@@ -57,12 +57,12 @@ test('the desktop app, whose bundle leaves the engine out, shows no engine notic
   assert.deepEqual(legalSections(false).map((s) => s.heading), [APP_NOTICE.name, THIRD_PARTY])
 })
 
-test('the Android app built for XREAL Aura leaves the engine out, so it shows no engine notice, and keeps the ARCore one for the library it carries', () => {
-  const aura = legalSections(engineInBundle(false, buildForcedRuntime('webxr')), true).map((s) => s.heading)
-  assert.deepEqual(aura, [APP_NOTICE.name, ARCORE_NOTICE.name, THIRD_PARTY])
+test("the Android app's WebXR-only build leaves the engine out, so it shows no engine notice, and keeps the ARCore one for the library it carries", () => {
+  const webxrOnly = legalSections(engineInBundle(false, buildForcedRuntime('webxr')), true).map((s) => s.heading)
+  assert.deepEqual(webxrOnly, [APP_NOTICE.name, ARCORE_NOTICE.name, THIRD_PARTY])
   const android = legalSections(engineInBundle(false, buildForcedRuntime(undefined)), true).map((s) => s.heading)
   assert.deepEqual(android, [APP_NOTICE.name, ARCORE_NOTICE.name, XR_ENGINE_NOTICE.name, THIRD_PARTY], 'control: the default Android app')
-  // The dialog's default reads the build's runtime, so the Aura build needs no flag of its own.
+  // The dialog's default reads the build's runtime, so the WebXR-only build needs no flag of its own.
   const source = readFileSync(join(ROOT, 'src/ui/legal-notices.ts'), 'utf8')
   assert.match(source, /engineBundled = engineInBundle\(isDesktopShell\(\), buildForcedRuntime\(import\.meta\.env\?\.VITE_AR_RUNTIME as string \| undefined\)\)/)
 })

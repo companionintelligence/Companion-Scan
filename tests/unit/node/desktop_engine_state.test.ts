@@ -57,10 +57,10 @@ const PAGE: Mode = { name: 'a phone or browser page', forcedMode: null, desktopS
 const DESKTOP: Mode = { name: 'the desktop app', forcedMode: null, desktopShell: true }
 const FORCED_WEBXR: Mode = { name: 'a page forced into WebXR (?ar=webxr)', forcedMode: 'webxr', desktopShell: false }
 const DESKTOP_FORCED_WEBXR: Mode = { name: 'the desktop app forced into WebXR', forcedMode: 'webxr', desktopShell: true }
-/** The XREAL Aura APK: built with VITE_AR_RUNTIME=webxr, whose bundle leaves the engine out, whatever its URL says. */
-const AURA_BUILD: Mode = { name: 'the XREAL Aura build (VITE_AR_RUNTIME=webxr)', forcedMode: pageForcedRuntime(null, 'webxr'), desktopShell: false }
-const AURA_BUILD_ASKED_8THWALL: Mode = { name: 'the XREAL Aura build at ?ar=8thwall', forcedMode: pageForcedRuntime('8thwall', 'webxr'), desktopShell: false }
-const NO_ENGINE = [DESKTOP, FORCED_WEBXR, DESKTOP_FORCED_WEBXR, AURA_BUILD, AURA_BUILD_ASKED_8THWALL]
+/** The WebXR-only APK (XREAL Aura, PICO): built with VITE_AR_RUNTIME=webxr, whose bundle leaves the engine out, whatever its URL says. */
+const WEBXR_BUILD: Mode = { name: 'the WebXR-only build (VITE_AR_RUNTIME=webxr)', forcedMode: pageForcedRuntime(null, 'webxr'), desktopShell: false }
+const WEBXR_BUILD_ASKED_8THWALL: Mode = { name: 'the WebXR-only build at ?ar=8thwall', forcedMode: pageForcedRuntime('8thwall', 'webxr'), desktopShell: false }
+const NO_ENGINE = [DESKTOP, FORCED_WEBXR, DESKTOP_FORCED_WEBXR, WEBXR_BUILD, WEBXR_BUILD_ASKED_8THWALL]
 const NATIVE_PHONE: Mode = { name: 'a phone whose native AR runtime is in use', forcedMode: null, desktopShell: false, nativeActive: true }
 
 /** The text of `source` from `from` up to, not including, `to`. Both must be there, in that order. */
@@ -223,8 +223,8 @@ test('the desktop app: the engine is absent by design, so nothing is waited for 
   }
 })
 
-test('a page forced into WebXR, in a browser, in the desktop app or by the Aura build: absent, never waited for, and the WebXR line', async () => {
-  for (const mode of [FORCED_WEBXR, DESKTOP_FORCED_WEBXR, AURA_BUILD, AURA_BUILD_ASKED_8THWALL]) {
+test('a page forced into WebXR, in a browser, in the desktop app or by the WebXR-only build: absent, never waited for, and the WebXR line', async () => {
+  for (const mode of [FORCED_WEBXR, DESKTOP_FORCED_WEBXR, WEBXR_BUILD, WEBXR_BUILD_ASKED_8THWALL]) {
     for (const waited of WAITS) {
       const run = await boot(mode, waited)
       assert.equal(run.waits.length, 0, `${mode.name}: a wait that would say ${waited} is never started`)
@@ -353,7 +353,7 @@ test('engineExpected is the decision index.html makes when it requests xr.js, fo
       }
     }
   }
-  assert.deepEqual(loaderRequests('', 'webxr', false), [], 'the Aura build asks for no engine file at all')
+  assert.deepEqual(loaderRequests('', 'webxr', false), [], 'the WebXR-only build asks for no engine file at all')
   assert.deepEqual(loaderRequests('?mock=xr8', null, false), ['/test-fixtures/xr8-mock.js'], 'control: the stand-ins see what the loader asks for')
 })
 

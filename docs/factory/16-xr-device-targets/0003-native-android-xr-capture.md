@@ -1,5 +1,5 @@
 > **Type:** Native / Android
-> **Wave:** 16-xreal-aura
+> **Wave:** 16-xr-device-targets
 > **Branch:** `feat/android-xr-runtime`
 > **Commit style:** `feat(android-xr): summary`
 > **Design:** to be settled from 0002's results, and recorded in an ADR before any code
@@ -53,9 +53,9 @@ own tracking. The frames would come from the glasses' camera, if apps may open i
 - Q: Can an app open the glasses' camera, and which permission does it need? — OPEN (0002, check 4)
 - Q: Which Android version and API level does the puck run? Can the shell's `minSdk 24` and
   `compileSdk 36` stay? — OPEN (0002, check 1)
-- Q: Do the Jetpack XR libraries go into every Android build, or only into the Aura build behind
-  a switch? The phone builds would carry preview libraries they never use, and the release lock
-  would grow. — OPEN
+- Q: Do the Jetpack XR libraries go into every Android build, or only into a build for Android XR
+  behind a switch? The phone builds, and the WebXR-only build that PICO shares, would carry preview
+  libraries they never use, and the release lock would grow. — OPEN
 - Q: Home Space or Full Space? A capture needs the pose of the glasses, not of a panel. — OPEN
 - Q: The pose is the glasses', and the camera sits apart from it. Where does the offset between
   them come from? — OPEN

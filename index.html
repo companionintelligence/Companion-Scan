@@ -93,7 +93,7 @@
       //   ?ar=webxr  → skip the SLAM binary entirely (HelloXR / WebXR mode)
       //   desktop app (Tauri, which sets __TAURI_INTERNALS__) → no engine: the desktop
       //                app is the editor and viewer, and its bundle leaves the engine out
-      //   a build that forces WebXR (VITE_AR_RUNTIME=webxr, the XREAL Aura APK) → no engine:
+      //   a build that forces WebXR (VITE_AR_RUNTIME=webxr, the WebXR-only APK) → no engine:
       //                its bundle leaves the engine out, and vite.config.ts names the forced
       //                runtime in the scan-ar-runtime meta tag at the top of <head>
       //   default    → real 8th Wall engine from public/xr.js

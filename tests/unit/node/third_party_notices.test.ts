@@ -248,20 +248,20 @@ test('the notices generated for the Android app give each library the text its e
     "the notices file prints ARCore's own notice under its name")
 })
 
-test('the Android app built to run WebXR alone (XREAL Aura) lists no XR Engine, which its bundle leaves out, and the same Android libraries', {
+test('the Android app built to run WebXR alone (XREAL Aura, PICO) lists no XR Engine, which its bundle leaves out, and the same Android libraries', {
   skip: notInstalled.length ? `not installed: ${notInstalled.join(', ')} (run npm ci in the repo root and in mobile/)` : false,
 }, () => {
   const make = bundleNotices as unknown as (options: { shell: 'mobile'; bundledModules: string[]; engineBundled?: boolean }) => Generated
   const engine = 'Niantic Spatial XR Engine (8th Wall), @8thwall/engine-binary'
   const android = make({ shell: 'mobile', bundledModules: [] })
-  const aura = make({ shell: 'mobile', bundledModules: [], engineBundled: false })
+  const webxrOnly = make({ shell: 'mobile', bundledModules: [], engineBundled: false })
   assert.ok(android.components.some((c) => c.name === engine), 'control: the default Android app carries the engine, and names it')
-  assert.ok(!aura.components.some((c) => c.name === engine), 'the Aura build does not')
-  assert.ok(!renderNotices(aura, '0.0.0').includes('Niantic'), 'nor does any text its notices file prints')
+  assert.ok(!webxrOnly.components.some((c) => c.name === engine), 'the WebXR-only build does not')
+  assert.ok(!renderNotices(webxrOnly, '0.0.0').includes('Niantic'), 'nor does any text its notices file prints')
   // The APK is the same Android project, so its libraries, ARCore among them, are listed as the default build lists them.
   const libraries = (notices: Generated) => notices.components.filter((c) => c.group === 'android').map((c) => `${c.name} ${c.version}`)
-  assert.deepEqual(libraries(aura), libraries(android))
-  assert.deepEqual(componentsWithoutText(aura), [])
+  assert.deepEqual(libraries(webxrOnly), libraries(android))
+  assert.deepEqual(componentsWithoutText(webxrOnly), [])
 })
 
 test('every supplied licence text is on file, says where it came from, and carries no e-mail address', () => {

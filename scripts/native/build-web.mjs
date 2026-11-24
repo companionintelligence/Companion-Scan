@@ -22,7 +22,7 @@
  *      the vite step (src/ar/runtime-select.ts, buildForcedRuntime), so the scanner starts on the 8th
  *      Wall engine and never on the native runtime. Mobile only: the desktop app has no AR. The
  *      variable may also come from the environment, as before; the build says which runtime it bakes.
- *   5b. `--ar-runtime=webxr` builds the Android app for XREAL Aura (docs/targets/xreal-aura.md):
+ *   5b. `--ar-runtime=webxr` builds the Android app's WebXR-only variant (docs/targets/android-webxr.md):
  *      VITE_AR_RUNTIME=webxr, so the scanner starts on WebXR alone and never on the native runtime or
  *      the engine. Like the desktop bundle, it leaves the 8th Wall engine out, and its notices with it
  *      (bundlesEngine): no page of that build loads it (index.html reads the forced runtime from the
@@ -93,7 +93,7 @@ export const AR_RUNTIMES = ['8thwall', 'webxr']
 
 /**
  * Whether a shell's bundle carries the 8th Wall engine, for the runtime the build forces (or null). Only the
- * mobile app runs it, and not when it is built to run WebXR alone: the desktop app and the XREAL Aura build
+ * mobile app runs it, and not when it is built to run WebXR alone: the desktop app and the WebXR-only build
  * leave it out. src/ar/engine-state.ts (engineInBundle) is the same rule as the app's Legal notices see it.
  */
 export function bundlesEngine(shell, arRuntime = null) {
