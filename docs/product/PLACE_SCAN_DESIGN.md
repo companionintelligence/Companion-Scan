@@ -98,12 +98,16 @@ The editor route is `/editor`, branded **Companion Scan Spatial Editor**.
 
 - Compact two-line **Companion / Scan** wordmark.
 - Connected Companion Intelligence portal account entry point.
-- Current Place name, scan count, layer count, and active/total job indicator.
-- **Share** menu with View only, Comment, Edit, Scanner, and owner recovery
-  links. Capability links are scoped to the current Place workspace.
-- **Views** menu: GIS map, hit points, ground planes, scanned objects, camera
-  trail, image frustums, scanned images, ground grid, and Thing tags. Every
-  visibility control is independent and reflects the current scene.
+- Current Place name, scan count, layer count, and a finished/total job indicator with a progress bar.
+- **Share** menu with three entries, View only, Comment and Edit, each copying the
+  Place's existing link for that role. The scanner link is in the Navigate menu, and
+  the owner link is not in the menu. Capability links are scoped to the current Place
+  workspace.
+- **View** menu: six layer toggles (camera trail; scanned images & frustums;
+  detected objects; hit points; planes; splats & photogrammetry) with Show all and
+  Hide all, each disabled with its reason when the Place has no data for it; then the
+  GIS map, ground grid, Thing tags and calibration anchors. Every visibility control
+  reflects the current scene.
 - Measure and live controls remain direct because they affect the active view.
 
 ### Left Drawer
