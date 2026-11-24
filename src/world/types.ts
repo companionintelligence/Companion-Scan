@@ -1075,10 +1075,12 @@ export interface EditPatchProvenance {
   source: 'place-register'
   /** The WorldJob that proposed this placement. One job is applied at most once. */
   jobId: string
-  /** The proposal's score, 0 to 1, as the job reported it. */
+  /** The proposal's score, 0 to 1, as the job reported it. For the photo method, the share of the scan's photos that found their place. */
   score: number
-  /** The measured gap between the two scans' walls after the move, metres. */
+  /** The measured gap between the two scans' walls after the move, metres. For the photo method, between the recorded and solved camera positions. */
   residualM: number
+  /** `'sfm'` when the proposal came from the photo method. Absent on a wall-match patch, and on every patch written before there was a photo method. */
+  method?: 'sfm'
 }
 
 export interface EditPatch {

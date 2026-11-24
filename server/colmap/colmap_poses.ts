@@ -744,6 +744,11 @@ export { isValidSessionDir }
  */
 const DEFAULT_COLMAP_TIMEOUT_MS = 2 * 60 * 60 * 1000
 
+/** One COLMAP step's budget in milliseconds: `COLMAP_TIMEOUT_MS`, else two hours. The registration job's own limit on a whole run is tighter and sits beside it. */
+export function colmapStepBudgetMs(): number {
+  return budgetFromEnv('COLMAP_TIMEOUT_MS', DEFAULT_COLMAP_TIMEOUT_MS)
+}
+
 export async function defaultSpawn(
   bin: string,
   args: string[],
@@ -752,7 +757,7 @@ export async function defaultSpawn(
   const out = await runWithDeadline(
     bin,
     { args, stdout: 'piped', stderr: 'piped' },
-    budgetFromEnv('COLMAP_TIMEOUT_MS', DEFAULT_COLMAP_TIMEOUT_MS),
+    colmapStepBudgetMs(),
     KILL_GRACE_MS,
     signal,
   )

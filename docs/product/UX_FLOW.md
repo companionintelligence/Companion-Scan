@@ -257,15 +257,17 @@ The everyday user must understand there are **four distinct capture pipelines**,
   - Three counts:
     - scans (`#toolbar-scan-count`);
     - layers (`#toolbar-layer-count`): how many of the Scene layers rows have something to show in this Place;
-    - jobs (`#toolbar-job-count`): active out of listed.
-  - The **Views** menu (`#view-menu`):
+    - jobs (`#toolbar-job-count`): finished out of listed, with a progress bar (`#toolbar-job-fill`).
+  - The **View** menu (`#view-menu`):
+    - Show all and Hide all, and six layer toggles: Camera trail, Scanned images & frustums, Detected objects, Hit points, Planes, and Splats & photogrammetry. A layer the Place has no data for is disabled and says why (`src/viewer/view-menu.ts`);
     - Filter objects (`#view-filter-objects`, e.g. `chair, desk  ·  -wall`);
     - Render mode (`#view-mode-select`: Solid, Points, Wireframe, Semantic);
-    - toggles for GIS map (`#view-toggle-map`), Hit points, Ground planes, Scanned objects, Camera trail, Image frustums, Scanned images, Ground grid, Tags and Calibration anchors.
+    - toggles for GIS map (`#view-toggle-map`), Ground grid, Tags and Calibration anchors.
   - **Live** (`#btn-livefeed`), only in a build with `VITE_ENABLE_WEBRTC_LIVE=true`.
   - The **Navigate** menu (`#workspace-menu`):
     - **Scan a Place** (`#scan-place-link`). In the desktop app it reads **Add media to a Place**, because a computer can upload a walkthrough but cannot walk a room.
     - The WebXR scanner, which the native shells drop.
+    - **Scan with a phone**: the Place's scanner link, with its QR on a click, when the Place issues one.
     - The account chip.
     - Inside a shell, also the Scan server and Legal notices.
   - The **Share** menu.
@@ -472,7 +474,7 @@ The two senses of "4D" are distinguished in ADR 0006.
 **User goal:** hand a specific person a private, explorable copy — scoped to what they should see.
 
 **Screens/controls today:**
-- **Share** (top bar, `#share-links`): copyable links for the roles at or below the caller's (**view / comment / edit**, and **owner** only for an owner), and a **Scan with a phone** block for the scanner link, sourced from `/worlds/<slug>/share`. Each has a QR that shows only on a click. Recipients open only the granted Place in the Spatial Editor.
+- **Share** (top bar, `#share-menu`): three entries, **view-only**, **comment** and **edit**, each copying the Place's link for that role, sourced from `/worlds/<slug>/share`. A role with no link for the caller is disabled and says "Coming soon", and the owner link is not listed. The scanner link is in the Navigate menu as **Scan with a phone**, with a QR that shows only on a click. Recipients open only the granted Place in the Spatial Editor.
 - **Publish** (Project tab, `GUIDED_WORKFLOWS.publish` in `src/viewer/viewer.ts`) queues:
   - `memory-push`, which pushes the scan to Companion Memory;
   - `export-world`, which writes the Place's `.world.glb`.
@@ -482,7 +484,7 @@ The two senses of "4D" are distinguished in ADR 0006.
 
 **Gaps:**
 - On the **phone** side the loop doesn't close: after `Export GLB` there's no `View in 3D →` link back to the world.
-- Roles are functional, but the Share menu does not say what each role can do.
+- Each Share entry says in one line what its role can do, but not what it cannot.
 
 **Recommended improvements:** add the phone-side `View in 3D →` (§3.2 item 6); show role capabilities inline, so an owner shares confidently.
 

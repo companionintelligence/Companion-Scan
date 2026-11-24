@@ -1,6 +1,8 @@
 /**
- * The tag family: 5x5 data cells inside a one-cell black border, 32 ids, every pair of
- * (id, rotation) at least 9 bits apart.
+ * The tag families: `CSCAN5_V1`, 5x5 data cells inside a one-cell black border, 32 ids, every pair of
+ * (id, rotation) at least 9 bits apart; and `CSCAN6_V1`, 6x6 data cells (36 bits, which do not fit a
+ * 32-bit word), every pair at least 12 bits apart. `./families.ts` says which one a sheet and the scanner
+ * use by default, in one place.
  *
  * ## Where the codes come from
  *
@@ -11,6 +13,11 @@
  * orientation). The table below is that search's output, frozen so nothing is computed at load;
  * `tests/unit/node/fiducial_dictionary.test.ts` re-runs the search and fails if the table drifts
  * from it. Regenerate by running the search with `CSCAN5_V1_PARAMS` and pasting the result.
+ *
+ * `CSCAN6_V1` is the same idea for a 36-bit word: `searchWideFamily(CSCAN6_V1_PARAMS)` (which also keeps every code
+ * inside a complexity gate, see `isingEnergy`) gives the table, `scripts/gen-fiducial-family.mjs` writes it and
+ * `--check`s it from a fixed seed, and `tests/unit/node/fiducial_family36.test.ts` recomputes its distances by
+ * comparing every pair without any of this module's own code.
  *
  * `minDistance` on the exported dictionary is COMPUTED from the table when it is built
  * (`createDictionary`), never declared: the generator's constraint and the table's property are
@@ -39,8 +46,9 @@
  *
  *   - families of up to 32 data bits (4x4, 5x5): call `createDictionary(name, bits, words)` with
  *     the family's words in the bit order documented there;
- *   - 36-bit families (tag36h11 has a 6x6 grid): the word does not fit a 32-bit integer, so
- *     implement `match()` over two halves (or BigInt) instead of reusing `createDictionary`;
+ *   - families of 33 to 64 data bits (tag36h11 has a 6x6 grid): the word does not fit a 32-bit integer,
+ *     so call `createWideDictionary(name, bits, words)` with `bigint` words in the same bit order;
+ *     it keeps each word as two 32-bit halves and matches over both, which is what `CSCAN6_V1` does;
  *   - note AprilTag draws its tags with a white ring OUTSIDE the black one that is part of the
  *     tag; here that white ring is the quiet zone, and the detector requires one (see
  *     `scripts/print-fiducial.mjs`).
@@ -209,6 +217,201 @@ export function createDictionary(name: string, bits: number, words: readonly num
   }
 }
 
+// -------------------------------------------------------------------------------------------
+// Families wider than 32 cells
+// -------------------------------------------------------------------------------------------
+
+/** Most data cells a wide family may have: the two 32-bit halves hold 64 bits. */
+export const MAX_WIDE_CELLS = 64
+
+/** Number of set bits in a bigint word of at most 64 bits. */
+export function popcountWide(x: bigint): number {
+  return popcount32(Number(x & 0xffffffffn)) + popcount32(Number((x >> 32n) & 0xffffffffn))
+}
+
+/** Rotate a bigint pattern a quarter turn clockwise: the same cell move as {@link rotateWordClockwise}. */
+export function rotateWideClockwise(word: bigint, bits: number): bigint {
+  let out = 0n
+  for (let r = 0; r < bits; r++) {
+    for (let c = 0; c < bits; c++) {
+      if ((word >> BigInt(r * bits + c)) & 1n) out |= 1n << BigInt(c * bits + (bits - 1 - r))
+    }
+  }
+  return out
+}
+
+/** Mirror a bigint pattern left to right: the same cell move as {@link flipWord}. */
+export function flipWide(word: bigint, bits: number): bigint {
+  let out = 0n
+  for (let r = 0; r < bits; r++) {
+    for (let c = 0; c < bits; c++) {
+      if ((word >> BigInt(r * bits + c)) & 1n) out |= 1n << BigInt(r * bits + (bits - 1 - c))
+    }
+  }
+  return out
+}
+
+/** The four clockwise rotations of a bigint pattern: index k is the pattern turned k quarter turns. */
+export function wideRotations(word: bigint, bits: number): [bigint, bigint, bigint, bigint] {
+  const r1 = rotateWideClockwise(word, bits)
+  const r2 = rotateWideClockwise(r1, bits)
+  const r3 = rotateWideClockwise(r2, bits)
+  return [word, r1, r2, r3]
+}
+
+/** A word of up to 64 bits as the two 32-bit halves the matcher compares: bits 0..31 in `lo`, bits 32..63 in `hi`. */
+interface Halves {
+  lo: number
+  hi: number
+}
+
+function halvesOf(x: bigint): Halves {
+  return { lo: Number(x & 0xffffffffn) >>> 0, hi: Number((x >> 32n) & 0xffffffffn) >>> 0 }
+}
+
+function distanceHalves(a: Halves, b: Halves): number {
+  return popcount32(a.lo ^ b.lo) + popcount32(a.hi ^ b.hi)
+}
+
+/** The smallest distance between two distinct (word, rotation) pairs of a wide family: {@link familyMinDistance} over bigints. */
+export function wideFamilyMinDistance(words: readonly bigint[], bits: number): number {
+  return minDistanceOfRotations(words.map((w) => wideRotations(w, bits).map(halvesOf)))
+}
+
+function minDistanceOfRotations(rotated: readonly Halves[][]): number {
+  let min = Infinity
+  for (let a = 0; a < rotated.length; a++) {
+    for (let b = a; b < rotated.length; b++) {
+      for (let k = a === b ? 1 : 0; k < 4; k++) {
+        const d = distanceHalves(rotated[a]![0]!, rotated[b]![k]!)
+        if (d < min) min = d
+      }
+    }
+  }
+  return min
+}
+
+/** The smallest distance between the mirror image of a wide word, in any turn, and any word as printed: {@link familyMinMirrorDistance} over bigints. */
+export function wideFamilyMinMirrorDistance(words: readonly bigint[], bits: number): number {
+  return minMirrorOfRotations(
+    words.map((w) => halvesOf(w)),
+    words.map((w) => wideRotations(flipWide(w, bits), bits).map(halvesOf)),
+  )
+}
+
+function minMirrorOfRotations(printed: readonly Halves[], mirrored: readonly Halves[][]): number {
+  let min = Infinity
+  for (let a = 0; a < mirrored.length; a++) {
+    for (let b = 0; b < printed.length; b++) {
+      for (const m of mirrored[a]!) {
+        const d = distanceHalves(m, printed[b]!)
+        if (d < min) min = d
+      }
+    }
+  }
+  return min
+}
+
+/**
+ * Build a dictionary from a table of `bigint` words, for a grid of 33 to 64 cells (`bits * bits`). The words are the
+ * same bit order as {@link createDictionary}'s, bit `r * bits + c` the cell in row `r`, column `c`. Throws on a table
+ * that is not a usable family, for the same reasons `createDictionary` does.
+ *
+ * `match` keeps every word and rotation as two 32-bit halves and compares both halves with one `popcount32` each,
+ * which is as fast as the 32-bit case within a factor of two; no `bigint` is touched while matching.
+ */
+export function createWideDictionary(name: string, bits: number, words: readonly bigint[]): Dictionary {
+  const cells = bits * bits
+  if (!Number.isInteger(bits) || bits < 2 || cells <= 32 || cells > MAX_WIDE_CELLS) {
+    throw new Error(`dictionary ${name}: a ${bits}x${bits} grid is not a wide family (33 to ${MAX_WIDE_CELLS} cells; use createDictionary for fewer)`)
+  }
+  const limit = 1n << BigInt(cells)
+  const seen = new Set<bigint>()
+  for (const w of words) {
+    if (typeof w !== 'bigint' || w < 0n || w >= limit) throw new Error(`dictionary ${name}: ${String(w)} is not a ${cells}-bit word`)
+    if (seen.has(w)) throw new Error(`dictionary ${name}: word ${w} appears twice`)
+    seen.add(w)
+  }
+  if (words.length < 2) throw new Error(`dictionary ${name}: needs at least two ids`)
+
+  const rotated = words.map((w) => wideRotations(w, bits).map(halvesOf))
+  const minDistance = minDistanceOfRotations(rotated)
+  if (minDistance < 1) throw new Error(`dictionary ${name}: two codes are the same pattern once rotated`)
+  const minMirrorDistance = minMirrorOfRotations(
+    words.map((w) => halvesOf(w)),
+    words.map((w) => wideRotations(flipWide(w, bits), bits).map(halvesOf)),
+  )
+
+  return {
+    name,
+    bits,
+    size: words.length,
+    minDistance,
+    maxCorrectableBits: Math.floor((minDistance - 1) / 2),
+    minMirrorDistance,
+
+    pattern(id: number): Uint8Array {
+      const word = words[id]
+      if (word === undefined) throw new RangeError(`dictionary ${name}: no id ${id}`)
+      const out = new Uint8Array(cells)
+      for (let i = 0; i < cells; i++) out[i] = Number((word >> BigInt(i)) & 1n)
+      return out
+    },
+
+    match(observed: ArrayLike<number>, maxHamming: number): DictionaryMatch | null {
+      if (observed.length !== cells) return null
+      let lo = 0
+      let hi = 0
+      for (let i = 0; i < 32; i++) if (observed[i]) lo |= 1 << i
+      for (let i = 32; i < cells; i++) if (observed[i]) hi |= 1 << (i - 32)
+      lo >>>= 0
+      hi >>>= 0
+
+      let bestD = Infinity
+      let bestId = -1
+      let bestK = 0
+      let secondD = Infinity
+      for (let id = 0; id < rotated.length; id++) {
+        const r = rotated[id]!
+        for (let k = 0; k < 4; k++) {
+          const h = r[k]!
+          const d = popcount32(lo ^ h.lo) + popcount32(hi ^ h.hi)
+          if (d < bestD) {
+            secondD = bestD
+            bestD = d
+            bestId = id
+            bestK = k
+          } else if (d < secondD) {
+            secondD = d
+          }
+        }
+      }
+      if (bestD > maxHamming) return null
+      // As in createDictionary: unreachable while maxHamming <= maxCorrectableBits.
+      if (secondD <= maxHamming) return null
+      return { id: bestId, rotation: bestK as QuarterTurns, hamming: bestD }
+    },
+  }
+}
+
+/**
+ * The Ising energy of a pattern: how many pairs of cells that share an edge (horizontally or vertically, inside the
+ * grid) differ. A solid block has little of it and a checkerboard has the most, and a code that is either is a poor
+ * one for a camera: the first merges into its black border and the second is the pattern a repeated texture makes.
+ * The complexity gate of the family search keeps it between two bounds. Invariant under turning and mirroring.
+ */
+export function isingEnergy(pattern: ArrayLike<number>, bits: number): number {
+  let e = 0
+  for (let r = 0; r < bits; r++) {
+    for (let c = 0; c < bits; c++) {
+      const v = pattern[r * bits + c] ? 1 : 0
+      if (c + 1 < bits && (pattern[r * bits + c + 1] ? 1 : 0) !== v) e++
+      if (r + 1 < bits && (pattern[(r + 1) * bits + c] ? 1 : 0) !== v) e++
+    }
+  }
+  return e
+}
+
 /**
  * Output of `searchFamily(CSCAN5_V1_PARAMS)`: 32 words, 25 bits each. Frozen; see the header.
  */
@@ -225,3 +428,44 @@ const CSCAN5_V1_WORDS: readonly number[] = [
 
 /** The family `scripts/print-fiducial.mjs` prints and the scanner decodes. */
 export const CSCAN5_V1: Dictionary = createDictionary('cscan-5x5-v1', 5, CSCAN5_V1_WORDS)
+
+/**
+ * Output of `searchWideFamily(CSCAN6_V1_PARAMS)`: the words, 36 bits each. Frozen; see the header.
+ */
+const CSCAN6_V1_WORDS: readonly bigint[] = [
+  0xf7bb26166n, 0xa79912b61n, 0x2f7289b17n, 0x0cd82f444n,
+  0x90217e6a4n, 0xc609715dcn, 0xc97eab868n, 0x551da03d6n,
+  0x87c2e25e2n, 0xc4e8ab7d8n, 0x56f82a12bn, 0xd03adab77n,
+  0x9b6b66474n, 0xc9f1e55edn, 0x819f1c96an, 0x44ee65e0fn,
+  0xb21356113n, 0x7ea1ca44fn, 0xcd5538244n, 0x3868a5caan,
+  0xe770e09bbn, 0xb13793564n, 0x5ea12889cn, 0x6f6f1a50en,
+  0xfa50b0420n, 0xb25bba4cen, 0x3bd182da2n, 0x6fd36dd28n,
+  0xf2ebe0195n, 0x1f1d2ccf0n, 0x7f74e867dn, 0xa9078f4afn,
+  0x99f41165fn, 0x5cc1b91c3n, 0x9d6814538n, 0x5f8a81bdcn,
+  0xf0909a841n, 0xa65cc3b08n, 0xfb0cf411bn, 0x85c3b9926n,
+  0xfb5acdaecn, 0x248f8cdb2n, 0xab0f97358n, 0x6beb8fa34n,
+  0x98cf81b2cn, 0xa9c6e4902n, 0x5f256b203n, 0xbd5637928n,
+  0x443decc9bn, 0x8c838f072n, 0x5116431aen, 0x26c77b6c2n,
+  0x3b5360846n, 0x1c1bb8f9cn, 0xa2e07a1a1n, 0xd72cc4d5cn,
+  0xec1248708n, 0xede049094n, 0xf4b12bbe5n, 0x9f27a791dn,
+  0x4e9bd5e50n, 0x35f5a9bcan, 0xeab7bb81cn, 0xdc5a1dc2en,
+  0xddd62c4bbn, 0x63a3b6f77n, 0xbd4d0a818n, 0xd73e8b387n,
+  0xd12ef58f9n, 0x4c6d4bfa6n, 0x8af564632n, 0x2eb396603n,
+  0xb8bf89c07n, 0x09653b851n, 0xf8f5d39d5n, 0x4cd211a9fn,
+  0xbd5dd1231n, 0x0c6da19cdn, 0x7f6634218n, 0x2627959c6n,
+  0x6bcbd336fn, 0x901ba71b6n, 0xc1df070d4n, 0xd9b1102a8n,
+  0xa9b54ec82n, 0x286dcc73bn, 0x8b46b1096n, 0xe13ee2294n,
+  0x54d6f14c8n, 0x450bef21en, 0x4affa8ae6n, 0x5a86f7ae0n,
+  0xb054d0ef2n, 0x80240e1f9n, 0xa893359e7n, 0xe2fa18326n,
+  0xba1989bd6n, 0x884826b58n, 0xad3326418n, 0x99e0b8d45n,
+  0x3fc5ed091n, 0xf84b61e71n, 0x1e28b1f37n, 0x0aee026a5n,
+  0xc748fd649n, 0x49a760064n, 0x9cc943c8bn, 0x5ea788f52n,
+  0x97e11a62fn, 0x3416a4e20n, 0xf7e75aa74n, 0x61b86444bn,
+  0x498d9160dn, 0x878a8753cn, 0xa365b236bn, 0x71037a52dn,
+  0xf6f41281fn, 0xde8f984e8n, 0x52b2bdddcn, 0x1e3192274n,
+  0x3ad4f4077n, 0x58abae517n, 0x0fd09836en, 0x0dcdb4f5en,
+  0xa60c1f563n, 0x5b0f19a16n, 0xc8c7debben, 0x131cbd65en,
+]
+
+/** The 6x6 family (36-bit words, distance 12): 2.8e-7 false accepts per random grid at one bit of tolerance (128 x 4 x 37 / 2^36), against the 5x5 family's 9.9e-5. `./families.ts` names the default. */
+export const CSCAN6_V1: Dictionary = createWideDictionary('cscan-6x6-v1', 6, CSCAN6_V1_WORDS)

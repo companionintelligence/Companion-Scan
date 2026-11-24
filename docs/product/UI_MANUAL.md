@@ -472,7 +472,7 @@ results are also relayed to the box via `POST /client-logs` so a developer watch
 
 `/editor?project=<id>` — the desktop surface where scans become a persistent,
 editable Place. The implementation remains `viewer.html`: the top bar owns account,
-Place status, sharing, and a unified Views menu; the left drawer owns Place/Scan
+Place status, sharing, and a unified View menu; the left drawer owns Place/Scan
 management; the right drawer owns guided processing and review. The viewport
 retains the Three.js scene and floating HUD elements. Logic lives in
 `src/viewer/viewer.ts` (+ `measure.ts`, `geomap.ts`, `livefeed.ts`, `lingbot-map.ts`).
@@ -485,15 +485,15 @@ camera, per-object labels, transform gizmo, and the floating inspector (top-righ
 | Control | What it does | Source |
 |---|---|---|
 | **Companion Scan + account** | Compact two-line product mark followed by the signed-in Companion Intelligence account link. Portal OIDC identifies the user; it is separate from later Companion Memory publishing. | top bar |
-| **Place status** | Current Place name, scan count, layer count, and current/total processing jobs. | top bar |
-| **Share** | A compact dropdown for one Place with copyable **View**, **Comment**, **Edit**, **Scanner**, and **Owner** capability links. | `#share-menu`, `#share-links` |
-| **Views** | Independent on/off controls for GIS map, hit points, ground planes, scanned objects, camera trail, image frustums, scanned images, ground grid, and tags. Render style is a view setting, not a row of persistent toolbar buttons. | `#view-menu` |
+| **Place status** | Current Place name, scan count, layer count (the Layers rows with something to show), and jobs finished out of all jobs, with a progress bar. | top bar |
+| **Share** | Three entries, **Copy view-only link**, **Comment** and **Edit**, each copying the Place's existing link for that role. A role with no link here is disabled and says "Coming soon". The owner link is not listed; the scanner link, with its QR, is in the Navigate menu. | `#share-menu`, `src/viewer/share-menu.ts` |
+| **View** | Six layer toggles (camera trail; scanned images & frustums; detected objects; hit points; planes; splats & photogrammetry) with **Show all** and **Hide all**; a layer this Place has no data for is disabled and says why. Below them: the object filter, render mode, GIS map, ground grid, tags and calibration anchors. Render style is a view setting, not a row of persistent toolbar buttons. | `#view-menu` |
 | **📏 Measure** | Toggles the two-click measurement tool (below). | `viewer.html:815`, `viewer.ts:1877-1883` |
-| **🗺 Map** | No longer a toolbar button: the geo-map drawer (Leaflet, scan pins) opens from the Views menu's "GIS map" checkbox. | `#view-toggle-map` in `viewer.html` |
+| **🗺 Map** | No longer a toolbar button: the geo-map drawer (Leaflet, scan pins) opens from the View menu's "GIS map" checkbox. | `#view-toggle-map` in `viewer.html` |
 | **📡 Live** | Toggles the live-feed panel (WebRTC stream from a phone mid-scan; live frustum + points + detections). | `viewer.html:817`, `viewer.ts:1872-1875`, `livefeed.ts` |
 | **← AR App / 🥽 WebXR** | Navigation back to the phone scanner surfaces. | `viewer.html:818-819` |
 
-On small screens the bar prioritises the current Place, Views, Share, and the
+On small screens the bar prioritises the current Place, View, Share, and the
 drawer chevrons; information that does not fit moves into the relevant drawer
 rather than becoming a horizontal row of tiny buttons.
 
@@ -584,7 +584,10 @@ assign semantic categories." With a selection:
 
 | Control | What it does | Source |
 |---|---|---|
+| **Name + Rename** | Renames the selected object, saved in the same patch as its tag and notes. A whole scan is not renamed here. | `src/viewer/object-panel.ts`, `viewer.ts` (`renameSelectedObject`) |
+| **Physical thing** | Read-only: the Thing the object was matched to across scans or linked to by you, or "Not linked". | `src/viewer/object-panel.ts` |
 | **Move / Rotate / Scale** | Switches the viewport transform-gizmo mode. | `viewer.html:941-947`, `viewer.ts:1846-1848` |
+| **Position / Rotation / Scale fields** | The selected object's position (m), rotation (Euler XYZ, degrees) and scale as numbers. A typed value applies on Enter or on leaving the field and saves as Save Transform does; a zero scale is refused. A whole scan has none: Place precisely places it, with its size locked. | `src/viewer/object-panel.ts`, `src/viewer/object-transform.ts` |
 | **Save Transform** | Persists the gizmo transform as a Place patch. | `viewer.ts:1842-1844` |
 | **Semantic tag grid** | One-active chip set (sofa/table/door/...); selection recolours in semantic mode and queues a tag write. | `viewer.ts:1766-1782` |
 | **Notes + Save Notes** | Free-text note stored on the object. | `viewer.ts:1784-1792` |

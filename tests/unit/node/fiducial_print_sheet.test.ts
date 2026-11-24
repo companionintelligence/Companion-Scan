@@ -23,15 +23,14 @@ import { CSCAN5_V1 } from '../../../src/ar/fiducial/dictionary.ts'
 import { FiducialDetector } from '../../../src/ar/fiducial/detector.ts'
 import { parseTagPayload, serializeTagPayload } from '../../../src/ar/fiducial/payload.ts'
 import { INTRINSICS_640, mat3Apply, renderFrame, tagPose } from '../../support/fiducial-render.ts'
-import { parseSheet, pathRects, sheetArtwork } from '../../support/fiducial-sheet.ts'
+import { assertBalancedSvg, parseSheet, pathRects, sheetArtwork, stubQrSvg } from '../../support/fiducial-sheet.ts'
 
-/** A QR renderer that draws nothing a decoder could read but has the shape the sheet embeds: a standalone `<svg>` of the asked size. */
-function stubQr(text: string, options: { size: number; level: 'L' | 'M' | 'Q' | 'H'; label: string }): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${options.size}" height="${options.size}" viewBox="0 0 ${options.size} ${options.size}" role="img" aria-label="${options.label.replace(/[<>&"]/g, '')}"><path d="M0 0h${options.size}v${options.size}h-${options.size}z" fill="#111111" data-payload-length="${text.length}"/></svg>`
-}
-
+/**
+ * The 5x5 family is what this file is about: its 7x7 square is what the sizes and the page fits below are worked out for. The generator's default is the
+ * 6x6 family now (`DEFAULT_TAG_FAMILY`), which `fiducial_print_sheet_family.test.ts` covers, along with the family-aware metadata and the two-tag sheet.
+ */
 function sheet(args: Partial<Parameters<typeof buildSheet>[0]> = {}) {
-  return buildSheet({ tagId: 7, sizeMm: 120, placeId: 'place-kitchen-1', roomId: 'room-a', page: 'a4', qrSvg: stubQr, ...args })
+  return buildSheet({ tagId: 7, sizeMm: 120, placeId: 'place-kitchen-1', roomId: 'room-a', page: 'a4', dictionary: CSCAN5_V1, qrSvg: stubQrSvg, ...args })
 }
 
 test('the output is deterministic, and every input reaches it', () => {
@@ -204,7 +203,7 @@ test('page choice: the smallest page that fits, up to A0, an error that says wha
   assert.equal(sheet({ sizeMm: 400, page: 'auto' }).page.name, 'a1')
   assert.equal(sheet({ sizeMm: 440, page: 'auto' }).page.name, 'a0')
   assert.equal(sheet({ sizeMm: MAX_SIZE_MM, page: 'auto' }).page.name, 'a0')
-  assert.throws(() => sheet({ sizeMm: 400, page: 'a2' }), /needs a page at least 543\.2857 x 615\.2857 mm/)
+  assert.throws(() => sheet({ sizeMm: 400, page: 'a2' }), /needs a page at least 543\.2857 x 629\.2857 mm/)
   assert.throws(() => sheet({ sizeMm: 200, page: 'a4' }), /"a4" is 210 x 297 mm/)
   assert.throws(() => sheet({ sizeMm: 200, page: 'tabloid' }), /tabloid/)
   assert.equal(sheet({ sizeMm: 100, page: 'tabloid' }).page.name, 'tabloid')
@@ -235,30 +234,12 @@ test('text that comes from the Place is escaped, never interpreted', () => {
   const p = parseSheet(built.svg)
   assert.equal(p.tag.id, 7)
   // The document is still one well-formed tree.
-  assertBalanced(built.svg)
+  assertBalancedSvg(built.svg)
 })
 
-/** Every start tag has its end tag, in order, and no stray angle bracket is left in text or attributes. */
-function assertBalanced(svg: string): void {
-  const stack: string[] = []
-  let last = 0
-  for (const m of svg.matchAll(/<(\/?)([A-Za-z][\w:-]*)([^<>]*?)(\/?)>/g)) {
-    const between = svg.slice(last, m.index)
-    assert.ok(!between.includes('<') && !between.includes('>'), `a raw angle bracket in text near byte ${m.index}`)
-    last = m.index + m[0].length
-    if (m[1]) {
-      assert.equal(stack.pop(), m[2], `</${m[2]}> closes the wrong element`)
-    } else if (!m[4]) {
-      stack.push(m[2]!)
-    }
-  }
-  assert.deepEqual(stack, [], 'unclosed elements')
-  assert.ok(svg.startsWith('<svg ') && svg.endsWith('</svg>\n'))
-}
-
 test('a sheet made with the generator is a well-formed document', () => {
-  assertBalanced(sheet().svg)
-  assertBalanced(sheet({ tagId: 23, sizeMm: 200, page: 'a3', placeId: 'place-hall-9', roomId: null }).svg)
+  assertBalancedSvg(sheet().svg)
+  assertBalancedSvg(sheet({ tagId: 23, sizeMm: 200, page: 'a3', placeId: 'place-hall-9', roomId: null }).svg)
 })
 
 test('pathRects refuses a path that is not made of rectangles', () => {

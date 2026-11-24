@@ -14,10 +14,19 @@
  * Gaussian blur, a gain / offset / gamma exposure curve, a linear lighting gradient, Gaussian
  * pixel noise, 8-bit quantisation.
  *
- * Does NOT model: lens distortion, rolling shutter, motion blur, demosaicing and JPEG artefacts,
- * auto-exposure that changes between frames, specular glare, a printer's dot gain. The accuracy
- * the tests measure here is therefore a best case for the detector and the pose solver; what a
- * phone does is DX8's question, and nothing in these tests answers it.
+ * Does NOT model: lens distortion, motion blur, demosaicing and JPEG artefacts, auto-exposure that
+ * changes between frames, a printer's dot gain. The accuracy the tests measure here is therefore a
+ * best case for the detector and the pose solver; what a phone does is DX8's question, and nothing
+ * in these tests answers it.
+ *
+ * Four conditions a phone meets and a first harness left out are built from the pieces below, each a
+ * function the caller hands to `renderFrame` or applies to its output (WP-14a amendment): a hard cast
+ * shadow across half a tag (`castShadowAcrossHalf`), low light with noise (`LOW_LIGHT`), a patch of
+ * glare (`glarePatch`) and rolling-shutter skew (`rollingShutterSkew`). They are models, not captures:
+ * a shadow is a step in the light, glare is a saturating bright blob, low light is a gain and an
+ * offset with the sensor's noise on top, and the shutter is a shear that grows with the row. Each is
+ * deterministic. `./fiducial-parity.ts` renders the same scenes for another detector to read (an
+ * oracle parity run), and has no oracle in it.
  *
  * Conventions are those of `src/ar/fiducial/types.ts`: pixel (i, j) covers [i, i+1] x [j, j+1],
  * the tag frame is x right / y up / z toward the viewer, and the camera frame is OpenCV-style
@@ -509,6 +518,76 @@ export const INTRINSICS_640: CameraIntrinsics = { fx: 500, fy: 500, cx: 320, cy:
 
 /** 1280x960 at fx = fy = 1000: the same lens at twice the resolution. */
 export const INTRINSICS_1280: CameraIntrinsics = { fx: 1000, fy: 1000, cx: 640, cy: 480, width: 1280, height: 960 }
+
+// ---------------------------------------------------------------------------------------------
+// Conditions a phone meets (WP-14a amendment)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A hard cast shadow across half of a tag: the light is 1 on one side of a line through `centre` (image pixels) at `angleRad`
+ * and `1 / ratio` on the other, with the step spread over `edgePx` pixels (1 to 2 is a hard edge, a fifth of the tag a soft one).
+ * Hand it to `renderFrame` as `light`, with `centre` the tag's centre in the image.
+ */
+export function castShadowAcrossHalf(centre: { x: number; y: number }, ratio: number, angleRad: number, edgePx: number): (x: number, y: number) => number {
+  return (x, y) => {
+    const s = (x - centre.x) * Math.cos(angleRad) + (y - centre.y) * Math.sin(angleRad)
+    const t = Math.max(0, Math.min(1, (s + edgePx / 2) / edgePx))
+    return 1 - (1 - 1 / ratio) * t
+  }
+}
+
+/**
+ * A patch of glare: the light is multiplied by `1 + strength` at `centre` and falls off as a Gaussian of `radiusPx`. Hand it to
+ * `renderFrame` as `light`. Black ink under it rises with the paper to the top of the range (at the default strength of 9 the
+ * ink at 25 levels reaches 250), so the patch erases the code under it the way a specular reflection does, and saturates.
+ */
+export function glarePatch(centre: { x: number; y: number }, radiusPx: number, strength = 9): (x: number, y: number) => number {
+  return (x, y) => 1 + strength * Math.exp(-(((x - centre.x) ** 2 + (y - centre.y) ** 2) / (2 * radiusPx * radiusPx)))
+}
+
+/** Light multipliers composed: the product of every function given. */
+export function lightProduct(...lights: Array<(x: number, y: number) => number>): (x: number, y: number) => number {
+  return (x, y) => lights.reduce((acc, light) => acc * light(x, y), 1)
+}
+
+/**
+ * Low light with the noise a sensor makes of it: a quarter of the gain, a little offset, and 7 levels of noise. The black ink
+ * (25 levels) falls to about 9 and the paper (225) to about 59, so the contrast a tag has is about 50 levels against 200 in good
+ * light, and the noise is 14 % of it. Spread into `renderTag` or `renderFrame` options.
+ */
+export const LOW_LIGHT: Pick<RenderOptions, 'exposure' | 'noiseSigma'> = { exposure: { gain: 0.25, offset: 3 }, noiseSigma: 7 }
+
+/**
+ * Rolling-shutter skew: a camera that reads its rows one after another, moving sideways while it does, shows row `y` of the scene shifted
+ * by `skewPxPerRow * (y - referenceRow)` pixels. This shears the frame about `referenceRow` (default the middle row) with linear
+ * interpolation along each row and the edge pixel repeated beyond the frame. A tag in it is a parallelogram: its corners are where
+ * the camera was at each corner's own row, which no single pose explains. Returns a new image of the same shape.
+ */
+export function rollingShutterSkew(image: FiducialImage, skewPxPerRow: number, referenceRow = image.height / 2): FiducialImage {
+  const { width, height, channels } = image
+  const stride = image.rowBytes ?? width * channels
+  const out = new Uint8Array(width * height * channels)
+  for (let y = 0; y < height; y++) {
+    const shift = skewPxPerRow * (y + 0.5 - referenceRow)
+    for (let x = 0; x < width; x++) {
+      // The centre of output pixel (x, y) is at x + 0.5 and shows the scene at x + 0.5 - shift; a pixel's centre is at its index + 0.5, so that is index x - shift.
+      const src = Math.max(0, Math.min(width - 1, x - shift))
+      const x0 = Math.floor(src)
+      const x1 = Math.min(width - 1, x0 + 1)
+      const f = src - x0
+      for (let c = 0; c < channels; c++) {
+        if (channels === 4 && c === 3) {
+          out[(y * width + x) * 4 + 3] = 255
+          continue
+        }
+        const a = image.data[y * stride + x0 * channels + c]!
+        const b = image.data[y * stride + x1 * channels + c]!
+        out[(y * width + x) * channels + c] = Math.round(a + (b - a) * f)
+      }
+    }
+  }
+  return { data: out, width, height, channels }
+}
 
 // ---------------------------------------------------------------------------------------------
 // Backgrounds with no tag in them

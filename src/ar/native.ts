@@ -37,6 +37,10 @@
  *   hitTestBurstAsync
  *       Absent. A hit test over the bridge comes back with no frame to pair it with (its pose, status and time), so a native
  *       tap is read with one hit (`source: 'single-hit'`, scatter not measured).
+ *   onCameraFrame
+ *       Absent. The plugins give one JPEG still on request (`captureFrame`), not a stream of frames each with its pose and
+ *       projection, which is what the printed-marker reader pairs (src/ar/camera-frame-feed.ts). A reader that asks is told
+ *       `no-frame-feed`.
  *   anchors
  *       Absent. This member is the runtime anchors of src/ar/anchors.ts (AnchorCapability, the WebXR Anchors Module's shape: any
  *       number of handles, moved and lost events, release), and neither plugin offers that. The iOS plugin has no anchor method.
@@ -861,6 +865,17 @@ export class NativeARProvider implements ARProvider, ImageHitTestContract {
   get hitTestBurstAsync(): ARProvider['hitTestBurstAsync'] {
     const web = this.delegate
     const forwarded = web?.hitTestBurstAsync
+    return forwarded ? forwarded.bind(web) : undefined
+  }
+
+  /**
+   * Absent while the native session runs: the plugins give one JPEG still on request (`captureFrame()`), not a stream of frames
+   * each with its pose and projection, so the printed-marker reader has nothing to pair and is told `no-frame-feed`
+   * (src/ar/fiducial/tag-capture.ts). The web runtime's after a hand-over.
+   */
+  get onCameraFrame(): ARProvider['onCameraFrame'] {
+    const web = this.delegate
+    const forwarded = web?.onCameraFrame
     return forwarded ? forwarded.bind(web) : undefined
   }
 

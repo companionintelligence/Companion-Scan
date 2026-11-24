@@ -23,6 +23,13 @@ export type DebugFlag =
   /** Show the live camera-pose / drift readout in the scanner HUD. */
   | 'pose'
   /**
+   * The DX8 instruments for the printed marker (src/ar/fiducial/tag-debug.ts): `tag` writes one `[tag]` line a second (stage times,
+   * the tag's size and ambiguity, the lag fit, the projection), `tagneg` writes cumulative `[tagneg]` counters for the
+   * false-accept gate and sends no image anywhere. Both travel over `?debug=remote` like the probe line.
+   */
+  | 'tag'
+  | 'tagneg'
+  /**
    * Widen the remote mirror to console.log as well as warn/error. Off by
    * default because the scanner tick logs several times a second and would
    * evict everything else from the 50-entry buffer.

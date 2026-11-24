@@ -198,7 +198,7 @@ export interface ColmapJointResult {
  */
 const JPEG_HEADER_BYTES = 256 * 1024
 
-async function readFrameSize(path: string): Promise<{ width: number; height: number } | null> {
+export async function readFrameSize(path: string): Promise<{ width: number; height: number } | null> {
   let file: Deno.FsFile | null = null
   try {
     file = await Deno.open(path, { read: true })

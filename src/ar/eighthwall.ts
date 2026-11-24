@@ -46,6 +46,7 @@ import {
 import { FIRST_POSE_TIMEOUT_MS, firstFrameVerdict, startFailureVerdict, type PreflightVerdict } from './preflight.ts'
 import { imagePointToViewportPoint, type ImageHitTestContract, type ViewSize } from '../spatial/resolver.ts'
 import { EngineScaleSession } from './engine-config.ts'
+import { CameraFrameFeed, type CameraFeedStats, type CameraFrame, type CameraFrameOptions, type CameraFrameSubscription } from './camera-frame-feed.ts'
 import type { ScaleKind, ScaleMode } from '../world/scale-mode.ts'
 import { poseDistance, usefulWorldPoint } from './point-filter.ts'
 import { projectionAspect, projectionFovYDeg } from '../shared/pose-math.ts'
@@ -490,6 +491,14 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
   private _canvas: HTMLCanvasElement | null = null
   /** The unit of this session: what `start()` set on the engine, and the `?originY=` arm. See engine-config.ts. */
   private _engineScale = new EngineScaleSession()
+  /** Camera frames for `onCameraFrame()` subscribers (src/ar/camera-frame-feed.ts). Does nothing, and costs a field read a tick, until somebody subscribes. */
+  private _cameraFeed = new CameraFrameFeed()
+  /** The projection matrix of the last reality frame, as published (a reference: never copied here). */
+  private _projection: ArrayLike<number> | null = null
+  /** The pixel array the last `onProcessCpu` was handed, held by reference for the same tick's `onUpdate`. Cleared there. */
+  private _tickPixelArray: unknown = null
+  /** `_poseAtMs` as of the last offer to the feed, so a tick whose reality was not read is not offered as a new pose. */
+  private _feedPoseAtMs: number | null = null
 
   /**
    * Read one reality frame. `tMs` is the engine's frame clock; `repeatFrame` is documented as
@@ -601,6 +610,7 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
       : ArrayBuffer.isView(intr)
         ? Array.from(intr as unknown as Float32Array)
         : null
+    this._projection = proj
     // The lens from the projection (src/shared/pose-math.ts, which the WebXR provider reads its lens with too). The
     // field of view stands without the aspect: an unusable horizontal term leaves the aspect as it was.
     const projFovY = projectionFovYDeg(proj)
@@ -942,6 +952,7 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
             frameTimeMs(args.frameStartResult),
             args.frameStartResult?.['repeatFrame'] === true,
           )
+          if (self._cameraFeed.active) self._offerCameraFrame(args)
           // Backstop for the CSS box. onCanvasSizeChange above should already
           // have restored it, but that relies on this module's hooks running
           // after XR8.Threejs's; two string comparisons a frame buy
@@ -963,6 +974,9 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
             frameMs,
             frameStartResult?.['repeatFrame'] === true,
           )
+
+          // Held by reference for this tick's onUpdate, where the pose arrives; the feed copies only for a due subscriber.
+          if (self._cameraFeed.active) self._tickPixelArray = processGpuResult?.['camerapixelarray'] ?? null
 
           // Only do the expensive pixel copy when a capture is pending
           if (self.captureQueue.length === 0) return
@@ -1194,6 +1208,9 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
   stop(): void {
     XR8.stop()
     this._scene = null
+    this._cameraFeed.reset()
+    this._tickPixelArray = null
+    this._feedPoseAtMs = null
     this._engineScale.reset()
     this._disarmCameraPromptRuling()
     // A pending ruling outlives the session it was judging otherwise, and would
@@ -1249,6 +1266,49 @@ export class EighthWallProvider implements ARProvider, ImageHitTestContract {
 
   onFrameDiscontinuity(cb: FrameDiscontinuityListener): () => void {
     return this._epochs.subscribe(cb)
+  }
+
+  /**
+   * Camera frames for a subscriber (`ARProvider.onCameraFrame`), from the pixel array this provider already has for
+   * `captureFrame()`: the full RGBA frame, taken from the documented `camerapixelarray` result of the pipeline module
+   * (https://8thwall.org/docs/api/engine/camerapixelarray/pipelinemodule), whose configuration this does not touch. The feed copies the
+   * pixels once per frame it delivers and does nothing at all while nobody is subscribed.
+   */
+  onCameraFrame(cb: (frame: CameraFrame) => void, options: CameraFrameOptions): CameraFrameSubscription {
+    return this._cameraFeed.subscribe(cb, options)
+  }
+
+  /** The camera feed's counters, for `?debug=tag`: why a frame did or did not come. */
+  cameraFeedStats(): Readonly<CameraFeedStats> {
+    return this._cameraFeed.stats
+  }
+
+  /**
+   * Hand the feed this tick. Called from `onUpdate`, after the tick's reality has been read, because that is where the pose
+   * arrives: the pixel array came with `onProcessCpu` of the same tick (held by reference in `_tickPixelArray`), or with
+   * `onUpdate` itself when the engine passes it there. Only called with a subscriber present.
+   *
+   * The pose is the tick's only if this tick's reality was read: `_poseAtMs` is the frame time it was read at, and it has not
+   * moved since the last offer when no reality arrived, in which case the feed is told the pose is not current rather than
+   * handed the same pose under a new time.
+   */
+  private _offerCameraFrame(args: { processGpuResult?: Record<string, unknown>; frameStartResult?: Record<string, unknown> }): void {
+    const pixelArray = args.processGpuResult?.['camerapixelarray'] ?? this._tickPixelArray
+    this._tickPixelArray = null
+    const readAt = this._poseAtMs
+    const fresh = readAt !== null && readAt !== this._feedPoseAtMs
+    this._feedPoseAtMs = readAt
+    this._cameraFeed.offer({
+      timestampMs: readAt ?? 0,
+      repeatFrame: args.frameStartResult?.['repeatFrame'] === true,
+      pose: this._slamReady ? this.latestPose : null,
+      poseCurrent: fresh && !this._poseHeld,
+      epoch: this._epochs.epoch,
+      trackingStatus: this._lastTrackingStatus || 'UNKNOWN',
+      projection: this._projection,
+      pixelArray,
+      display: this._canvas ? { canvasWidth: this._canvas.width, canvasHeight: this._canvas.height, fit: this._fit } : undefined,
+    })
   }
 
   captureFrame(timeoutMs = 4000): Promise<RawFrame> {
