@@ -26,7 +26,7 @@ The Quest app signs in to a server that has sign-in on, through the existing she
 
 ## Before implementation
 
-- Read `server/portal_auth.ts` whole, `tests/unit/deno/portal_auth.test.ts`, `src/shared/shell-sign-in.ts` and the desktop deep-link note near `server/portal_auth.ts:394`.
+- Read `server/portal_auth.ts` whole, `tests/unit/server/portal_auth.test.ts`, `src/shared/shell-sign-in.ts` and the desktop deep-link note near `server/portal_auth.ts:394`.
 
 ## Open questions & answers
 
@@ -35,7 +35,7 @@ The Quest app signs in to a server that has sign-in on, through the existing she
 
 ## Files impacted
 
-- Changed: `server/portal_auth.ts`, `tests/unit/deno/portal_auth.test.ts`.
+- Changed: `server/portal_auth.ts`, `tests/unit/server/portal_auth.test.ts`.
 - New: the sign-in client and intent filter in `meta/`.
 
 ## Schema required
@@ -55,7 +55,7 @@ None. The allowlist is a constant, not a config variable.
 
 ```bash
 export ONNXRUNTIME_NODE_INSTALL_CUDA=skip
-deno task check && deno test -A tests/unit/deno/portal_auth.test.ts
+deno task check && deno test -A tests/unit/server/portal_auth.test.ts
 cd meta && ./gradlew testDebugUnitTest --no-daemon
 ```
 

@@ -12,8 +12,7 @@ in [../../architecture.md](../../architecture.md).
 > and [`tests/mock-ui-desktop.spec.ts`](../../../tests/mock-ui-desktop.spec.ts) drive
 > the app through each state and write the PNGs here. Regenerate with:
 > ```bash
-> PORT=8100 INFERENCE_MODE=mock deno run --allow-net --allow-read --allow-write \
->   --allow-env --allow-ffi --allow-run main.ts &
+> PORT=8100 INFERENCE_MODE=mock ALLOW_DEV_ORIGINS=1 node server/main.ts &
 > TAILSCALE_HOSTNAME=localhost API_TARGET=http://localhost:8100 npx vite --host &
 > VITE_URL=https://localhost:5173 API_URL=http://localhost:8100 \
 >   CHROMIUM_EXECUTABLE_PATH=<chrome> \

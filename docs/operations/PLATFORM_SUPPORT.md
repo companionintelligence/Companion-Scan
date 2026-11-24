@@ -8,9 +8,9 @@ here is presented as measurement unless it was measured.
 ## Ask your own machine instead of reading a table
 
 ```bash
-deno run --allow-read --allow-env --allow-run server/capabilities.ts          # human table
-deno run --allow-read --allow-env --allow-run server/capabilities.ts --json   # machine-readable
-deno run --allow-read --allow-env --allow-run server/capabilities.ts --no-versions  # stat-only, no subprocesses
+node server/capabilities.ts                 # human table
+node server/capabilities.ts --json          # machine-readable
+node server/capabilities.ts --no-versions   # stat-only, no subprocesses
 ```
 
 `server/capabilities.ts` probes every external tool the pipelines shell out to and reports,
@@ -26,7 +26,9 @@ where it looked would have cost the same hours in a nicer format.
 
 ## What was measured, and where
 
-The **VERIFIED** rows below all come from one host, probed on 2026-08-30:
+The **VERIFIED** rows below all come from one host, probed on 2026-08-30, when the server and
+this report still ran on Deno. Since wave 18 the report runs on Node and its first line names the
+Node version (`node 26.13.1`) where this one names Deno's:
 
 > Ubuntu 26.04.1 LTS, Linux 7.0.0-30-generic x86_64, Deno 2.9.5,
 > NVIDIA GeForce RTX 4080 Laptop GPU, driver 610.57.04, 12282 MiB.
@@ -65,7 +67,7 @@ lying about the process that actually needs it.
 
 | | Linux x86_64 | macOS (Apple Silicon) | macOS (Intel) | Windows |
 | --- | --- | --- | --- | --- |
-| Deno server + Vite frontend | **VERIFIED** | UNVERIFIED | UNVERIFIED | UNVERIFIED |
+| API server (Node) + Vite frontend | **VERIFIED** | UNVERIFIED | UNVERIFIED | UNVERIFIED |
 | Tool resolution (`server/capabilities.ts`) | **VERIFIED** | UNVERIFIED | UNVERIFIED | UNVERIFIED — both branches unit-tested, never run on Windows |
 | ffmpeg / ffprobe ingest | **VERIFIED** (7.0.2) | UNVERIFIED (`brew install ffmpeg` lands on PATH) | UNVERIFIED | UNVERIFIED |
 | COLMAP pose solve | **VERIFIED** (3.13.0 CUDA build, CPU features) | UNVERIFIED (`brew install colmap`) | UNVERIFIED | UNVERIFIED |
@@ -84,7 +86,7 @@ measurement lives. Spirula has not trained a capture here.
 1. `isRunnable()` and `whichPath()` (`server/exec_probe.ts`) both carry an explicit Windows
    branch — no POSIX exec bit, `;` as the PATH separator, PATHEXT suffixes tried before the
    bare name. Both branches are unit-tested from Linux via the injectable `ExecPlatform`
-   (`tests/unit/deno/capabilities.test.ts`, `tests/unit/deno/exec_probe.test.ts`).
+   (`tests/unit/server/capabilities.test.ts`, `tests/unit/server/exec_probe.test.ts`).
    **UNVERIFIED on real Windows** — the tests prove the logic, not the host.
 2. Every fallback install path is built from the home directory by `resolveHome`
    (`server/exec_probe.ts`): `HOME`, then `USERPROFILE`, for the runners and the report alike.
@@ -93,14 +95,14 @@ measurement lives. Spirula has not trained a capture here.
    **UNVERIFIED on real Windows.** Setting the per-tool env var (`COLMAP_BIN`, `BRUSH_BIN`, …)
    sidesteps the question and is the recommended Windows configuration.
 3. The fallback paths keep forward slashes after the home prefix
-   (`C:\Users\you/brush/target/release/brush-cli`). Deno's filesystem calls accept mixed
-   separators, so this is expected to work — **UNVERIFIED**.
+   (`C:\Users\you/brush/target/release/brush-cli`). Node's filesystem calls accept mixed
+   separators on Windows, so this is expected to work — **UNVERIFIED**.
 
 ## Accelerators
 
 | | NVIDIA / CUDA | AMD / ROCm | Apple Silicon / Metal + MPS | Intel / XPU | CPU only |
 | --- | --- | --- | --- | --- | --- |
-| Driver detected by the report | **VERIFIED** (nvidia-smi, on an RTX 4080 Laptop in the 2026-08-30 probe and an RTX 3070 on 2026-11-12) | UNVERIFIED (`rocminfo` / `rocm-smi` probe never exercised on AMD hardware) | UNVERIFIED (derived from `Deno.build`, no hardware) | UNVERIFIED — the report does not probe Intel GPU hardware; the torch check below is the only signal |
+| Driver detected by the report | **VERIFIED** (nvidia-smi, on an RTX 4080 Laptop in the 2026-08-30 probe and an RTX 3070 on 2026-11-12) | UNVERIFIED (`rocminfo` / `rocm-smi` probe never exercised on AMD hardware) | UNVERIFIED (derived from `process.platform` and `process.arch`, no hardware) | UNVERIFIED — the report does not probe Intel GPU hardware; the torch check below is the only signal |
 | torch reports the device | **VERIFIED** — `2.13.0+cu130` (2026-08-30) and `2.11.0+cu128` on an RTX 3070 (2026-11-12): `cuda_available=True`, `version.hip=None` | UNVERIFIED | UNVERIFIED | UNVERIFIED — `torch.xpu.is_available()` is probed; a CUDA wheel answers `False` | **VERIFIED** — a torch-less `python3` is reported as such |
 | Worker device resolution (`scripts/_torch_device.py`) | **VERIFIED** on real torch 2.11.0+cu128, RTX 3070, 2026-11-12: auto → `cuda (NVIDIA CUDA, fp16)`; an fp16 autocast forward ran on the GPU; an explicit `xpu` request downgraded to CPU with a reason | UNVERIFIED — fake-torch unit tests only | UNVERIFIED — fake-torch unit tests only; workers set `PYTORCH_ENABLE_MPS_FALLBACK` | UNVERIFIED — fake-torch unit tests only; fp32 by policy | VERIFIED — the resolver's CPU path |
 | Panoptic segmentation (Mask2Former) | **VERIFIED** end to end on 2026-11-12, RTX 3070: two real phone frames → 10 segments, device `cuda (NVIDIA CUDA, fp16)` | UNVERIFIED | UNVERIFIED | UNVERIFIED | Unmeasured here |
@@ -132,7 +134,9 @@ device on a single-GPU AMD box. On a multi-GPU AMD box, set it to choose the car
 
 No Apple hardware was available, so everything in this section is UNVERIFIED by reading:
 
-- The report detects Apple Silicon from `Deno.build.os === 'darwin' && arch === 'aarch64'`.
+- The report detects Apple Silicon from `platform === 'darwin' && arch === 'aarch64'`, read from
+  `process.platform` and `process.arch` (Node's `arm64` is reported as `aarch64`, `hostArch` in
+  `server/exec_probe.ts`).
   There is no `apple-smi` to ask, and every arm64 Mac has an integrated GPU, so the platform
   fact *is* the measurement. An Intel Mac correctly reports not-detected.
 - Python worker device selection (MPS included) goes through `scripts/_torch_device.py`,
@@ -183,7 +187,7 @@ ffmpeg has **no** env var on purpose. `scripts/ingest-video.mjs` spawns the bare
 resolves it from `PATH`, so an override that only the capability report honoured would
 describe a resolution the ingest path cannot make (ADR 0001: don't invent a second name for
 something that already has one). If ffmpeg is installed and ingest still fails, restart the
-Deno server — it resolves ffmpeg from the `PATH` it started with, not the one in your shell.
+server — it resolves ffmpeg from the `PATH` it started with, not the one in your shell.
 
 ## Known not to work
 

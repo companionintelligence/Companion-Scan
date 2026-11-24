@@ -101,13 +101,15 @@ config rather than by flipping the constant.
 
 ## Verified on this box, 2026-08-29
 
+The server then ran on Deno (until wave 18), so the record's commands are Deno's.
+
 ```bash
 deno run -A <runner calling runColmapPoses({ sessionDir })>  # 17 keyframes
 ```
 
 Result: `status: "ok"`, 5.9 s, binary resolved through the fallback to
 `/home/<user>/.local/micromamba/envs/colmap/bin/colmap`, poses and seed cloud
-written. `deno test -A tests/unit/deno/colmap_poses.test.ts` — 27 passed.
+written. `deno test -A tests/unit/server/colmap_poses.test.ts` — 27 passed.
 
 **But the reconstruction was degenerate: 3 of 17 images registered, 1
 triangulated point.** That is a capture problem, not a tool problem. The

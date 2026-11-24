@@ -16,7 +16,7 @@ Before this ticket the committed origin was two separate rings, one per point, w
 ## Non-goals
 
 - Do not change how the frame is computed. `sessionToProject`, the two-point transform and the separation check are unchanged.
-- Do not edit `buildAnchorMarker` in `src/world/anchor-marker.ts`. The World Editor draws it (`src/viewer/viewer.ts`, the `buildAnchorMarker()` call near line 1802), and `tests/unit/deno/anchor_calibration.test.ts` pins its group yaw.
+- Do not edit `buildAnchorMarker` in `src/world/anchor-marker.ts`. The World Editor draws it (`src/viewer/viewer.ts`, the `buildAnchorMarker()` call near line 1802), and `tests/unit/server/anchor_calibration.test.ts` pins its group yaw.
 - Do not edit `src/viewer/**`. The Spatial Editor session owns it.
 - Do not edit the native AR provider or its plugins (`src/ar/native.ts`, `native-bridge.ts`, `native-codec.ts`, `mobile/**`, `desktop/**`). Other sessions own them.
 - Do not change `src/ar/eighthwall.ts`, `src/ar/webxr.ts` or `src/ar/provider.ts`. Both runtimes already feed the floor estimate through the point cloud, and the provider contract is unchanged.

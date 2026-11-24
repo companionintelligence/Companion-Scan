@@ -55,7 +55,7 @@ the runner helpers that were copied five times into one copy each.
 ## Before implementation
 
 - `server/capabilities.ts` (`toolSpecs`, `resolveTool`, `probeCapabilities`, `assessPipelines`)
-  and `tests/unit/deno/capabilities.test.ts`.
+  and `tests/unit/server/capabilities.test.ts`.
 - `server/exec_probe.ts`, `server/run_with_deadline.ts`.
 - Every runner's resolution and skip path: `splat_train.ts`, `spirula_train.ts`,
   `colmap_poses.ts` (`locateColmapBin`), `lingbot_map.ts`, `splat_finish.ts`, `splat_detect.ts`,
@@ -135,7 +135,7 @@ Changed:
   README.
 - `docs/pipelines/4d-person.md`, `docs/pipelines/splat-train.md`, others where a sentence changed.
 
-New tests: `tests/unit/deno/wp-runners-*.test.ts` and `subsystems/4d-capture/test/*.test.mjs`.
+New tests: `tests/unit/server/wp-runners-*.test.ts` and `subsystems/4d-capture/test/*.test.mjs`.
 
 ## Schema required
 
@@ -173,17 +173,17 @@ New tests: `tests/unit/deno/wp-runners-*.test.ts` and `subsystems/4d-capture/tes
 
 ## Tests
 
-- [x] `tests/unit/deno/wp-runners-tool-resolve.test.ts`: env, then PATH, then fallback; an env
+- [x] `tests/unit/server/wp-runners-tool-resolve.test.ts`: env, then PATH, then fallback; an env
       var naming nothing is missing; the report and a runner resolve the same path.
-- [x] `tests/unit/deno/wp-runners-skips.test.ts`: Brush on PATH trains; a missing LingBot
+- [x] `tests/unit/server/wp-runners-skips.test.ts`: Brush on PATH trains; a missing LingBot
       interpreter, splat-finish node and SenseNova bash each skip with a remediation and a
       manifest.
-- [x] `tests/unit/deno/wp-runners-env.test.ts`: `intFromEnv` and `numFromEnv` edges.
-- [x] `tests/unit/deno/wp-runners-thing-canon.test.ts`: prompt canon, the residual folds, and
+- [x] `tests/unit/server/wp-runners-env.test.ts`: `intFromEnv` and `numFromEnv` edges.
+- [x] `tests/unit/server/wp-runners-thing-canon.test.ts`: prompt canon, the residual folds, and
       stored Things under the old canon.
-- [x] `tests/unit/deno/wp-runners-4d-e2e.test.ts`: `runPerson4D` against the real service on an
+- [x] `tests/unit/server/wp-runners-4d-e2e.test.ts`: `runPerson4D` against the real service on an
       ephemeral port and a clip server built on `rangedResponse` that demands the token.
-- [x] `tests/unit/deno/wp-runners-capabilities.test.ts`: the new rows and stages.
+- [x] `tests/unit/server/wp-runners-capabilities.test.ts`: the new rows and stages.
 - [x] `subsystems/4d-capture/test/*.test.mjs`: fetch, extract, pose sampling, transforms,
       service auth.
 - [x] Existing tests that pinned old behaviour are changed deliberately (COLMAP's bare `colmap`,
@@ -191,7 +191,7 @@ New tests: `tests/unit/deno/wp-runners-*.test.ts` and `subsystems/4d-capture/tes
 
 ```
 deno task check
-deno test --allow-read --allow-write --allow-env --allow-net --allow-run --allow-ffi tests/unit/deno/wp-runners-*.test.ts
+deno test --allow-read --allow-write --allow-env --allow-net --allow-run --allow-ffi tests/unit/server/wp-runners-*.test.ts
 (cd subsystems/4d-capture && node --test test/*.test.mjs)
 npm run verify
 ```

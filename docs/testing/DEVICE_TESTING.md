@@ -1526,7 +1526,7 @@ that reaches 24 and 252.
 **Record.** Write each scan's room in a file, `{ "<scan id>": "kitchen", ... }`, and run
 
 ```bash
-deno run --allow-read --allow-env=WORLDS_DIR,SESSIONS_DIR,SCANS_DIR scripts/dx9-collect.ts --labels rooms.json
+node scripts/dx9-collect.ts --labels rooms.json
 ```
 
 (`--json` for the rows as data, `--all` for every run of a pair and not the newest.) It reads what the

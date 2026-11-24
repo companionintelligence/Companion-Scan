@@ -1,6 +1,6 @@
 # 0002. Shared types importable by the browser must live in Deno-API-free files
 
-- **Status:** Accepted
+- **Status:** Accepted; the rule is restated for Node by [ADR 0016](0016-the-server-runs-on-node-26.md)
 - **Date:** 2026-08-16
 - **Related issue:** N/A — workspace policy, surfaced while implementing
   `docs/factory/foundation-updates/0005-shared-manifest-envelope.md`.

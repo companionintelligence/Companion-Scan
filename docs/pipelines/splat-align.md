@@ -3,8 +3,8 @@
 The stage that puts real metres into a splat.
 
 > **Status: unverified end to end.** `server/splat/splat_align.ts` and its
-> refusal contract are covered by 19 Deno unit tests
-> (`tests/unit/deno/splat_align.test.ts`), including a synthetic-session run
+> refusal contract are covered by 19 server unit tests
+> (`tests/unit/server/splat_align.test.ts`), including a synthetic-session run
 > that recovers a known scale. It has **not** been run against a real
 > calibrated capture, so no measured `scale` or `residualM` from real hardware
 > is recorded anywhere yet. Per ADR 0005, do not describe this stage as
@@ -121,7 +121,7 @@ rather than blending them into one confidence number.
 ## Tests
 
 ```bash
-deno task test    # includes tests/unit/deno/splat_align.test.ts
+npm run test:server    # includes tests/unit/server/splat_align.test.ts
 ```
 
 Covered: the closed-form fit against a known rotation/translation/scale; the

@@ -101,7 +101,7 @@ its only consumer outside the calibration path. New fields are optional so no co
 updating.
 
 **ADR 0002** — `pointcloud.ts` must stay DOM- and Deno-API-free. It is imported by
-`tests/unit/deno/pointcloud.test.ts`, which runs under `deno task test` in CI; a DOM type
+`tests/unit/server/pointcloud.test.ts`, which runs under `deno task test` in CI; a DOM type
 here breaks that. This is why `ground-gate.ts` exists as a separate module, and the same
 constraint applies to anything added here.
 
@@ -118,10 +118,10 @@ ship a number here that reads as measured.
   Note the candidate producer and the lock machine are already cleanly separated; keep them so.
 - `src/ar/ground-gate.ts:31` — `GROUND_TAP_TOLERANCE_M`'s "Revisit when" names this
   estimator as the likelier cause. That sentence changes when this lands.
-- `tests/unit/deno/pointcloud.test.ts:20-30` — `floorPoints()`, the fixture helper, and
+- `tests/unit/server/pointcloud.test.ts:20-30` — `floorPoints()`, the fixture helper, and
   `fakeClock()`. Note the comment explaining why a fixed lattice collides with the 5 cm
   voxel dedupe.
-- `tests/unit/deno/pointcloud.test.ts:51-63` — the existing "converges on the floor cluster,
+- `tests/unit/server/pointcloud.test.ts:51-63` — the existing "converges on the floor cluster,
   not the furniture above it" test. It passes **today**, because its floor is 62 % of the
   cloud. It must keep passing, and it is not sufficient.
 - `src/export/gltf.ts:139` — the other consumer.
@@ -180,7 +180,7 @@ Changed:
 - `src/scene/pointcloud.ts` — the new estimator, its constants, the extra `GroundEstimate` fields
 - `src/ar/ground-gate.ts` — `GROUND_TAP_TOLERANCE_M`'s "Revisit when" paragraph, which
   currently tells the reader the estimator is probably at fault
-- `tests/unit/deno/pointcloud.test.ts` — the regression case and the new coverage
+- `tests/unit/server/pointcloud.test.ts` — the regression case and the new coverage
 - `docs/factory/09-ground-anchor-calibration/README.md`, `HANDOFF.md`,
   `docs/factory/atlas.html` — ticket table, order of work, and the atlas entry
 

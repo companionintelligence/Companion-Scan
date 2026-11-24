@@ -112,7 +112,7 @@ situated reasoning needs and it is cheap to build in now and expensive to retrof
 New:
 - `server/canvas/equirect.ts` — the pure maths (`unproject`, `toSpherical`, `canvasTexelFor`)
 - `server/canvas/build_canvas.ts` — the driver
-- `tests/unit/deno/equirect.test.ts`
+- `tests/unit/server/equirect.test.ts`
 - `tests/api-build-canvas.spec.ts`
 
 Changed:

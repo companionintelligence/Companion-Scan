@@ -96,7 +96,7 @@ on CPU. Brush and Spirula are not usable on CPU.
 ## Check what a box will actually use
 
 ```bash
-deno run --allow-read --allow-env --allow-run server/capabilities.ts
+node server/capabilities.ts
 ```
 
 The torch line reports the accelerator: `cuda`, `rocm`, `mps`, `xpu` or `cpu`.

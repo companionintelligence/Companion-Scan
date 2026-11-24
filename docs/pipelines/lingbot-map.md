@@ -13,7 +13,7 @@ Scan Spatial Editor can load alongside the original SLAM scan.
 ## Architecture
 
 ```
-Mobile app   ──upload .glb──►  Deno server  ──fork──►  scripts/lingbot_map_worker.py
+Mobile app   ──upload .glb──►  API server   ──fork──►  scripts/lingbot_map_worker.py
    │                              │                          │
    └──stream keyframes──►  scans/sessions/<id>/         loads torch + LingBot-Map
                                   │                    runs streaming inference
@@ -39,14 +39,14 @@ Mobile app   ──upload .glb──►  Deno server  ──fork──►  scrip
 | File | Purpose |
 |------|---------|
 | `scripts/lingbot_map_worker.py` | Python entrypoint that runs LingBot-Map inference and writes the three sibling artifacts. |
-| `server/lingbot-map/lingbot_map.ts` | Deno-side driver that spawns the Python worker, parses the result manifest, and emits the GLB sidecar. |
+| `server/lingbot-map/lingbot_map.ts` | Server-side driver that spawns the Python worker, parses the result manifest, and emits the GLB sidecar. |
 | `server/lingbot-map/lingbot_map_glb.ts` | PLY → quantised GLB POINTS primitive (via gltf-transform). |
 | `lingbot_map_ply.ts` | Runtime-agnostic binary-LE PLY parser shared by server + browser. |
 | `src/viewer/lingbot-map.ts` | Three.js loader that pulls the PLY + poses and overlays them under the selected scan. |
 | `scripts/fetch-lingbot-test-video.mjs` | Downloads the CC-BY reference clip. |
 | `scripts/make-lingbot-fixture.mjs` | Extracts keyframes via ffmpeg and synthesises the artifact triple. |
 | `tests/mock-lingbot-map.spec.ts` | Playwright integration test + screenshot capture. |
-| `lingbot_map.test.ts` | Deno unit tests for the spawn driver. |
+| `lingbot_map.test.ts` | Server unit tests (`tests/unit/server/`) for the spawn driver. |
 | `lingbot_map_glb.test.ts` | Node `node:test` for the PLY → GLB pipeline. |
 
 ## Environment variables
@@ -157,7 +157,7 @@ $ ~/.venvs/lingbot-map/bin/python scripts/lingbot_map_worker.py \
 [lingbot-map] lingbot_map import failed: No module named 'lingbot_map.models.lingbot_map'
 ```
 
-and the same result through the Deno driver
+and the same result through the server's driver
 (`runLingBotMapReconstruction`, `LINGBOT_MAP_PYTHON` set to the venv):
 
 ```json
@@ -294,8 +294,8 @@ artifact carries the explanation:
 Three layers of test coverage:
 
 ```bash
-# Deno unit tests — spawn surface + validation gates
-deno test --allow-read --allow-write --allow-env --allow-run lingbot_map.test.ts
+# Server unit tests — spawn surface + validation gates
+node --test tests/unit/server/lingbot_map.test.ts
 
 # Node unit tests — PLY parser + GLB builder
 npm run test:lingbot:glb

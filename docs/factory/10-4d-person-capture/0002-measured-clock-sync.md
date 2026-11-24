@@ -120,7 +120,7 @@ the ones whose symmetry assumption holds.
 New:
 - `src/capture/clock-sync.ts` — the client estimator (pure, no DOM, so it unit-tests in Node)
 - `server/world/take_sync.ts` — server-side aggregation of member offsets into a residual
-- `tests/unit/deno/take_sync.test.ts`
+- `tests/unit/server/take_sync.test.ts`
 - `tests/unit/node/clock_sync.test.ts`
 
 Changed:

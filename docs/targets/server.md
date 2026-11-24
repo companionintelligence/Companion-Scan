@@ -1,6 +1,6 @@
 # Scan server
 
-The one server every target talks to: a Deno API that stores scans and Places, runs the
+The one server every target talks to: a Node 26 API that stores scans and Places, runs the
 background jobs, and runs object detection. The phone apps and the desktop app have no server of
 their own; each is pointed at a Scan server by its https address.
 
@@ -65,8 +65,9 @@ someone ran it and read the output:
   - See [physag3d.md](../pipelines/physag3d.md) and
     [ticket 0011](../factory/13-device-targets/0011-physag3d-interactive-asset-job.md). Unit tests
     only; no real run.
-- **CI.** `deno task check` and `deno task test` run in `.github/workflows/deno-ci.yml` only when
-  started by hand. The pre-push hook runs `npm run verify` locally.
+- **CI.** `npm run typecheck:server` and `npm run test:server` run in
+  `.github/workflows/server-ci.yml` only when started by hand. The pre-push hook runs
+  `npm run verify` locally.
 
 ## Entry points and files
 
@@ -87,17 +88,19 @@ someone ran it and read the output:
 
 ## Build
 
-There is no build step: Deno runs the TypeScript. Install with `npm ci`, not `npm install`; Deno
-shares the `node_modules` tree (`deno.json`'s `nodeModulesDir: "auto"`). Type-check with
-`deno task check` after any change to `server/main.ts`. The container image is built from the
+There is no build step: Node 26 runs the TypeScript (`node server/main.ts`) by stripping its types.
+Install with `npm ci`, not `npm install`, with `ONNXRUNTIME_NODE_INSTALL_CUDA=skip` exported.
+Type-check with `npm run typecheck:server` after any server change: type stripping runs only
+erasable TypeScript, and a type-only import must say `type`, which that check enforces
+([ADR 0016](../adr/0016-the-server-runs-on-node-26.md)). The container image is built from the
 `Dockerfile` by `.github/workflows/docker-publish.yml`, run by hand.
 
 ## Run
 
 - Development: `npm start` runs the API (`npm run server`) and Vite together. On a dev machine use
   `ALLOW_DEV_ORIGINS=1 npm start` for pages on `localhost` ([README.md](../../README.md#quick-setup)).
-- `npm run server` and `deno task start` pass `--env-file`, so they read a `.env` file. The
-  systemd unit and the Docker image do not.
+- `npm run server` passes `--env-file-if-exists=.env`, so it reads a `.env` file when there is
+  one. The systemd unit and the Docker image do not.
 - A persistent Linux server: the systemd units, cert renewal and GPU inference in
   [DEPLOY.md](../operations/DEPLOY.md).
 - On a Companion Hub, the Hub supplies the Companion Memory, vision model and sign-in settings
@@ -108,7 +111,7 @@ shares the `node_modules` tree (`deno.json`'s `nodeModulesDir: "auto"`). Type-ch
   [README.md](../../README.md#reconstruction-toolchain-all-optional).
 
 Ask a running box what it has: `GET /health` reports the inference engine, and `GET /capabilities`
-(or `deno run --allow-read --allow-env --allow-run server/capabilities.ts`) reports every external
+(or `node server/capabilities.ts` from a shell) reports every external
 tool it found and where.
 
 ## Test
@@ -126,8 +129,8 @@ Before a device test, check the server the device will use:
 
 Without a device:
 
-- `deno task test`: the Deno unit suites in `tests/unit/deno/`.
-- `npm run verify`: the hermetic gate (server type-check, the Deno suites, the frontend
+- `npm run test:server`: the server unit suite in `tests/unit/server/` (`node:test`).
+- `npm run verify`: the hermetic gate (server type-check, the server suite, the frontend
   type-check and the Node suites). No servers or browsers.
 - `npm run test:api`: the `api` Playwright project against a running server.
   `npm run test:box`: the browser loop on its own scratch servers and data.

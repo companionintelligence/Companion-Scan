@@ -20,7 +20,7 @@ shows them side by side:
   camera paths imply. **Off by default** behind `PLACE_REGISTER_SFM=1`. See
   [The photo method](#the-photo-method).
 
-- Matcher: [`server/register/scan_match.ts`](../../server/register/scan_match.ts) — pure, no Deno API, runs under Node too
+- Matcher: [`server/register/scan_match.ts`](../../server/register/scan_match.ts) — pure, no file or process API, so a worker thread can run it
 - Job: [`server/register/place_register.ts`](../../server/register/place_register.ts)
 - Photo method: [`server/register/place_register_sfm.ts`](../../server/register/place_register_sfm.ts), its COLMAP steps in [`server/colmap/colmap_reference.ts`](../../server/colmap/colmap_reference.ts), and where it keeps files in [`server/register/sfm_workspace.ts`](../../server/register/sfm_workspace.ts)
 - Shared types and Apply rules: [`src/world/register-proposal.ts`](../../src/world/register-proposal.ts)
@@ -350,7 +350,7 @@ resolves to, so a link cannot carry the name the pair list uses). It makes two t
   believed there. A run removes the models made for an older generation of the Place's reference,
   including those of scans it leaves out.
 
-`tests/unit/deno/sfm_privacy.test.ts` runs the real deletion and retention code against real
+`tests/unit/server/sfm_privacy.test.ts` runs the real deletion and retention code against real
 directories for each of these.
 
 **What it cannot see.** Which room it is: photographs of a twin room with the same furniture register as
@@ -359,7 +359,7 @@ drift over a long walk, which the fit averages in. A mirrored capture (see "What
 see" below). It does not know where the Place is on Earth.
 
 **What was measured.** Only on rendered rooms, never on a real scan. With the real COLMAP 3.13
-(`COLMAP_E2E=1`, [`place_register_sfm_toy.test.ts`](../../tests/unit/deno/place_register_sfm_toy.test.ts)),
+(`COLMAP_E2E=1`, [`place_register_sfm_toy.test.ts`](../../tests/unit/server/place_register_sfm_toy.test.ts)),
 two sessions of 36 photographs each on the toy room, the second with a unit 12% bigger and a
 calibration 42 cm out: 36 of 36 photographs registered, 36 inliers, RMS 1.8 cm, the unit mismatch
 recovered as 1.119, the cameras 1.9 cm from where they were after the move, 29 seconds for the whole
@@ -457,7 +457,7 @@ A search is arithmetic on the one thread the upload routes and the event stream
 share. Measured on synthetic clouds: 0.4 to 2.3 s per pair for 66 000 to 590 000
 points over 4 to 24 rooms, and 3 to 7 s per pair for 250 000 points (the phone's
 cap) filling a disc of 10 to 24 m radius. The job yields before each pair, not
-inside one. The matcher has no Deno dependency precisely so that a worker thread
+inside one. The matcher uses no file or process API precisely so that a worker thread
 can run it later; that is the next step if DX9 shows long searches in practice.
 
 The photo method is COLMAP on the CPU and takes minutes where the wall match takes
@@ -604,7 +604,7 @@ sizes, three AR frames, one unit 12% bigger than the reference's) and checks tha
 the frames register in one model, each session on its own camera, and that the
 chain recovers each session's frame, and then on the same room with one session's
 pictures mirrored, which the chain must not register; see
-[`colmap_toy_sfm.test.ts`](../../tests/unit/deno/colmap_toy_sfm.test.ts) for the
+[`colmap_toy_sfm.test.ts`](../../tests/unit/server/colmap_toy_sfm.test.ts) for the
 numbers it measured. That room is easy: no blur, no lighting change, no moved
 furniture. Nothing has been measured on a real scan; that is DX9, and it is also
 the only thing that can set the constants, which are all adopted (3 m, 60

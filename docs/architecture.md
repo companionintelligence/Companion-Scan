@@ -48,19 +48,19 @@ graph TB
         Exporter --> ClientGLB[Download GLB]
     end
 
-    subgraph host ["Host Server — Deno + Ollama"]
+    subgraph host ["Host Server — Node + Ollama"]
         Vite[Vite Dev Server/Proxy :5173]
-        Deno[Hono HTTP Backend :8000]
+        Api[Hono HTTP Backend on Node :8000]
         Infer[Inference Engine ollama / onnx / mock]
         JobQ[World Job Queue]
         Storage[(Scans, Sessions & Worlds folders)]
         ProjectsDB[(projects.json)]
 
-        Vite --> Deno
-        Deno --> Infer
-        Deno --> JobQ
-        Deno --> Storage
-        Deno --> ProjectsDB
+        Vite --> Api
+        Api --> Infer
+        Api --> JobQ
+        Api --> Storage
+        Api --> ProjectsDB
     end
 
     %% Network Connections
@@ -100,7 +100,7 @@ sequenceDiagram
     participant Inf as Inference Router
     participant Res as Spatial Resolver
     participant Store as Detection Store
-    participant Server as Deno Server (via Vite Proxy)
+    participant Server as API Server (via Vite Proxy)
 
     User->>UI: Loads Webapp over HTTPS
     UI->>UI: Read localStorage 'infer-mode' (server default, WebGPU opt-in)
@@ -157,7 +157,7 @@ The end-to-end flow is divided into five stages:
 | **2. Scan** | Continuous SLAM | Client-Side | Processes feature points, filters out degenerate points, projects 3D pins onto the camera frustum. |
 | **3. Capture** | Object Detection | Hybrid | Grabs frame buffer, encodes JPEG, passes to Local Web Worker (WebGPU/ONNX) or POSTs to `/infer` (server engine selected by `INFERENCE_MODE`: ollama / onnx / mock). |
 | **4. Resolve** | Spatial Mapping | Client-Side | Resolves pixel-space bounding boxes to 3D coords by casting ray from NDC through camera, filtering distance, and deduping. |
-| **5. Save / Export** | Persistence & Sync | Client-Server | Writes to IndexedDB. Generates `.glb` & `.md`. POSTs files to Deno via Vite proxy, saving files to `scans/` and `summaries/`. |
+| **5. Save / Export** | Persistence & Sync | Client-Server | Writes to IndexedDB. Generates `.glb` & `.md`. POSTs files to the server via Vite proxy, saving files to `scans/` and `summaries/`. |
 
 ---
 
@@ -279,8 +279,8 @@ graph LR
         Vite[Vite Proxy :5173]
     end
 
-    subgraph deno ["Deno HTTP Server"]
-        Deno[Hono App :8000]
+    subgraph api ["API Server (Node)"]
+        Api[Hono App :8000]
         Storage[(Local Filesystem scans/ sessions/ worlds/ summaries/)]
         DB[(projects.json)]
         JobQ[World Job Queue]
@@ -291,11 +291,11 @@ graph LR
     end
 
     UI -- HTTPS POST/GET --> Vite
-    Vite -- HTTP Proxy rewrite --> Deno
-    Deno -- Local IPC --> Storage
-    Deno -- File I/O --> DB
-    Deno -- dispatch --> JobQ
-    Deno -- HTTP / in-process API --> Infer
+    Vite -- HTTP Proxy rewrite --> Api
+    Api -- Local IPC --> Storage
+    Api -- File I/O --> DB
+    Api -- dispatch --> JobQ
+    Api -- HTTP / in-process API --> Infer
 ```
 
 ### Inference Engine (engine-agnostic)
@@ -312,7 +312,7 @@ On the client, WebGPU (on-device ONNX in a Web Worker) versus server inference i
 
 ### API Routes & Interface Specification
 
-Routes are registered at the top level of `server/main.ts`. (Server-side Deno modules live under **`server/`** — `main.ts`, `inference.ts`, `jobs.ts` (legacy type shapes only), and grouped subdirectories `server/world/` (`world_job_pump.ts` and friends), `server/lingbot-map/`, `server/splat/`, and `server/migrations/`; `pipeline.ts` sits directly under `server/`. `server/repo-root.ts` exports `REPO_ROOT` for resolving paths outside `server/` — `scripts/`, `public/models/` — since a caller-relative `../` breaks the moment a file's nesting changes.)
+Routes are registered at the top level of `server/main.ts`. (Server-side modules live under **`server/`** — `main.ts`, `inference.ts`, `jobs.ts` (legacy type shapes only), and grouped subdirectories `server/world/` (`world_job_pump.ts` and friends), `server/lingbot-map/`, `server/splat/`, and `server/migrations/`; `pipeline.ts` sits directly under `server/`. `server/repo-root.ts` exports `REPO_ROOT` for resolving paths outside `server/` — `scripts/`, `public/models/` — since a caller-relative `../` breaks the moment a file's nesting changes.)
 
 | Endpoint | Method | Payload | Success Response | Notes |
 |---|---|---|---|---|
@@ -497,20 +497,20 @@ graph TD
 
     subgraph services ["Host Services"]
         ViteServ[Vite Dev Server :5173]
-        DenoServ[Deno Hono Server :8000]
+        ApiServ[Hono Server on Node :8000]
         InferServ[Inference Engine ollama :11434 / onnx / mock]
     end
 
     Device -- "Tailscale HTTPS (Let's Encrypt Cert)" --> ViteServ
-    ViteServ -- "Local Loopback Proxy (HTTP)" --> DenoServ
-    DenoServ -- "Local API / in-process" --> InferServ
+    ViteServ -- "Local Loopback Proxy (HTTP)" --> ApiServ
+    ApiServ -- "Local API / in-process" --> InferServ
 ```
 
 ### Deployment Configuration & Environment Variables
 
 None of these are required — the server runs with sensible defaults. The server reads a
-`.env` file only when `npm run server`, `npm start` or `deno task dev|start` starts it
-(they pass `--env-file`); the systemd unit and the Docker image start it without that flag.
+`.env` file only when `npm run server` or `npm start` starts it (they pass Node's
+`--env-file-if-exists=.env`); the systemd unit and the Docker image start it without that flag.
 Vite does not copy a `.env` file into `process.env`, so `vite.config.ts` never sees
 `TAILSCALE_HOSTNAME`, `VITE_HOSTNAME`, `VITE_PORT` or `API_TARGET` from one: export those in
 the shell. It does read the `VITE_` names in a `.env` file and hands them to the browser as
@@ -587,10 +587,10 @@ guess. The server engine itself is chosen by `INFERENCE_MODE` (`ollama` /
 
 ### HTTPS via the Vite proxy
 
-Mobile browsers require HTTPS to unlock camera and AR APIs, while the local Deno
-server runs plain HTTP on `:8000`. Rather than terminate TLS in Deno, Vite acts
+Mobile browsers require HTTPS to unlock camera and AR APIs, while the local API
+server runs plain HTTP on `:8000`. Rather than terminate TLS in the server, Vite acts
 as a reverse proxy: the phone talks HTTPS to `:5173`, and Vite forwards to
-`localhost:8000`. This sidesteps mixed-content blocking and keeps the Deno server
+`localhost:8000`. This sidesteps mixed-content blocking and keeps the server
 simple.
 
 ### Export — Three.js scene graph → GLB on demand
@@ -661,7 +661,7 @@ The on-device WebGPU path is **zero-data-exfiltration by design** — frames nev
 leave the phone — which matches Companion Intelligence's privacy-first stance.
 The `.glb` output plus the raw detection JSON (`label`, `worldPos`,
 `description`, `timestamp`) are intended to feed **Digital Memory**, where rooms
-and objects become first-class entities in a personal database. The Deno server
+and objects become first-class entities in a personal database. The API server
 can run on Companion Core hardware so the whole pipeline stays on infrastructure
 the user owns.
 
@@ -697,11 +697,11 @@ mapping, populating the client-side voxel `PointCloud` from `reality.worldPoints
 at ~5 cm resolution. Camera frame bytes are pulled via `XR8.CameraPixelArray` and
 compressed to JPEG for inference and keyframe streaming.
 
-### Deno FFI for ONNX
+### Native libraries for ONNX
 
-`INFERENCE_MODE=onnx` uses `onnxruntime-node`, which loads native dynamic
-libraries — this requires the `--allow-ffi` sandbox flag in Deno 2.x (already in
-the `npm run server` command).
+`INFERENCE_MODE=onnx` uses `onnxruntime-node`, a Node addon that loads native dynamic
+libraries. Node loads it as it loads any addon: no flag is needed. (Under Deno, until wave 18,
+it needed the `--allow-ffi` permission flag.)
 
 ### CORS matching
 
@@ -765,7 +765,7 @@ The following matrix documents the architectural limitations of the current desi
 | Shortcoming | Impact | Near-Term Mitigation | Long-Term Mitigation |
 |---|---|---|---|
 | **CORS Origin Fragility** | A browser on a hostname that is not configured is refused. | Origins match the configured allowlist whole (`ALLOWED_ORIGIN_PREFIX`, `TAILSCALE_HOSTNAME`, `APP_BASE_URL`). Localhost and LAN addresses need `ALLOW_DEV_ORIGINS=1`. | Implement token-based authentication session handshakes. |
-| **Silent Backend Failures** | Uncaught route crashes return a generic response or drop connection without logging details. | Register Hono's `app.onError` to log full stack traces, and add handler-entry logs (Done). | Integrate central logger service (Winston / Deno log streams). |
+| **Silent Backend Failures** | Uncaught route crashes return a generic response or drop connection without logging details. | Register Hono's `app.onError` to log full stack traces, and add handler-entry logs (Done). | Integrate central logger service (Winston or pino, on Node). |
 | **Newest Scan Race Condition** | `/process-scan` processes wrong file if uploads fail or occur out of order. | Implement `sessionId` matching in companion JSON files to lookup scans (Done). | Require explicit `scanId` parameter in API request payloads. |
 | **SLAM Coordinate Drift** | Detections lose alignment over long scanning durations (>10 mins). | Advise user via HUD to return to the origin/loop closure points. | Integrate visual-inertial loop closure (ORB-SLAM / WebXR anchor APIs). |
 | **Completion Verdict Hidden on Phone** | The quality verdict (`ready` / `needs-review` / `needs-rescan`) is computed but only surfaced in the Spatial Editor — the phone user cannot tell if they have captured enough. | Surface `qualityMonitor.summary()` as a status chip plus a Done/Finish affordance (planned; see `product/UX_FLOW.md`). | Close the export loop with an in-app "Open Place in 3D" link. |

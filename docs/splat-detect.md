@@ -96,7 +96,7 @@ re-runs that build check on every import: it aborts unless `ninja` is on `PATH` 
 will even consult its cache, and it hashes the nvcc arch flags into the cache key
 (dropping `TORCH_CUDA_ARCH_LIST` changed `-gencode` to `compute_89,code=compute_89` and
 triggered a full 2-minute rebuild instead of a cache hit). That makes the interpreter
-depend on the whole build toolchain being present in whatever environment the Deno server
+depend on the whole build toolchain being present in whatever environment the server
 happens to spawn it with. The ahead-of-time build takes the first branch of
 `_backend.py` (`from gsplat import csrc as _C`) and never touches ninja or nvcc again.
 
@@ -112,7 +112,7 @@ $ env -i HOME=$HOME PATH=/usr/bin:/bin ~/.venvs/splat-analyzer/bin/python -c \
 ### 6. Verify
 
 ```bash
-$ deno run -A server/capabilities.ts | grep -iE "splat-detect"
+$ node server/capabilities.ts | grep -iE "splat-detect"
   ok      splat-detect-python  3.12.14  /home/<user>/.venvs/splat-analyzer/bin/python  (fallback)
           torch: 2.11.0+cu128 → cuda (cuda 12.8)
   ok      splat-detect-dir     /home/<user>/splat_analyzer  (fallback)

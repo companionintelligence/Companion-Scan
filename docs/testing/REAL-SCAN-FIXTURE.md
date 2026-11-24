@@ -74,7 +74,7 @@ still telling you to fetch it from 8th.io/xrjs.
 - **A server the phone can reach over Tailscale**, with a CA-trusted cert —
   `tailscale cert <machine>.<tailnet>.ts.net`. Safari will not grant camera and
   motion on a self-signed origin, so this is not optional.
-- **A Linux box with a GPU** for the inference half: Deno API on `:8000`, the web
+- **A Linux box with a GPU** for the inference half: the API server on `:8000`, the web
   bundle on `:5173`, Ollama as a system service on GPU0, and the LingBot-Map
   torch worker spawned per job on GPU1. `../operations/DEPLOY.md` has the systemd setup;
   `scripts/install-services.sh` does it.

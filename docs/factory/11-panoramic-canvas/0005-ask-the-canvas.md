@@ -93,7 +93,7 @@ Changed:
 - `src/world/manifests.ts` — `SemanticPassManifest`
 
 New:
-- `tests/unit/deno/canvas_prompt.test.ts`
+- `tests/unit/server/canvas_prompt.test.ts`
 - `tests/api-ask-canvas.spec.ts`
 
 ## Schema required

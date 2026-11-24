@@ -14,7 +14,7 @@ product model and migration rules live in
 ## Shipped
 
 Everything below is implemented on `main` and covered by a spec in one of the
-three suites (`tests/*.spec.ts` under Playwright, `tests/unit/deno/`,
+three suites (`tests/*.spec.ts` under Playwright, `tests/unit/server/`,
 `tests/unit/node/`). The TypeScript codebase compiles clean. **The Playwright
 suite does not run green**: a set of its specs has been failing for long enough
 to be baselined in `tests/known-failures.json`, so "shipped" here means
@@ -139,7 +139,7 @@ Realistic next steps that build directly on shipped surfaces.
 - **Close the export loop** — after Export GLB, add a `View in 3D →` link back
   into the world (reuse the video-upload open pattern); gate manual export
   behind a confirm when status is `needs-rescan`.
-- **Auth / JWT** — optional token auth on the Deno server so scans and worlds
+- **Auth / JWT** — optional token auth on the server so scans and worlds
   can be namespaced per user (minimal email + magic-link UI). No auth today.
 - **Shared world links polish** — role-scoped links
   (`/worlds/<shareSlug>`, view/comment/edit/scanner/owner tokens) exist; add QR UI plus token

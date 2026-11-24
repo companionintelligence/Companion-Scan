@@ -44,7 +44,7 @@ description it fits rather than at this level.
 | [targets/android-8thwall.md](targets/android-8thwall.md) | The Android app built with `VITE_AR_RUNTIME=8thwall`, which starts on the 8th Wall engine. |
 | [targets/meta-quest.md](targets/meta-quest.md) | The native Meta Quest app: planned, no code yet. |
 | [targets/ios.md](targets/ios.md) | The iOS app on ARKit (`ScanAR`, a SceneKit view today), with its world maps. |
-| [targets/server.md](targets/server.md) | The common Scan server: the Deno API, the `WorldJob` system, the reconstruction and splat pipeline, and inference. |
+| [targets/server.md](targets/server.md) | The common Scan server: the Node API, the `WorldJob` system, the reconstruction and splat pipeline, and inference. |
 
 The desktop app, the one target that does not capture, is documented in
 [../desktop/README.md](../desktop/README.md).
@@ -63,7 +63,7 @@ The desktop app, the one target that does not capture, is documented in
 
 | Doc | What it covers |
 |---|---|
-| [operations/DEPLOY.md](operations/DEPLOY.md) | Self-hosting and deployment — Deno server, Vite proxy, Ollama, and Tailscale/HTTPS setup. |
+| [operations/DEPLOY.md](operations/DEPLOY.md) | Self-hosting and deployment — the API server, Vite proxy, Ollama, and Tailscale/HTTPS setup. |
 | [operations/PLATFORM_SUPPORT.md](operations/PLATFORM_SUPPORT.md) | What runs on which OS and accelerator, what is untested, and `server/capabilities.ts` — the probe that answers "what can this machine actually do?" for your own box. |
 | [operations/AR_DEVICE_SUPPORT.md](operations/AR_DEVICE_SUPPORT.md) | Which phones have run the live scanner and how we know, and where runtime anchors exist. |
 | [operations/CI.md](operations/CI.md) | What CI runs, and what it deliberately does not. |

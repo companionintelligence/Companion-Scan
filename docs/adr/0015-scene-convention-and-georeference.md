@@ -20,7 +20,7 @@ impossible by construction:
 1. **The scene was a mirror.** A world declares its axes as x east, y up, z north (`LocalFrame.axes.z`). That set of
    axes is left-handed (east x up points south), and every AR session is right-handed. A session placed in it by a
    rotation (`composeYUpTransform` is one) comes out mirrored east to west whatever the compass and GPS say, by up to
-   8 m for a feature 4 m from the origin (`tests/unit/deno/world_registration.test.ts` measures it). No rotation can undo
+   8 m for a feature 4 m from the origin (`tests/unit/server/world_registration.test.ts` measures it). No rotation can undo
    a mirror.
 2. **Nothing registered a Place.** `Project.geoPose` is the creating phone's one-shot fix, indoors, with its own
    compass heading attached. `anchorBearingDeg` is the bearing of the *session's* +Z, which is where the AR runtime
@@ -113,7 +113,7 @@ registration confirmed with every number as it was, or an origin that moved (whi
 nothing for the scan and is no news. Things and their observations follow the scans that were placed again by the same
 movement (a Thing's position is the detection of the scan that first saw it). A scan already in a world keeps the
 matrix it has in every other case. A Place with no georeference keeps every placement it has, byte for byte
-(`tests/unit/deno/world_placement_golden.test.ts`), and a calibrated scan in it sits at its `projectTransform` as it is.
+(`tests/unit/server/world_placement_golden.test.ts`), and a calibrated scan in it sits at its `projectTransform` as it is.
 
 **6. A world file that declares `z: 'north'` is a legacy world, and is flagged, not recomputed.** The placements in it
 that came from GPS and compass are mirrored (point 1). Nothing converts it silently: the editor says "mirrored placement"

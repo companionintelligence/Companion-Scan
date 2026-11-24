@@ -84,13 +84,13 @@ patterns:
   a validation library for one ticket.
 - **Server routes:** Hono handlers in `server/main.ts`, CORS via the existing
   `isAllowedOrigin()` allowlist (don't add a parallel allowlist), config read via
-  `Deno.env.get('X') ?? <default>` at module scope.
+  `process.env.X ?? <default>` at module scope.
 - **Client/server split:** browser code under `src/`, imports `type`-only from
   `src/world/types.ts` where possible; server-only logic stays under `server/`
   (`server/main.ts`, `server/jobs.ts`, `server/pipeline.ts`, `server/splat/splat_*.ts`,
   `server/lingbot-map/lingbot_map.ts`).
-- **Tests:** Deno tests (`*.test.ts`, in `tests/unit/deno/`, run via `deno task test`)
-  for server/pipeline code; Playwright (`tests/`) for browser flows.
+- **Tests:** server unit tests (`*.test.ts`, in `tests/unit/server/`, on `node:test`, run via
+  `npm run test:server`) for server/pipeline code; Playwright (`tests/`) for browser flows.
 - **Prior decisions:** anything in `docs/adr/` that constrains the choice — cite the
   ADR id, don't just paraphrase it.
 

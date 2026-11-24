@@ -18,7 +18,7 @@ that shapes that integration, the setup, and a measured A/B.
 ## Architecture
 
 ```
-Mobile app   ──upload .glb──►  Deno server  ──fork──►  brush-cli (Brush)
+Mobile app   ──upload .glb──►  API server   ──fork──►  brush-cli (Brush)
    │                              │                          │
    └──stream keyframes──►  scans/sessions/<id>/         trains Gaussian splat
                                   │                    on wgpu (GPU1 pin)
@@ -42,14 +42,14 @@ Mobile app   ──upload .glb──►  Deno server  ──fork──►  brush
 
 | File | Purpose |
 |------|---------|
-| `splat_train_dataset.ts` | Session → Nerfstudio `transforms.json` converter (pure, Deno-runnable, unit-tested). Reads `keyframes.jsonl` + `kf-*.jpg`, derives per-frame intrinsics, builds c2w matrices, links images, seeds init from a LingBot-Map point cloud when present. |
-| `server/splat/splat_train.ts` | Deno-side driver that builds the dataset, spawns `brush-cli`, locates the exported `.ply`, lands it, and writes a `splat-train` manifest (mirrors `server/lingbot-map/lingbot_map.ts`). |
+| `splat_train_dataset.ts` | Session → Nerfstudio `transforms.json` converter (pure, unit-tested). Reads `keyframes.jsonl` + `kf-*.jpg`, derives per-frame intrinsics, builds c2w matrices, links images, seeds init from a LingBot-Map point cloud when present. |
+| `server/splat/splat_train.ts` | Server-side driver that builds the dataset, spawns `brush-cli`, locates the exported `.ply`, lands it, and writes a `splat-train` manifest (mirrors `server/lingbot-map/lingbot_map.ts`). |
 | `src/viewer/splat-layer.ts` | Viewer loader that discovers a scan's splat manifest and loads the served `.ply` into a SparkJS `SplatMesh` under the selected scan. |
 | `scripts/make-splat-fixture.mjs` | Synthesises a valid 3DGS `.ply` + manifest fixture for the integration test (Brush can't run in CI). |
 | `tests/mock-splat-train.spec.ts` | Playwright integration test + screenshot capture. |
-| `splat_train.test.ts` | Deno unit tests for the driver + dataset converter. |
+| `splat_train.test.ts` | Server unit tests (`tests/unit/server/`) for the driver + dataset converter. |
 | `server/splat/spirula_train.ts` | The alternative backend: same options, same manifest fields, same skip/error/ok contract, spawning Spirula Studio instead of Brush. See [Backends](#backends). |
-| `spirula_train.test.ts` | Deno unit tests for the Spirula driver — arg assembly, binary resolution, checkpoint discovery, skip/error contract. |
+| `spirula_train.test.ts` | Server unit tests for the Spirula driver — arg assembly, binary resolution, checkpoint discovery, skip/error contract. |
 
 ## Environment variables
 
@@ -123,11 +123,11 @@ COLMAP_BIN=$HOME/.local/micromamba/envs/colmap/bin/colmap
 
 Two notes worth keeping:
 
-- **`.env` is read only when `npm run server`, `npm start` or `deno task dev|start` starts the
-  server.** They pass `--env-file`, so Deno loads `.env` from the directory it starts in, and
-  `server/main.ts` then reads it through `Deno.env.get`. A server started any other way (the
-  systemd unit, the Docker image, a bare `deno run`) does not read it: export `BRUSH_BIN` into
-  that process's environment (`set -a; . ./.env; set +a` works in a shell).
+- **`.env` is read only when `npm run server` or `npm start` starts the server.** They pass
+  `--env-file-if-exists=.env`, so Node loads `.env` from the directory it starts in, and
+  `server/main.ts` then reads it through `process.env`. A server started any other way (the
+  systemd unit, the Docker image, a bare `node server/main.ts`) does not read it: export
+  `BRUSH_BIN` into that process's environment (`set -a; . ./.env; set +a` works in a shell).
 - **Check the driver's flags against the build you got.** `server/splat/splat_train.ts` passes
   `--total-train-iters`, `--sh-degree`, `--max-resolution`, `--export-every`, `--export-path`,
   `--export-name` and `--eval-every`; all seven exist in the build above, but Brush is a moving
@@ -234,7 +234,7 @@ on the way in, so callers may keep passing relative paths and everything
 downstream (symlink targets, the CLI's dataset argument, the manifest's
 `sessionDir`) is absolute. `materialiseImage` additionally `stat()`s each link
 it creates and falls back to a byte copy if it does not resolve, so a dangling
-image can no longer reach the trainer from any direction. Two Deno tests pin
+image can no longer reach the trainer from any direction. Two server unit tests pin
 this (`buildBrushDataset materialises READABLE images from a relative
 sessionDir`, `…returns an absolute datasetDir…`); both fail against the
 pre-`resolve()` converter.
@@ -470,23 +470,22 @@ right one for a room scan.
 ## Tests
 
 ```bash
-# Deno unit tests — driver validation, arg assembly, dataset converter, skip fallback
+# Server unit tests — driver validation, arg assembly, dataset converter, skip fallback
+# (Brush, Spirula, detect, finish and align)
 npm run test:splat:unit
 
-# The Spirula backend's unit tests. NOT in test:splat:unit (that script names
-# its three files explicitly) — `deno task test` sweeps the whole directory and
-# does pick them up.
-deno test --allow-read --allow-write --allow-env --allow-run \
-  tests/unit/deno/spirula_train.test.ts
+# The Spirula backend's unit tests on their own. `npm run test:server` sweeps the
+# whole directory and picks them up too.
+node --test tests/unit/server/spirula_train.test.ts
 
 # Real brush-cli, ~200 iterations, on a session already on this box. Opt-in:
-# it needs a GPU and a built Brush, so it is `ignore`d unless BRUSH_E2E=1.
+# it needs a GPU and a built Brush, so it is skipped unless BRUSH_E2E=1.
 # It DISCOVERS the session with the most kf-*.jpg under scans/sessions/
 # (SPLAT_E2E_SESSION=<sessionId> pins one); scans/ is gitignored, so there is
 # no committed fixture to point at — an earlier hardcoded fixture path meant
 # this test could not run even when asked for.
-BRUSH_E2E=1 deno test --allow-read --allow-write --allow-env --allow-run \
-  --filter BRUSH_E2E tests/unit/deno/splat_train.test.ts
+BRUSH_E2E=1 node --test --test-name-pattern=BRUSH_E2E \
+  tests/unit/server/splat_train.test.ts
 
 # Playwright integration — synthetic fixture + UI + screenshots
 npm run test:splat:make-fixture      # one-time (re-run after edits)

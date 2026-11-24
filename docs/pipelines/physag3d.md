@@ -251,8 +251,8 @@ does not change.
 
 ## Verified, and not verified
 
-**Verified, by tests and type checks only** (`tests/unit/deno/physag3d.test.ts`, `scan_deletion.test.ts`,
-`capabilities.test.ts`, one test in `keyframe_routes.test.ts`, `deno task check`):
+**Verified, by tests and type checks only** (`tests/unit/server/physag3d.test.ts`, `scan_deletion.test.ts`,
+`capabilities.test.ts`, one test in `keyframe_routes.test.ts`, the server type-check):
 
 - on the real server, without PhysAg3D: a request ends `completed` with the skip hint, a request without
   `payload.keyframe` ends `failed` with that rule, the asset folder serves its two names and nothing else, the landed GLB

@@ -34,9 +34,9 @@ Each item names its source gaps in the 'why' line, the files it likely touches, 
 
 | ID | Item | Areas | Likely files |
 | --- | --- | --- | --- |
-| W1-1 | Apply each scan's localToWorld to Thing positions (matching, inventory, focus) | cv-tagging, gltf-output, desktop-catalogue, alignment-readiness | server/main.ts, server/thing_match.ts, src/viewer/viewer.ts, tests/unit/deno/thing_match.test.ts |
-| W1-2 | Carry tag identity through exports: tagId and thingId in node extras, nearest match instead of a new Thing | gltf-output, cv-tagging, desktop-catalogue | src/export/gltf.ts, src/spatial/resolver.ts, src/scene/store.ts, server/thing_match.ts, src/shared/thing_tags.ts, tests/unit/node/glb_provenance.test.ts, tests/unit/deno/thing_match.test.ts |
-| W1-3 | Prune a removed scan's Things and observations; use the defined coverage radius to mark removal | cv-tagging, desktop-catalogue | server/main.ts, server/thing_match.ts, tests/unit/deno/thing_match.test.ts |
+| W1-1 | Apply each scan's localToWorld to Thing positions (matching, inventory, focus) | cv-tagging, gltf-output, desktop-catalogue, alignment-readiness | server/main.ts, server/thing_match.ts, src/viewer/viewer.ts, tests/unit/server/thing_match.test.ts |
+| W1-2 | Carry tag identity through exports: tagId and thingId in node extras, nearest match instead of a new Thing | gltf-output, cv-tagging, desktop-catalogue | src/export/gltf.ts, src/spatial/resolver.ts, src/scene/store.ts, server/thing_match.ts, src/shared/thing_tags.ts, tests/unit/node/glb_provenance.test.ts, tests/unit/server/thing_match.test.ts |
+| W1-3 | Prune a removed scan's Things and observations; use the defined coverage radius to mark removal | cv-tagging, desktop-catalogue | server/main.ts, server/thing_match.ts, tests/unit/server/thing_match.test.ts |
 | W1-4 | Writer basics: translation on every detection, one capture epoch and one export time, full room and floor ids | gltf-output, desktop-catalogue | src/export/gltf.ts, src/export/summary.ts, src/ar/eighthwall.ts, src/ar/webxr.ts |
 | W1-5 | One tag contract module: schema, typed reader, validator, sidecar validation at upload, no literal review fields | gltf-output, cv-tagging | src/shared/scan-tags.ts, src/export/gltf.ts, server/lingbot-map/lingbot_map_glb.ts, server/lingbot-map/lingbot_map.ts, server/main.ts, src/viewer/detections.ts, scripts/audit-scan-glb.mjs, tests/unit/node/lingbot_map_glb.test.ts |
 | W1-6 | Keep room photos out of shareable GLBs: drop thumbnails from node extras and strip them during optimize | gltf-output | src/export/gltf.ts, server/pipeline.ts, tests/unit/node/wp-c-glb-sizes.test.ts, tests/unit/node/glb_provenance.test.ts |
@@ -370,7 +370,7 @@ What works:
 - The phone uses the server path by default. On-device LFM2.5-VL runs only when the user opts into WebGPU (src/inference/router.ts:1-20).
 - Coordinate spaces are consistent per provider: 8th Wall contain is identity, WebXR and cover use the window crop, and the capture-camera ray is in the same space (src/ar/eighthwall.ts:1079-1087; src/ar/webxr.ts:726-732; tests/unit/node/wp-c-resolver-contract.test.ts:152).
 - Per-frame output is capped at 8 boxes and filtered at self-reported confidence 0.45 (server/prompt.ts:35, 41, 113). The resolver rejects non-finite positions, falls through each placement tier, and has tests for those cases (tests/unit/node/resolver.test.ts:114-150).
-- Correspondence reruns are idempotent for one export: observations are keyed by scanId:targetId (server/thing_match.ts:47, 52), covered by the Deno test at tests/unit/deno/thing_match.test.ts:58.
+- Correspondence reruns are idempotent for one export: observations are keyed by scanId:targetId (server/thing_match.ts:47, 52), covered by the Deno test at tests/unit/server/thing_match.test.ts:58.
 - Panoptic lift and memory push already map positions through projectTransform and fit.transform (server/panoptic/panoptic_lift.ts:52, 114, 409; server/memory_push.ts:700-713). That is the pattern CV-01 and CV-06 need.
 - The point cloud accumulates only while tracking is usable (src/main.ts:1749) and is voxel-deduplicated at 5 cm with a 250k cap (src/scene/pointcloud.ts:9-10, 172-186).
 - Each scan sidecar already carries worldPos, label and confidence per detection (src/export/gltf.ts:460-466), so the per-scan data for a catalogue exists.

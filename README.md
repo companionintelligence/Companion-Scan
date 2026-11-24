@@ -45,8 +45,8 @@ store. How they are built and released: [docs/targets/README.md](docs/targets/RE
 ## Common server
 
 Every target talks to one Scan server. The phone and desktop apps have none of their own: each is
-pointed at the person's own server by its https address. The server is a Deno API
-(`server/main.ts`, `:8000`) behind Vite (`:5173`, HTTPS). It:
+pointed at the person's own server by its https address. The server is a Node 26 API
+(`node server/main.ts`, `:8000`) behind Vite (`:5173`, HTTPS). It:
 
 - stores scans, sessions and Places, and sends the editor its live updates;
 - runs every background job through one `WorldJob` queue: the `optimize-scan` GLB optimizer on
@@ -69,14 +69,15 @@ The web app and its server, on one machine:
 ```bash
 git clone https://github.com/companionintelligence/CI-Spatial.git
 cd CI-Spatial
-npm ci             # not `npm install` — Deno shares this node_modules tree (deno.json's
-                   # nodeModulesDir: "auto"), and an in-place install corrupts it; the
-                   # symptom is a phantom Playwright "two different versions" error
-npm start          # Deno API server (:8000) + Vite dev server (:5173, self-signed HTTPS), together
+export ONNXRUNTIME_NODE_INSTALL_CUDA=skip   # onnxruntime-node's CUDA download answers 404
+npm ci             # not `npm install` — an in-place install has corrupted this tree before;
+                   # the symptom is a phantom Playwright "two different versions" error
+npm start          # API server (:8000) + Vite dev server (:5173, self-signed HTTPS), together
 ```
 
-`npm start` uses `concurrently` to run the Deno server on `:8000` (`npm run server`) and the
-Vite dev server on `:5173` with HTTPS (`npm run dev`).
+It needs Node 26 (see [Requirements](#requirements)). `npm start` uses `concurrently` to run the
+API server on `:8000` (`npm run server`, which is `node server/main.ts`) and the Vite dev server
+on `:5173` with HTTPS (`npm run dev`).
 
 Then open `https://localhost:5173` (accept the self-signed cert warning, or run
 `tailscale cert <your-machine>.<tailnet>.ts.net` first and restart — see `vite.config.ts` for how
@@ -165,7 +166,7 @@ flowchart LR
 ## Architecture & Flows
 
 ### 1. System Architecture
-The client coordinates AR tracking (8th Wall, WebXR, or the native ARKit or ARCore session in the apps), on-device or server VLM inference, IndexedDB state caching, and live WebRTC streaming to the desktop editor, backed by the Deno and Vite servers.
+The client coordinates AR tracking (8th Wall, WebXR, or the native ARKit or ARCore session in the apps), on-device or server VLM inference, IndexedDB state caching, and live WebRTC streaming to the desktop editor, backed by the API server (Node) and Vite.
 
 ```mermaid
 flowchart TB
@@ -186,8 +187,8 @@ flowchart TB
         LStore[(Local Storage settings)]
     end
 
-    subgraph ServerBackend ["Deno Server Backend (:8000)"]
-        HTTPGateway["Deno HTTP Server (server/main.ts)"]
+    subgraph ServerBackend ["API Server Backend (Node, :8000)"]
+        HTTPGateway["HTTP Server (server/main.ts, Hono on Node)"]
         JobRunner["WorldJob Queue (single-flight pump - server/world/world_job_pump.ts)"]
         OptimizationPipeline["Scan Optimization (Draco/LODs - server/pipeline.ts)"]
     end
@@ -274,14 +275,14 @@ graph TD
     end
 
     subgraph Transport ["Network Transports"]
-        Cap -->|Multipart POST /infer| Server_Infer["Deno Inference Server"]
-        Cap -->|Posed Keyframes /upload-scan| Server_Storage["Deno Scan Storage"]
+        Cap -->|Multipart POST /infer| Server_Infer["Inference (API server)"]
+        Cap -->|Posed Keyframes /upload-scan| Server_Storage["Scan Storage (API server)"]
         PC & Cap -->|Live JSON & video streams| WebRTC["WebRTC Broadcaster"]
         IDB -->|Sync GLB /upload-scan| Server_Storage
         IDB -->|Sync EditPatch logs| Server_Storage
     end
 
-    subgraph Server ["Deno Server Backend"]
+    subgraph Server ["API Server Backend (Node)"]
         Server_Infer -->|Forward JPEG| Ollama["Ollama Vision API (qwen3-vl)"]
         Server_Infer -->|Local ONNX| LFM["LiquidAI ONNX Runtime (LFM-2.5)"]
         Server_Storage -->|Write GLB & sidecars| ScansDir["/scans/ directory"]
@@ -310,7 +311,7 @@ graph TD
 
 
 - **AR scanning** — the 8th Wall XR Engine's SLAM tracks the environment and accumulates a colourised point cloud in real time. The engine is Niantic Spatial's proprietary binary (`public/xr.js`), free to use but not open source; see [NOTICE.md](NOTICE.md). WebXR (`/webxr.html`) and, in the phone apps, the native ARKit or ARCore session (`ScanAR`) are the other runtimes; see [Device targets](#device-targets).
-- **Engine-agnostic inference** — object detection runs through a local Deno server whose engine is chosen by `INFERENCE_MODE`: `ollama` (default, runs whatever `OLLAMA_MODEL` names — `qwen3-vl:4b` by default, with the context window pinned by `OLLAMA_NUM_CTX`), `onnx` (bundled `LiquidAI/LFM2.5-VL-1.6B-ONNX` via `onnxruntime-node`), or `mock` (deterministic colour-blob CV engine for CI/tests). An on-device WebGPU path also exists — opt-in, offered wherever the browser exposes `navigator.gpu` (see [Inference](#inference) below). `npm run eval:cv` / `npm run bench:models` score `/infer` output against ground truth from a corpus selected by `CV_CORPUS`: `real` (default, `test-data/real/`) is human-verified photographs — the only fixture that can tell a working vision model from a fabricating one, so it's what `bench:models` uses to rank candidates; `synthetic` (`test-data/cv/`) is the generated colour-rectangle corpus, a regression fixture for the *mock* engine only — scoring a real model against it warns loudly instead of reporting a silent 0%. As of this writing the real corpus is scaffolded but has **0 photographs** (a manual/physical step, not yet done — see `docs/factory/06-detection-ground-truth/`), so `bench:models` cannot rank models until it is populated.
+- **Engine-agnostic inference** — object detection runs through the local API server, whose engine is chosen by `INFERENCE_MODE`: `ollama` (default, runs whatever `OLLAMA_MODEL` names — `qwen3-vl:4b` by default, with the context window pinned by `OLLAMA_NUM_CTX`), `onnx` (bundled `LiquidAI/LFM2.5-VL-1.6B-ONNX` via `onnxruntime-node`), or `mock` (deterministic colour-blob CV engine for CI/tests). An on-device WebGPU path also exists — opt-in, offered wherever the browser exposes `navigator.gpu` (see [Inference](#inference) below). `npm run eval:cv` / `npm run bench:models` score `/infer` output against ground truth from a corpus selected by `CV_CORPUS`: `real` (default, `test-data/real/`) is human-verified photographs — the only fixture that can tell a working vision model from a fabricating one, so it's what `bench:models` uses to rank candidates; `synthetic` (`test-data/cv/`) is the generated colour-rectangle corpus, a regression fixture for the *mock* engine only — scoring a real model against it warns loudly instead of reporting a silent 0%. As of this writing the real corpus is scaffolded but has **0 photographs** (a manual/physical step, not yet done — see `docs/factory/06-detection-ground-truth/`), so `bench:models` cannot rank models until it is populated.
 - **3D object pins** — detected objects are placed at their SLAM-resolved world positions as live 3D labels tracking the scene.
 - **Onboarding Overlay** — 2-step interactive overlay guiding users through permission prompts and walking speed. Its second step lists this install's setup status (see [First-run setup status and settings](#first-run-setup-status-and-settings)). Bypasses automatically on CI/mocks and replays on help button click.
 - **HUD Quality Verdict** — Real-time rendering of `qualityMonitor.summary()` status directly on the phone HUD as a colorized verdict chip (`✓ Ready`, `⚠ Review`, `❌ Sparse`) next to the status row.
@@ -362,8 +363,7 @@ Three captures from this repo, ordered by how much the camera actually moved:
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| [Node.js](https://nodejs.org) | ≥ 22.18.0 | Vite dev server + build; type stripping for the `.mjs` scripts that import `.ts` |
-| [Deno](https://deno.land) | ≥ 2.0 | Inference server |
+| [Node.js](https://nodejs.org) | ≥ 26.13.0 | The API server (`node server/main.ts`, run by type stripping), the Vite dev server and build, every script |
 | [Python 3](https://python.org) | ≥ 3.8 | Model downloader |
 | [ffmpeg](https://ffmpeg.org) (with `ffprobe`) | any | `/ingest-video` — `scripts/ingest-video.mjs` shells out to it. Missing, an Upload Content video fails with `spawnSync ffmpeg ENOENT` inside an HTTP 500. `/ingest-photos` does not need it: `scripts/ingest-photos.mjs` reads and scales photos in Node, with `sharp` or `jimp` |
 
@@ -383,12 +383,12 @@ Everything downstream of a capture — poses, points, splat, segmentation — is
 
 **`which colmap` finding nothing does not mean COLMAP is missing.** The supported install is a micromamba environment (`~/.local/micromamba/envs/colmap/bin/colmap`), which is not on a normal login PATH — so `command -v colmap` reports nothing on a box where COLMAP is installed and working. That is why `resolveColmapBin()` (`server/colmap/colmap_poses.ts:177`) probes that path after PATH, and why the manifest records the absolute binary it actually ran. Check `params.colmapBin` in a session's `colmap-poses.manifest.json` before concluding anything from `which`. The same shape applies to Brush and Spirula, neither of which is normally on PATH either.
 
-The opposite trap for ffmpeg: it *is* on PATH here, but the server resolves it from **the PATH it was started with**. Installing ffmpeg without restarting the Deno server leaves `/ingest-video` failing while a fresh shell says everything is fine (`scripts/ingest-video.mjs:102-113`).
+The opposite trap for ffmpeg: it *is* on PATH here, but the server resolves it from **the PATH it was started with**. Installing ffmpeg without restarting the server leaves `/ingest-video` failing while a fresh shell says everything is fine (`scripts/ingest-video.mjs:102-113`).
 
 Rather than checking any of this by hand, ask the box — `server/capabilities.ts` probes every external tool the pipelines shell out to, the same way the runners resolve them:
 
 ```bash
-deno run --allow-read --allow-env --allow-run server/capabilities.ts
+node server/capabilities.ts            # --json for the report as JSON, --no-versions to skip the version probes
 ```
 
 See [docs/operations/PLATFORM_SUPPORT.md](docs/operations/PLATFORM_SUPPORT.md) for what it reports, and [docs/operations/COLMAP_SETUP.md](docs/operations/COLMAP_SETUP.md) for the COLMAP install itself.
@@ -466,7 +466,7 @@ The second step of the first-run overlay lists three things about this install. 
 
 A row reads "Status unavailable." when its endpoint does not answer. When none of the three answers, as on the static public site, one Server row replaces them: "None answered. Sign-in, saved projects and object labels need one." Reading the Companion Memory row makes the server probe the configured Companion Memory once: an empty-batch POST with a five-second timeout.
 
-`engineLoadState: ready` means Ollama answered and a model was resolved. It does not mean a capture has run. The engine loads once, when the server starts, and is not retried, so start Ollama before the Deno server, or restart the server after you start Ollama.
+`engineLoadState: ready` means Ollama answered and a model was resolved. It does not mean a capture has run. The engine loads once, when the server starts, and is not retried, so start Ollama before the server, or restart the server after you start Ollama.
 
 #### The Scan server in the Android, iOS and desktop apps
 
@@ -520,9 +520,9 @@ Once sign-in is on, the API needs a Companion session. The session comes as the 
 ├── vite.config.ts             # Vite + Tailscale HTTPS config (also the Rollup multi-page build input)
 ├── playwright.config.ts       # Playwright project configurations
 ├── package.json
-├── deno.json
+├── tsconfig.server.json       # Type-check config for server/ and scripts/*.ts (npm run typecheck:server)
 │
-├── server/                    # All server-side Deno modules (grouped out of the repo root)
+├── server/                    # All server-side modules, run by Node 26 as TypeScript (grouped out of the repo root)
 │   ├── main.ts                #   HTTP + WebSocket routes, CORS allowlist, capability-token auth
 │   ├── inference.ts           #   Engine-agnostic inference (ollama / onnx / mock)
 │   ├── prompt.ts               #   VLM prompt builder + JSON parser
@@ -593,8 +593,8 @@ Once sign-in is on, the API needs a Companion session. The session comes as the 
 │   │                           #   test-homes, video-ingest, e2e-suite, editor/lingbot/splat
 │   │                           #   mocks, webxr-emulated, xr8-scan, project, server) + fixtures/, support/
 │   └── unit/
-│       ├── deno/               #   Deno unit suites — inference_mock, lingbot_map, memory_push,
-│       │                       #     portal_auth, scan_index, session_id, splat_detect/finish/train, …
+│       ├── server/             #   The server unit suite (node:test) — inference_mock, lingbot_map,
+│       │                       #     memory_push, portal_auth, scan_index, session_id, splat_*, …
 │       └── node/               #   Node unit suites — detection_store, editor_pick, glb_provenance,
 │                                #     lingbot_map_glb, pipeline_detection_graph, resolver
 │
@@ -608,33 +608,35 @@ Once sign-in is on, the API needs a Companion session. The session comes as the 
 └── subsystems/osmo-ble/       # Self-contained BLE gimbal-control subsystem (own package.json)
 ```
 
-`deno test` unit suites live under `tests/unit/deno/`, split out from the repo root (and from
-the server modules they cover) during a later repo-tidy pass. Run them all with `deno task test`
-(see `deno.json`). The `tests/unit/node/` suites run under
-`node --experimental-strip-types --test` instead:
+The server's unit suite lives under `tests/unit/server/`. It ran on Deno until wave 18, as
+`tests/unit/deno/`, and moved with the server to Node (ADR 0016). Run it all with
+`npm run test:server` (`node --test`, one file at a time; `npm run typecheck:server` type-checks
+it). Its assertions come from `tests/unit/server/assert.ts`, which keeps `@std/assert`'s equality
+rules, and its fake upstream servers from `tests/unit/server/http_server.ts`. The
+`tests/unit/node/` suites run under `node --test` too, each with its own script:
 
-| Suite | Script | Why not Deno |
-|-------|--------|--------------|
-| `lingbot_map_glb.test.ts` | `npm run test:lingbot:glb` | exercises `@gltf-transform/functions`, which pulls in the `sharp` native binary — not something Deno's npm compat layer permits today |
-| `pipeline_detection_graph.test.ts` | `npm run test:pipeline:graph` | same `@gltf-transform` dependency; runs the real `optimizeScan()` |
-| `editor_pick.test.ts` | `npm run test:editor:pick` | covers frontend viewer code (`src/viewer/editor.ts` + `three`), not a server module |
-| `detection_store.test.ts` | `npm run test:store` | frontend code (`src/scene/store.ts`'s `indexedDB`/`navigator.storage`) — `deno test --no-check` actually passes it, but `deno.json` carries no DOM lib override the way `tsconfig.json` does for `src/`, so plain `deno check` fails on the browser globals |
-| `glb_provenance.test.ts` | `npm run test:provenance` | frontend code (`src/export/gltf.ts` + `src/viewer/editor.ts`), transitively DOM-typed — same DOM-lib gap as `detection_store.test.ts` |
-| `resolver.test.ts` | `npm run test:resolver` | covers frontend code (`src/spatial/resolver.ts` + `three`, DOM-typed `ARProvider.start(canvas)`), not a server module |
-| `inference_router.test.ts` | `npm run test:router` | covers `src/inference/router.ts`, which the test stubs `navigator`/`Worker` for — same DOM-lib gap |
-| `model_provisioning.test.ts` | `npm run test:model-provisioning` | covers `src/inference/model-provisioning.ts`'s pure helpers only, deliberately avoiding its `IndexedDB`/`fetch`/`navigator` module-scope code — same discipline as `detection_store.test.ts` |
-| `detection_gate.test.ts` | `npm run test:detection-gate` | covers `scripts/lib/detection-gate.mjs`, shared logic for the npm-script family (`eval-cv.mjs`, `check-detection-gate.mjs`, `accept-detection-baseline.mjs`) — not a Deno-invoked module |
-| `clock_sync.test.ts` | `npm run test:clock-sync` | covers `src/capture/clock-sync.ts`, which lives under `src/` with the browser code it ships alongside |
-| `clip_validation.test.ts` | `npm run test:clip-validation` | covers `src/capture/clip-validation.ts`, same `src/`-resident reason as `clock_sync.test.ts` |
-| `splat4d_window.test.ts` | `npm run test:splat4d` | covers `src/viewer/playback-clock.ts`, frontend viewer code — same class as `editor_pick.test.ts` |
+| Suite | Script | What it covers |
+|-------|--------|----------------|
+| `lingbot_map_glb.test.ts` | `npm run test:lingbot:glb` | the PLY → GLB sidecar path through `@gltf-transform/functions`, which loads the `sharp` native binary |
+| `pipeline_detection_graph.test.ts` | `npm run test:pipeline:graph` | the real `optimizeScan()`, on the same `@gltf-transform` packages |
+| `editor_pick.test.ts` | `npm run test:editor:pick` | frontend viewer code (`src/viewer/editor.ts` + `three`) |
+| `detection_store.test.ts` | `npm run test:store` | frontend code (`src/scene/store.ts`'s `indexedDB`/`navigator.storage`) |
+| `glb_provenance.test.ts` | `npm run test:provenance` | frontend code (`src/export/gltf.ts` + `src/viewer/editor.ts`), transitively DOM-typed |
+| `resolver.test.ts` | `npm run test:resolver` | frontend code (`src/spatial/resolver.ts` + `three`, DOM-typed `ARProvider.start(canvas)`) |
+| `inference_router.test.ts` | `npm run test:router` | `src/inference/router.ts`, with `navigator` and `Worker` stubbed |
+| `model_provisioning.test.ts` | `npm run test:model-provisioning` | `src/inference/model-provisioning.ts`'s pure helpers only, deliberately avoiding its `IndexedDB`/`fetch`/`navigator` module-scope code |
+| `detection_gate.test.ts` | `npm run test:detection-gate` | `scripts/lib/detection-gate.mjs`, shared logic for the npm-script family (`eval-cv.mjs`, `check-detection-gate.mjs`, `accept-detection-baseline.mjs`) |
+| `clock_sync.test.ts` | `npm run test:clock-sync` | `src/capture/clock-sync.ts`, which lives under `src/` with the browser code it ships alongside |
+| `clip_validation.test.ts` | `npm run test:clip-validation` | `src/capture/clip-validation.ts` |
+| `splat4d_window.test.ts` | `npm run test:splat4d` | `src/viewer/playback-clock.ts`, frontend viewer code |
 
 Every suite above except `test:lingbot:glb` is wired into `npm run verify` — it runs on its own
 because `@gltf-transform/functions` pulling in `sharp`'s native binary makes it the one suite
 that can fail on a machine with no prebuilt binary for its platform, which shouldn't block a
 routine `verify`.
 
-CI runs `deno task check` (type-check) and `deno task test` only when started by hand, via
-[`.github/workflows/deno-ci.yml`](.github/workflows/deno-ci.yml) (`workflow_dispatch`). Nothing runs it on push or PR. The pre-push hook runs `npm run verify` locally. The full containerized
+CI runs `npm run typecheck:server` and `npm run test:server` only when started by hand, via
+[`.github/workflows/server-ci.yml`](.github/workflows/server-ci.yml) (`workflow_dispatch`). Nothing runs it on push or PR. The pre-push hook runs `npm run verify` locally. The full containerized
 smoke test (Docker build + `/health` + static UI gate) is manual via
 [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml).
 
@@ -644,26 +646,27 @@ smoke test (Docker build + `/health` + static UI gate) is manual via
 
 The repo defines over 140 npm scripts (`package.json`). The most common:
 
-> **Node ≥ 22.18.0 is required.** `scripts/generate-test-homes.mjs`, `scripts/generate-cv-images.mjs`
-> and `scripts/smoke-pipeline.mjs` import TypeScript directly, which only works once Node strips
-> types by default (22.18.0+). On an older Node they fail with a bare `ERR_UNKNOWN_FILE_EXTENSION`.
-> `.node-version` is read automatically by the version managers that support it (fnm, nodenv,
-> Volta); nvm and asdf read their own files (`.nvmrc`, `.tool-versions`), so on those you either
-> configure them to read `.node-version` or select 22.18.0 yourself. `engine-strict=true` in
-> `.npmrc` is the backstop either way — it makes `npm ci` refuse rather than warn. This stays on the same major line as the Dockerfile’s floating
-> `node:22-alpine` tag.
+> **Node ≥ 26.13.0 is required.** The server runs its TypeScript directly (`node server/main.ts`),
+> and so do the scripts that import `.ts` (`scripts/generate-test-homes.mjs`,
+> `scripts/generate-cv-images.mjs`, `scripts/smoke-pipeline.mjs`): Node strips the types, and
+> there is no build step. `.node-version` (26.13.1) is read automatically by the version managers
+> that support it (fnm, nodenv, Volta); nvm and asdf read their own files (`.nvmrc`,
+> `.tool-versions`), so on those you either configure them to read `.node-version` or select
+> 26.13.1 yourself (`nvm install 26.13.1`). `engine-strict=true` in `.npmrc` is the backstop either
+> way — it makes `npm ci` refuse rather than warn. The Dockerfile's floating `node:26-alpine` and
+> `node:26-trixie-slim` tags stay on the same major line.
 
 | Script | Description |
 |--------|-------------|
-| `npm start` | Start both Vite and Deno servers together |
+| `npm start` | Start both the API server and Vite together |
 | `npm run dev` | Vite only |
-| `npm run server` | Deno inference server only |
+| `npm run server` | The API server only (`node --watch server/main.ts`, reading `.env` when there is one) |
 | `npm run build` | TypeScript check + Vite production build |
 | `npm test` | Playwright tests (webkit-desktop) |
 | `npm run test:mobile` | Playwright tests (webkit iPhone 15 emulation) |
 | `npm run test:iphone` | Playwright (WebKit, iPhone 15 profile) against the live tailnet URL; no real device, no USB |
 | `npm run test:house` | Two-story-house field-acceptance suite |
-| `npm run test:box` | Self-contained browser loop — boots its own Deno API (`:8100`) and Vite (`:5273`) on scratch data dirs, seeds a corpus, runs the `api` + `chromium-mock` Playwright projects, tears it all down. Never touches the long-lived `:8000`/`:5173` servers or the real `scans/`. |
+| `npm run test:box` | Self-contained browser loop — boots its own API server (`:8100`) and Vite (`:5273`) on scratch data dirs, seeds a corpus, runs the `api` + `chromium-mock` Playwright projects, tears it all down. Never touches the long-lived `:8000`/`:5173` servers or the real `scans/`. |
 | `npm run test:mock` / `test:api` | Mock-engine + API-only test tiers |
 | `npm run smoke:pipeline` | End-to-end scan-optimization pipeline smoke test |
 | `npm run setup:models` | Show the recommended Ollama vision-model catalog and install the ones you want |
@@ -672,19 +675,20 @@ The repo defines over 140 npm scripts (`package.json`). The most common:
 | `npm run ingest:video` | Ingest a walkthrough video into a session scan |
 | `npm run links:house` | Print the house-validation scanner/viewer links |
 | `npm run gen:test-data` / `seed:test-data` | Generate / seed test fixtures |
-| `npm run test:splat:unit` / `test:splat:make-fixture` | `deno test` for splat_train (Brush), spirula_train, splat_detect/finish/align + Playwright fixture builder |
-| `npm run test:mock:unit` | `deno test` for the mock inference engine |
+| `npm run typecheck:server` / `test:server` | Type-check the server and its suite / run the server unit suite (`tests/unit/server/`) |
+| `npm run test:splat:unit` / `test:splat:make-fixture` | The server suite's splat_train (Brush), spirula_train, splat_detect/finish/align files + Playwright fixture builder |
+| `npm run test:mock:unit` | The server suite's file for the mock inference engine |
 | `npm run test:lingbot:glb` / `test:lingbot:fetch-video` / `test:lingbot:make-fixture` | LingBot-Map GLB test (Node, needs `sharp`) + fixture scripts |
 | `npm run gen-icons` | Regenerate PWA icons |
 | `npm run qr` / `logs:watch` / `logs:iphone` | Dev QR link + log tailing helpers |
 
-Deno unit suites run with `deno test` (e.g. `deno test tests/unit/deno/splat_train.test.ts`).
+One file of the server suite runs on its own with `node --test` (e.g. `node --test tests/unit/server/splat_train.test.ts`).
 
 ---
 
 ## Server API
 
-All endpoints are served by the Deno server on `:8000` and proxied through Vite on `:5173`.
+All endpoints are served by the API server on `:8000` and proxied through Vite on `:5173`.
 
 The full, canonical route table lives in [docs/architecture.md](docs/architecture.md); the most-used endpoints:
 
@@ -724,7 +728,7 @@ By default, world reads are open for local/Tailscale development and world membe
 
 ## Inference
 
-Inference is engine-agnostic. The Deno server picks its engine from `INFERENCE_MODE`:
+Inference is engine-agnostic. The server picks its engine from `INFERENCE_MODE`:
 
 - **`ollama`** (default) — POSTs a JPEG to a local [Ollama](https://ollama.com) server running whatever `OLLAMA_MODEL` names (`qwen3-vl:4b` by default). Use `npm run setup:models` to see the recommended models and install the ones you want, and `npm run bench:models` to compare candidates.
 - **`onnx`** — runs the bundled `LiquidAI/LFM2.5-VL-1.6B-ONNX` locally via `onnxruntime-node` (CPU/GPU). ~2–8s on Apple Silicon.
@@ -755,7 +759,7 @@ Sessions that stream RGB keyframes can be densified server-side with [LingBot-Ma
 **Setup** (one-time, on the inference box):
 
 ```bash
-# 1. Install LingBot-Map in a venv the Deno server can reach
+# 1. Install LingBot-Map in a venv the server can reach
 git clone https://github.com/Robbyant/lingbot-map ~/lingbot-map
 python3 -m venv ~/.venvs/lingbot-map && source ~/.venvs/lingbot-map/bin/activate
 pip install -e ~/lingbot-map
@@ -763,7 +767,7 @@ pip install -e ~/lingbot-map
 # 2. Download a checkpoint (see lingbot-map README for variants)
 huggingface-cli download robbyant/lingbot-map --local-dir ~/models/lingbot-map
 
-# 3. Point the Deno server at the venv python + checkpoint
+# 3. Point the server at the venv python + checkpoint
 export LINGBOT_MAP_PYTHON=~/.venvs/lingbot-map/bin/python
 export LINGBOT_MAP_MODEL_PATH=~/models/lingbot-map/checkpoint.pt
 ```
@@ -828,7 +832,7 @@ For the two-story-house field acceptance protocol see [docs/testing/HOUSE_VALIDA
 ## Testing
 
 ```bash
-# Hermetic gate — the server, frontend and test type-checks, the full Deno suite, and
+# Hermetic gate — the server, frontend and test type-checks, the server suite, and
 # the Node unit suites `verify` names. No servers, browsers, or seeded corpus needed.
 npm run verify
 
@@ -842,7 +846,7 @@ npm run test:mobile
 # is exercised. No real device and no USB: Playwright cannot drive Safari on an iPhone.
 npm run test:iphone
 
-# Full isolated browser loop: boots its own Deno + Vite on scratch ports and
+# Full isolated browser loop: boots its own API server + Vite on scratch ports and
 # data dirs, seeds a corpus, runs the api + chromium-mock Playwright projects.
 npm run test:box
 ```

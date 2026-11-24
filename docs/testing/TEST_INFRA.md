@@ -6,15 +6,15 @@ This guide details the test architecture, configuration, commands, and setups fo
 
 ## 0. Where tests live
 
-Three suites, three runners. The directory is the runner — that separation used
-to live only in `deno.json`'s hand-maintained file list, where it was invisible
+Three suites. The directory says which runner and which command own a test — that
+separation once lived only in a hand-maintained file list, where it was invisible
 and easy to break.
 
 | Path | Runner | Command | What belongs here |
 |---|---|---|---|
 | `tests/*.spec.ts` | Playwright | `npm test` | Browser and API end-to-end specs. |
-| `tests/unit/deno/` | Deno | `deno task test` | Unit tests for server-side modules. Directory glob — adding a file needs no config change. |
-| `tests/unit/node/` | `node --test` | the `npm run test:*` scripts | Unit tests for browser-side modules that need DOM lib types (IndexedDB, canvas, `document`). Deno's type-check rejects these, which is why they are a separate suite rather than a naming convention. |
+| `tests/unit/server/` | `node --test` | `npm run test:server` | Unit tests for server-side modules, and for the `src/` modules the server shares. Directory glob — adding a file needs no config change. `npm run typecheck:server` type-checks it, against Node's types. Until wave 18 this was `tests/unit/deno/`, on Deno. |
+| `tests/unit/node/` | `node --test` | the `npm run test:*` scripts | Unit tests for browser-side modules that need DOM lib types (IndexedDB, canvas, `document`), and for scripts. Each has its own npm script, named in `npm run verify`. |
 
 Two things to know before moving a test between them:
 
@@ -31,16 +31,16 @@ Two things to know before moving a test between them:
 ## 1. Commands
 
 ### Run Server and Dev Server
-The project runs Vite (frontend dev server) and Deno (backend/inference server) concurrently. To launch both:
+The project runs Vite (frontend dev server) and the API server (backend/inference, on Node) concurrently. To launch both:
 ```bash
 npm run start
 ```
 This spawns:
-1. **Deno Server:** runs `server/main.ts` with `--allow-net`, `--allow-read`, `--allow-write`, `--allow-env`, and `--allow-ffi` permissions on port `8000`.
+1. **API server:** runs `node server/main.ts` on port `8000` (`npm run server`, which also reads a `.env` file when there is one).
 2. **Vite Dev Server:** serves the client pages (HTML/TS) on port `5173`.
 
 Alternatively, you can run them individually:
-*   **Inference Server:** `npm run server` (runs Deno)
+*   **API server:** `npm run server` (`node --watch server/main.ts`)
 *   **Vite Dev Server:** `npm run dev`
 
 ### Run E2E Test Suite
@@ -70,7 +70,7 @@ The E2E test suite is driven by **Playwright**.
 Running the Playwright suite raw is not a useful gate right now: a set of specs
 has been red for a long time, so a run that fails on all of them every time
 teaches you to ignore the result. `scripts/loop.mjs` (`npm run loop`) is the
-gate that works instead. It runs tiers in order — types, Deno units, contract
+gate that works instead. It runs tiers in order — types, server units, contract
 gates, the startup-budget UI specs — and stops at the first failure, because a
 type error makes every downstream result meaningless.
 
@@ -113,7 +113,7 @@ Configure these variables in your environment or a `.env` file:
 *   **`VITE_URL`**: The base URL where Vite is serving the application.
     *   *Default (development):* a developer machine's tailnet address (`https://<dev-machine>.<tailnet>.ts.net:5173`) or `http://localhost:5173`
     *   *Usage:* Checked by the Playwright tests to know what URL to load and query.
-*   **`PORT`**: Port for the Deno Hono server.
+*   **`PORT`**: Port for the API server (Hono on Node).
     *   *Default:* `8000`
 *   **`ALLOWED_ORIGIN_PREFIX`**: Prefix for CORS origin filtering on the server.
     *   *Default:* Localhost and tailscale networks (matched via RegExp pattern in `server/main.ts`).
@@ -154,17 +154,15 @@ The test suite contains **53+ browser and server checks** organized across 4 dis
 ## 4. Setup Guidelines
 
 ### Tailscale Integration & CORS
-The Deno server is designed to support remote devices (like iPhones) connecting over a Tailscale Tailnet.
+The API server is designed to support remote devices (like iPhones) connecting over a Tailscale Tailnet.
 *   **CORS Origin Matching:** The rules are in `server/origin.ts`; CORS, the WebSocket upgrade and the file routes all ask them. They admit the native shells (iOS `capacitor://localhost`, Android `https://localhost`, the desktop app's `tauri://localhost` and `http(s)://tauri.localhost`), the configured tailnet host and `ALLOWED_ORIGIN_PREFIX`, and the app's public address (`APP_BASE_URL`). `localhost`, `127.0.0.1` and private or Tailscale address ranges (`192.168.x.x`, `10.x.x.x`, `172.16.0.0/12`, `100.64.0.0/10`) are admitted only with `ALLOW_DEV_ORIGINS=1`, and any other `*.ts.net` name is refused. `npm run test:box` sets `ALLOW_DEV_ORIGINS=1` for the server it boots, because its pages are served from `https://localhost`; without it the viewer's `/events` WebSocket is refused and every spec that waits for a live job update times out.
 *   **Configuring HTTPS:** To use WebXR/8th Wall on a remote phone, the app must be served over HTTPS. Ensure the Tailscale URL is configured with HTTPS or use `vite-plugin-basic-ssl` to test securely.
 
-### Deno Execution Flags
-Make sure to execute Deno with the following permission flags in the Docker container or local commands:
-*   `--allow-net`: Necessary for HTTP endpoints, WebRTC signaling, and Ollama connections.
-*   `--allow-read`: Reads model files, projects, and saved scans.
-*   `--allow-write`: Saves projects, scans, and summaries.
-*   `--allow-env`: Accesses port configuration and system variables.
-*   `--allow-ffi`: Required if loading ONNX runtime compiled binaries.
+### Running the server
+`node server/main.ts` starts it, in the Docker container (its `CMD`), under the systemd unit, and in
+`npm run server`. Node has no permission flags to give it: until wave 18 the server ran on Deno with
+`--allow-net`, `--allow-read`, `--allow-write`, `--allow-env`, `--allow-ffi` and `--allow-run`
+([ADR 0016](../adr/0016-the-server-runs-on-node-26.md)). It needs Node 26 (`.node-version`).
 
 ### Offline vs. Online Scenarios
 *   **Offline Scanning:** When offline, the app writes frame data, telemetry, and temporary detections into the browser's local **IndexedDB** database.
@@ -238,13 +236,13 @@ the gate".
 
 **Two enforcement halves**, per that ticket's chosen option 3:
 
-1. **CI-executable, every PR, no model needed** (`.github/workflows/deno-ci.yml`'s
+1. **CI-executable, every PR, no model needed** (`.github/workflows/server-ci.yml`'s
    `detection-gate` job):
    - A path filter (`npm run check:detection-gate`) that WARNS if a trigger file changed
      but `test-data/real/` has 0 photographs (true as of this writing — 0001's manual step),
      and FAILS if the real corpus is populated but `test-data/real/baseline.json` wasn't
      updated in the same diff.
-   - The mock-engine pipeline regression (`npm run gate:mock`) — starts the Deno server
+   - The mock-engine pipeline regression (`npm run gate:mock`) — starts the API server
      with `INFERENCE_MODE=mock`, runs `CV_CORPUS=synthetic STRICT=1 npm run eval:cv`. Catches
      harness/schema breakage, not model-quality regressions (the mock engine runs no model).
 2. **Local, human, pre-merge — required when you touch a trigger file above:**
@@ -274,8 +272,8 @@ the gate".
 
 | Project | Needs | Command |
 |---|---|---|
-| `api` | Deno server only (no browser binary). Pair with `INFERENCE_MODE=mock` + generated corpus. | `API_URL=http://localhost:8000 npm run test:api` |
-| `chromium-mock` | Vite + Deno (mock engine) + headless Chromium (fake-media flags). | `VITE_URL=https://localhost:5173 npm run test:mock` |
+| `api` | The API server only (no browser binary). Pair with `INFERENCE_MODE=mock` + generated corpus. | `API_URL=http://localhost:8000 npm run test:api` |
+| `chromium-mock` | Vite + the API server (mock engine) + headless Chromium (fake-media flags). | `VITE_URL=https://localhost:5173 npm run test:mock` |
 
 Coverage: `api-test-homes` (24-home upload → job queue → manifests/LODs →
 world synthesis → deletion → keyframe sessions), `api-cv-mock` (/infer shape,

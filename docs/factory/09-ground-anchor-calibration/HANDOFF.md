@@ -123,7 +123,7 @@ Three things to carry forward:
   `src/world/geo.ts` return `null` for it, and a scan of the source checks that nothing else reads
   the field.
 - **The fix is analytic, not device-verified.** The sign is pinned against a physical model that
-  shares no code with the app (`tests/unit/deno/physical_oracle.ts`, used by
+  shares no code with the app (`tests/unit/server/physical_oracle.ts`, used by
   `world_registration.test.ts`): a right-handed session, a camera looking down its own −Z, a
   perfect compass. What a phone's compass actually reports (which axis of the phone, true or
   magnetic north, the screen's rotation) is not in it. The old settling check here — stand facing
@@ -163,7 +163,7 @@ baseline exists to compare against. Do not report the failure as solved.
 been observed ~0.8 m out on a real capture (returned +0.84 m while the lowest detected object
 sat at −0.05 m). It now fits the lowest well-supported horizontal band instead, and a
 constructed regression reproducing the failure at +0.79 m is pinned in
-`tests/unit/deno/pointcloud.test.ts`.
+`tests/unit/server/pointcloud.test.ts`.
 
 Two things to carry forward rather than assume solved:
 

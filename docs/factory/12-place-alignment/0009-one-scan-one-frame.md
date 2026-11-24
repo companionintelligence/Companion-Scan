@@ -35,7 +35,7 @@ ADR 0001 (reuse, do not duplicate). Extended, not added: `ScanFrameEpochLog` and
 
 ## Files impacted
 
-New: `src/ar/closure.ts`, `src/ar/drift-tap.ts`, `src/ar/calibration-epoch.ts`, `src/ar/reanchor-flow.ts`, `src/ar/reanchor-host.ts`, `src/ar/reanchor-banner.ts`, `src/ar/reanchor-copy.ts`, `server/frame_epoch_fields.ts`, the tests under `tests/unit/node/wp-09b-*.test.ts` (including `wp-09b-auto-capture-hold.test.ts`), `tests/unit/deno/frame_epoch_fields.test.ts`, `tests/mock-reanchor.spec.ts`.
+New: `src/ar/closure.ts`, `src/ar/drift-tap.ts`, `src/ar/calibration-epoch.ts`, `src/ar/reanchor-flow.ts`, `src/ar/reanchor-host.ts`, `src/ar/reanchor-banner.ts`, `src/ar/reanchor-copy.ts`, `server/frame_epoch_fields.ts`, the tests under `tests/unit/node/wp-09b-*.test.ts` (including `wp-09b-auto-capture-hold.test.ts`), `tests/unit/server/frame_epoch_fields.test.ts`, `tests/mock-reanchor.spec.ts`.
 Changed: `src/main.ts` and `server/main.ts` (hooks), `src/ar/project-calibration.ts` (hooks), `src/ar/frame-epoch.ts`, `src/capture/quality-monitor.ts`, `src/capture/keyframes.ts`, `src/capture/auto-capture.ts`, `src/scene/store.ts`, `src/shared/ar-run-id.ts`, `src/viewer/scan-calibration-chip.ts`, `src/world/types.ts` (`ScanQualitySummary.mixedEpochs` only).
 
 ## Schema required
@@ -55,7 +55,7 @@ None new. Optional keys only: `frameEpochs.closures` in the upload sidecar (pres
 ## Tests
 
 - [x] `tests/unit/node/wp-09b-*.test.ts`: the flow against a fake provider, the sequence against the real store, the closure maths on synthetic drift, the copy against ADR 0005 rule 3, the banner, the wiring of `src/main.ts` by source shape.
-- [x] `tests/unit/deno/frame_epoch_fields.test.ts` and `tests/unit/deno/scan_manifest_calibration_server.test.ts`.
+- [x] `tests/unit/server/frame_epoch_fields.test.ts` and `tests/unit/server/scan_manifest_calibration_server.test.ts`.
 - [x] `tests/mock-reanchor.spec.ts` (`?mockJumpAt`).
 
 ```

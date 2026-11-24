@@ -50,7 +50,7 @@ the runner above avoids that entirely by reading the package off disk.
 ## The stage
 
 **One command, from the repo root.** [`scripts/video-stage.mjs`](../scripts/video-stage.mjs)
-generates the fixtures, starts the Deno API on isolated data dirs, seeds world `default`, blocks
+generates the fixtures, starts the API server on isolated data dirs, seeds world `default`, blocks
 until every optimize job is `done`, and then runs Vite in the foreground. `Ctrl-C` tears both down.
 
 ```bash

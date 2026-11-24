@@ -142,8 +142,8 @@ New:
 - `server/take_id.ts` — `TAKE_ID_RE`, `newTakeId()`, mirroring `session_id.ts`
 - `src/shared/take-id.ts` — the browser half of the same vocabulary
 - `server/world/rtc_rooms.ts` — extracted room-membership logic, testable without `main.ts`
-- `tests/unit/deno/take_id.test.ts`
-- `tests/unit/deno/rtc_rooms.test.ts`
+- `tests/unit/server/take_id.test.ts`
+- `tests/unit/server/rtc_rooms.test.ts`
 - `tests/api-person-capture.spec.ts` (one consolidated spec for the whole wave, rather than one per ticket)
 
 Changed:

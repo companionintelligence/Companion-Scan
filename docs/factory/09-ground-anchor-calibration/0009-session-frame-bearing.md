@@ -54,7 +54,7 @@ happens to sit at the session's starting orientation.
 > is off by twice the turn otherwise. Its tests read the expected bearing back through
 > `composeYUpTransform`, which assumes the same direction of yaw, so they passed. The sign is now
 > pinned against a physical model that shares no code with the app
-> (`tests/unit/deno/world_registration.test.ts`); what a phone's compass reports still needs
+> (`tests/unit/server/world_registration.test.ts`); what a phone's compass reports still needs
 > the spin test on a device.
 
 ## What this does and does not fix
@@ -158,7 +158,7 @@ Changed:
 - `src/world/anchor-marker.ts` — parameter renamed to `northYawDeg`, doc corrected
 - `src/ar/project-calibration.ts` — samples the corrected bearing; marker tick takes a session yaw
 - `src/world/types.ts` — `anchorBearingDeg`'s doc comment on both tiers
-- `tests/unit/deno/anchor_calibration.test.ts` — the geometry proofs
+- `tests/unit/server/anchor_calibration.test.ts` — the geometry proofs
 - wave README, HANDOFF, `docs/factory/atlas.html`
 
 ## Schema required
@@ -188,7 +188,7 @@ carry the old meaning and cannot be migrated.
 
 - [ ] `cameraYawInSessionDeg`: identity → 180°; ±90° yaw quaternions → ∓90°; 180° → 0°
 - [ ] **The defining property:** for a grid of device bearings × camera yaws, the frame bearing
-      is the true bearing of session +Z in a physical model (`tests/unit/deno/physical_oracle.ts`).
+      is the true bearing of session +Z in a physical model (`tests/unit/server/physical_oracle.ts`).
       It is not read back through `composeYUpTransform(frameBearing, cameraSessionYaw)`, which
       assumes the same direction of yaw as the function under test and so cannot see a sign error
 - [ ] **The bug, as a test:** at the session's starting orientation the uncorrected value is

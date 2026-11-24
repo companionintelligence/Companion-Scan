@@ -34,7 +34,7 @@ Fix the inventory findings that live in the server core: the hard-coded host fal
 
 - `CLAUDE.md`, ADR 0001, ADR 0003, ADR 0004.
 - `server/main.ts` (all of it), `server/portal_auth.ts`, `server/origin.ts`, `server/scan_deletion.ts`, `server/session_deletion.ts`, `server/world/world_job_pump.ts`, `server/wp-a-body.ts`, `server/wp-a-auth.ts`, `server/inference.ts`, `server/memory_push.ts`, `server/keyframe_retention.ts`, `server/place_frame_routes.ts`, `vite.config.ts`, `.env.example`.
-- The spawn harness in `tests/unit/deno/export_route_guard.test.ts` (main.ts serves at import, so routes are tested over HTTP against a spawned server).
+- The spawn harness in `tests/unit/server/export_route_guard.test.ts` (main.ts serves at import, so routes are tested over HTTP against a spawned server).
 
 ## Open questions & answers
 
@@ -66,8 +66,8 @@ Fix the inventory findings that live in the server core: the hard-coded host fal
 ## Files impacted
 
 - Changed: `server/main.ts`, `server/portal_auth.ts`, `server/origin.ts`, `server/inference.ts`, `server/memory_push.ts`, `server/scan_deletion.ts`, `server/session_deletion.ts`, `server/keyframe_retention.ts`, `server/place_frame_routes.ts`, `server/world/world_job_pump.ts`, `vite.config.ts`, `.env.example`, `tests/server.spec.ts`, `tests/project.spec.ts`, existing Deno route tests that created a world by reading it.
-- New: `server/world/job_request.ts` (the job rules table, request validation, the off-box gate), `server/world/world_access.ts` (who is calling a world route), `server/scan_summaries.ts` (where a summary lives, and its deletion), `server/scan_take_clips.ts` (the two optional 4D clip fields 0002 asked for), `server/wp-a-static.ts` (the `/editor` rewrite both servers use), `tests/unit/deno/server_core_*.test.ts`, `tests/unit/deno/server_core_harness.ts`.
-- Also changed: `server/session_deletion.ts` (a `signal`; `.lingbot.glb` is derived), `server/wp-a-log.ts` (`withoutServerPaths`, `jsonWithoutServerPaths`), `deploy/cscan.env.example`, `tests/unit/node/stitch_wiring.test.ts`, `tests/unit/node/wp-15a-register-proposal-wiring.test.ts`, `tests/unit/deno/physag3d.test.ts` (one wiring case), and the route tests that made worlds by reading them.
+- New: `server/world/job_request.ts` (the job rules table, request validation, the off-box gate), `server/world/world_access.ts` (who is calling a world route), `server/scan_summaries.ts` (where a summary lives, and its deletion), `server/scan_take_clips.ts` (the two optional 4D clip fields 0002 asked for), `server/wp-a-static.ts` (the `/editor` rewrite both servers use), `tests/unit/server/server_core_*.test.ts`, `tests/unit/server/server_core_harness.ts`.
+- Also changed: `server/session_deletion.ts` (a `signal`; `.lingbot.glb` is derived), `server/wp-a-log.ts` (`withoutServerPaths`, `jsonWithoutServerPaths`), `deploy/cscan.env.example`, `tests/unit/node/stitch_wiring.test.ts`, `tests/unit/node/wp-15a-register-proposal-wiring.test.ts`, `tests/unit/server/physag3d.test.ts` (one wiring case), and the route tests that made worlds by reading them.
 
 ## Schema required
 
@@ -114,7 +114,7 @@ None in `src/world/types.ts`. On the wire:
 source ~/.nvm/nvm.sh && nvm use 22.23.2
 export ONNXRUNTIME_NODE_INSTALL_CUDA=skip PATH="$HOME/.deno/bin:$PATH"
 deno task check
-deno test --allow-read --allow-write --allow-env --allow-net --allow-run --allow-ffi tests/unit/deno/server_core_*.test.ts
+deno test --allow-read --allow-write --allow-env --allow-net --allow-run --allow-ffi tests/unit/server/server_core_*.test.ts
 npm run verify
 ```
 

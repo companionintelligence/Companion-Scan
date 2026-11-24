@@ -104,7 +104,7 @@ Read from the code on 2026-11-23, by session 0005 and a read-only investigation 
   - `src/viewer/html.ts`: the one HTML escape.
   - `src/world/mat4.ts`: the one column-major multiply, compare, finite-matrix check and decompose.
   - `src/world/job-types.ts`: `SCAN_REQUIRED_JOB_TYPES`.
-  - Tests under `tests/unit/deno/editor_*.test.ts`.
+  - Tests under `tests/unit/server/editor_*.test.ts`.
 - Changed:
   - `src/viewer/viewer.ts`, `src/viewer/xr-world.ts`, `src/viewer/xr-world-model.ts`
   - `src/viewer/splat-layer.ts`, `src/viewer/splat4d-layer.ts`
@@ -152,23 +152,23 @@ None. `LAYERS_HIDDEN_BY_DEFAULT` gains `detections`, which changes the `visibleB
 
 ## Tests
 
-- [x] `tests/unit/deno/editor_access_token.test.ts`: one `token`, the right one per route, no Authorization override.
-- [x] `tests/unit/deno/editor_artifact_read.test.ts`: the four answers, and how the reconstruction verdict and the panoptic panel word them.
-- [x] `tests/unit/deno/editor_layer_rows.test.ts`:
+- [x] `tests/unit/server/editor_access_token.test.ts`: one `token`, the right one per route, no Authorization override.
+- [x] `tests/unit/server/editor_artifact_read.test.ts`: the four answers, and how the reconstruction verdict and the panoptic panel word them.
+- [x] `tests/unit/server/editor_layer_rows.test.ts`:
   - the rows listed;
   - the toolbar metric;
   - the "no frames" state;
   - hidden objects resolved from the patch log;
   - the scan-required job guard.
-- [x] `tests/unit/deno/editor_world_rules.test.ts`:
+- [x] `tests/unit/server/editor_world_rules.test.ts`:
   - slug, placement and GLB lookup shared, with the headset fetches token-bearing;
   - the drawer layout and collapse wiring;
   - the desktop scanner entry;
   - the 4D manifest's token.
-- [x] `tests/unit/deno/editor_mat4.test.ts`: the merged helpers against three.js, and decompose against its two e897380 copies, bit for bit.
-- [x] `tests/unit/deno/editor_frame_predicate.test.ts`: one chip per scan row, across tier pairs.
-- [x] `tests/unit/deno/editor_job_results.test.ts`: the SenseNova summary (no server path) and the world GLB link.
-- [x] `tests/unit/deno/editor_splat_alignment.test.ts`: `resolveSplatAlignment` and `formatAlignmentStatus`.
+- [x] `tests/unit/server/editor_mat4.test.ts`: the merged helpers against three.js, and decompose against its two e897380 copies, bit for bit.
+- [x] `tests/unit/server/editor_frame_predicate.test.ts`: one chip per scan row, across tier pairs.
+- [x] `tests/unit/server/editor_job_results.test.ts`: the SenseNova summary (no server path) and the world GLB link.
+- [x] `tests/unit/server/editor_splat_alignment.test.ts`: `resolveSplatAlignment` and `formatAlignmentStatus`.
 - [x] `tests/mock-editor-inventory.spec.ts`: a fixture world through `page.route`. It checks:
   - the rows, with the camera rows' "no frames" despite a reported pose count, and the toolbar count;
   - one switch for the bounds;
@@ -183,7 +183,7 @@ None. `LAYERS_HIDDEN_BY_DEFAULT` gains `detections`, which changes the `visibleB
 - [x] A production `vite build`: the viewer chunk holds no `__measureTool`, `injectJob` or `__editorTest`, and the headset editor's chunk does not reference the emulator. The scanner (`src/main.ts`, not this ticket's) still loads it.
 - [x] Updated:
   - `tests/unit/node/scan_calibration_chip.test.ts`: the frame warning rule, plus a cross-check with `frameChipFor`;
-  - `tests/unit/deno/frame_fit.test.ts`: frame-fit's two new browser-safe imports;
+  - `tests/unit/server/frame_fit.test.ts`: frame-fit's two new browser-safe imports;
   - `tests/mock-xr-world.spec.ts`: re-run, 3 passed;
   - `tests/mock-rtc-*.spec.ts`: re-run, 6 skipped by name;
   - `tests/mock-ui-desktop.spec.ts`, `tests/e2e-suite.spec.ts`, `tests/mock-editor-homes.spec.ts`, `tests/mock-editor-quality.spec.ts`: edited, not run, because they need a seeded world or fixtures.
@@ -191,7 +191,7 @@ None. `LAYERS_HIDDEN_BY_DEFAULT` gains `detections`, which changes the `visibleB
 ```
 source ~/.nvm/nvm.sh && nvm use 22.23.2
 export ONNXRUNTIME_NODE_INSTALL_CUDA=skip PATH="$HOME/.deno/bin:$PATH"
-deno test --allow-read --allow-write --allow-env --allow-net --allow-run --allow-ffi tests/unit/deno/editor_*.test.ts
+deno test --allow-read --allow-write --allow-env --allow-net --allow-run --allow-ffi tests/unit/server/editor_*.test.ts
 npm run verify
 ```
 

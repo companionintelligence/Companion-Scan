@@ -76,7 +76,7 @@ index.
 
 New:
 - `server/canvas/select_frames.ts` — pure
-- `tests/unit/deno/select_frames.test.ts`
+- `tests/unit/server/select_frames.test.ts`
 
 Changed:
 - `server/canvas/build_canvas.ts` — call it; record the result in the manifest

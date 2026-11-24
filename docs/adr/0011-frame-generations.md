@@ -309,7 +309,7 @@ scans that have no `.glb` on disk are not moved by a reassign or a merge: `refre
 
 **Backward compatibility, and how it was checked.** Every field added is optional and absent on what is on disk. A Place,
 its frame, its scans' sidecars, its world files and its photos as the previous build wrote them are read and served as
-before: tests/unit/deno/frame_generations_route.test.ts seeds exactly those (a frame with no id and no revision, sidecars with
+before: tests/unit/server/frame_generations_route.test.ts seeds exactly those (a frame with no id and no revision, sidecars with
 no `frameId`, world files with no history, photos in the Place's own folder) and drives the routes against the real server;
 the existing frame-route and frame-sync tests, which send frames with no id, pass unchanged. A body the previous build queued
 in the service worker (`{ frame, expectedRevision }`) is replayed to this server with the answers it always had. No
