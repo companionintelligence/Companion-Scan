@@ -44,12 +44,27 @@ export const STALL_TICKS_LIMIT = 6;
  */
 export const NO_PROGRESS_DEG = 2.0;
 
-/** Shortest signed distance between two angles, in degrees. */
+/**
+ * An angle folded into [-180, 180] degrees: the shortest signed distance when given a difference.
+ *
+ * The one copy for the whole subsystem. backend.mjs, dome.mjs and the page's readout all import this
+ * one (there used to be three).
+ *
+ * The modulo form, not a subtract-until-in-range loop, because this takes values straight from
+ * request bodies (a move-to target). `JSON.parse('1e999')` is Infinity: the loop never returned on
+ * it, and a merely huge finite value kept it spinning for as long as the number was big.
+ *
+ * - A non-finite input returns NaN, which every comparison downstream reads as "not reachable".
+ * - -0 comes back as 0, so a strict comparison against 0 holds.
+ * - A finite input gets exactly the value the loop gave: 180 stays 180, and -180 stays -180.
+ */
 export function wrapDeg(deg) {
-  let d = deg;
-  while (d > 180) d -= 360;
-  while (d < -180) d += 360;
-  return d;
+  const d = typeof deg === 'number' ? deg : Number(deg);
+  if (!Number.isFinite(d)) return NaN;
+  let x = d % 360;
+  if (x > 180) x -= 360;
+  else if (x < -180) x += 360;
+  return x === 0 ? 0 : x;
 }
 
 /**

@@ -20,6 +20,7 @@ import {
   createWedgeGuard,
   STUCK_POSITIONS_LIMIT,
   NO_PROGRESS_DEG,
+  wrapDeg,
 } from '../../../subsystems/osmo-ble/protocol/stall.mjs'
 
 const s = (pan: number, tilt = 0) => ({ pan, tilt })
@@ -287,4 +288,32 @@ test('progress folding ignores displacement that goes nowhere', () => {
   }
   assert.equal(longer.netProgressDeg, 4, 'twice the ticks close no further distance')
   assert.ok(verdicts.includes('jammed'), 'and the oscillation still condemns the move')
+})
+
+// ── wrapDeg: the subsystem's one angle wrap (wave 14, ticket 0007, FN-189) ─────────────────────
+
+test('wrapDeg: folds into [-180, 180] exactly as the old loop did, seam values included', () => {
+  assert.equal(wrapDeg(0), 0)
+  assert.equal(wrapDeg(181), -179)
+  assert.equal(wrapDeg(-181), 179)
+  assert.equal(wrapDeg(180), 180, '+180 stays +180')
+  assert.equal(wrapDeg(-180), -180, '-180 stays -180')
+  assert.equal(wrapDeg(540), 180)
+  assert.equal(wrapDeg(-540), -180)
+  assert.equal(wrapDeg(725), 5)
+  assert.equal(Object.is(wrapDeg(-360), 0), true, '-0 comes back as 0')
+  assert.equal(wrapDeg('200' as unknown as number), -160, 'a numeric string still coerces, as the loop did')
+})
+
+test('wrapDeg: a huge or non-finite input returns at once instead of looping', () => {
+  // JSON.parse('1e999') is Infinity, and move-to targets come straight from request bodies. The
+  // old subtract-until-in-range loop never returned on Infinity, and spun for as long as the
+  // number was big on a merely huge finite value.
+  const started = Date.now()
+  assert.ok(Number.isNaN(wrapDeg(JSON.parse('1e999'))))
+  assert.ok(Number.isNaN(wrapDeg(-Infinity)))
+  assert.ok(Number.isNaN(wrapDeg(NaN)))
+  const huge = wrapDeg(1e300)
+  assert.ok(huge >= -180 && huge <= 180)
+  assert.ok(Date.now() - started < 100, 'constant time')
 })

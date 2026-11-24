@@ -14,23 +14,30 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { WebSocketServer } from 'ws';
 import { OsmoBleTransport } from './ble-transport.mjs';
-import { createStallGuard, createWedgeGuard, NO_PROGRESS_DEG } from '../protocol/stall.mjs';
+import { createStallGuard, createWedgeGuard, NO_PROGRESS_DEG, wrapDeg } from '../protocol/stall.mjs';
 import { computeCorrection, shouldFlipSign, poseAlreadyActedOn } from '../protocol/control.mjs';
 import {
-  planDomePans, unreachablePans, assessCapture, describeArc, createArcProbe, diagnoseJam,
-  DEFAULT_PAN_ARC, PROBE_MAX_MOVES,
+  planDomePans, planGrid, unreachablePans, assessCapture, describeArc, createArcProbe, diagnoseJam,
+  moveTargetProblem, isTiltReachable, DEFAULT_PAN_ARC, PROBE_MAX_MOVES, TILT_MIN_DEG, TILT_MAX_DEG,
 } from '../protocol/dome.mjs';
 import { buildGimbalRecenter, buildGimbalAbsoluteAngle, buildGimbalSetMode, buildGimbalSpeedControl, buildGimbalStickControlEnable, buildGimbalResetAndCenter, buildRawCommand, PayloadHexError } from '../protocol/commands.mjs';
 import { CMD_SET, CMD_ID, GIMBAL_MODE } from '../protocol/constants.mjs';
 import { quaternionDelta, quatToGimbalControlDeg } from '../protocol/telemetry.mjs';
-import { AndroidMcpClient, capturePhoto, planGrid } from './android-capture.mjs';
+import { AndroidMcpClient, capturePhoto } from './android-capture.mjs';
 import { resolveCaptureDevice, describeCaptureDevice } from './device-config.mjs';
-import { PHONE_TELEMETRY, isPhoneTelemetry, normalizePhoneTelemetry } from '../protocol/phone_telemetry.mjs';
+import { PHONE_TELEMETRY, isPhoneTelemetry, normalizePhoneTelemetry, withoutLocation } from '../protocol/phone_telemetry.mjs';
 import { STREAM_STALE_MS } from '../protocol/link_state.mjs';
 import { decodeFrame } from '../protocol/duml.mjs';
 import { motionRefusal, moveRefusal, MotionRefusedError, isStopFrame } from '../protocol/motion_gate.mjs';
+import { parseAccessSettings, describeAccess, decideAccess, corsHeaders } from './access.mjs';
 
 const PORT = Number(process.env.BACKEND_PORT) || 8788;
+/**
+ * Who may call this backend: OSMO_BACKEND_TOKEN, BACKEND_ALLOWED_ORIGINS and BACKEND_HOST, read once
+ * from the shell that starts it. See ./access.mjs for the rules and the defaults, which keep the
+ * documented rig working: every interface, no token, and the Gimbal control page's own origin.
+ */
+const ACCESS = parseAccessSettings(process.env);
 /**
  * The test routes fire single commands at the gimbal to see whether they move it. They are bench
  * tools, so they exist only when the backend is started with BACKEND_TEST_ROUTES=1.
@@ -329,7 +336,11 @@ function handleInboundWsMessage(ws, data, isBinary) {
   // coerces anything it doesn't recognize to null, so on its own it would happily turn a garbage
   // frame into a well-formed all-null one and relay that as if the phone had genuinely reported
   // "no heading, no fix". A dropped frame is honest; a fabricated empty one is not.
-  lastPhoneTelemetry = normalizePhoneTelemetry(msg);
+  //
+  // The location is dropped here, before the frame is cached or broadcast. It used to reach every
+  // /ws client and GET /api/status, and nothing reads it. See withoutLocation in
+  // ../protocol/phone_telemetry.mjs.
+  lastPhoneTelemetry = withoutLocation(normalizePhoneTelemetry(msg));
   broadcast(lastPhoneTelemetry, ws);
 }
 
@@ -378,16 +389,24 @@ function statusPayload() {
         waitedMs: Date.now() - stationGate.since,
       }
       : null,
+    // Whether the bench probes under /api/test/ exist (BACKEND_TEST_ROUTES=1). The page's test matrix
+    // reads this. It used to offer fifteen probe buttons that could only ever answer 404.
+    testRoutes: TEST_ROUTES_ENABLED,
   };
 }
 
-function sendJson(res, code, body) {
-  res.writeHead(code, {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-  });
+/**
+ * Response headers for one request: the CORS headers from ./access.mjs, plus `extra`.
+ *
+ * Every response goes through this: JSON, the grid's NDJSON stream and the preflight. The old `*`
+ * was written in three separate places.
+ */
+function responseHeaders(req, extra = {}) {
+  return { ...corsHeaders({ origin: req?.headers?.origin, settings: ACCESS }), ...extra };
+}
+
+function sendJson(res, code, body, req) {
+  res.writeHead(code, responseHeaders(req, { 'Content-Type': 'application/json' }));
   res.end(JSON.stringify(body));
 }
 
@@ -421,11 +440,50 @@ function cancelExternalMotions() {
   externalMotions.clear();
 }
 
+/**
+ * A request body this backend will not read: too large (413), or not JSON (400).
+ *
+ * It carries the status, like MotionRefusedError, so the request handler answers with it. A
+ * malformed body used to surface as a 500 carrying the parser's message.
+ */
+class RequestBodyError extends Error {
+  constructor(status, message, remediation) {
+    super(message);
+    this.name = 'RequestBodyError';
+    this.status = status;
+    this.remediation = remediation;
+  }
+}
+
+/**
+ * Bodies here are a few hundred bytes: a command, a move target, a grid plan. 64 KiB is generous
+ * headroom, not a measured limit. The point is only that a peer on the network cannot make this
+ * process buffer an unbounded body.
+ */
+const MAX_BODY_BYTES = 64 * 1024;
+
 async function readJsonBody(req) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let bytes = 0;
+  for await (const chunk of req) {
+    bytes += chunk.length;
+    if (bytes > MAX_BODY_BYTES) {
+      throw new RequestBodyError(413, `Request body is over ${MAX_BODY_BYTES} bytes.`, 'Send the JSON body the route documents; none is anywhere near this size.');
+    }
+    chunks.push(chunk);
+  }
   if (!chunks.length) return {};
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  let body;
+  try {
+    body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch (err) {
+    throw new RequestBodyError(400, `Request body is not JSON (${err.message}).`, 'Send a JSON object, with Content-Type: application/json.');
+  }
+  // Every route destructures an object. A JSON array, string or null is a wrong request, not an empty one.
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw new RequestBodyError(400, 'Request body must be a JSON object.', 'Send a JSON object, for example {"type": "speed", "params": {}}.');
+  }
+  return body;
 }
 
 const GIMBAL_MODE_BY_NAME = { lock: GIMBAL_MODE.LOCK, follow: GIMBAL_MODE.FOLLOW, fpv: GIMBAL_MODE.FPV };
@@ -497,12 +555,7 @@ async function buildAndSend(type, params = {}, { runOwned = false, motion = null
   return { frameHex: Buffer.from(frame).toString('hex') };
 }
 
-function wrapDeg(d) {
-  let x = d % 360;
-  if (x > 180) x -= 360;
-  if (x < -180) x += 360;
-  return x;
-}
+// wrapDeg comes from ../protocol/stall.mjs. This file used to keep its own copy.
 
 /**
  * Closed-loop absolute positioning, built to replace the broken absolute-angle opcode
@@ -1085,7 +1138,7 @@ const routes = {
     {
       ok: true,
       message: 'Osmo BLE backend is running.',
-      routes: ['GET /api/status', 'POST /api/scan', 'POST /api/connect', 'POST /api/pair-trigger', 'POST /api/pair', 'POST /api/disconnect', 'POST /api/forget-os', 'POST /api/command', 'POST /api/arc-probe', 'POST /api/move-to', 'POST /api/capture-photo', 'POST /api/grid-capture', 'POST /api/grid-advance', 'POST /api/grid-stop', 'GET /api/scan-sessions', 'GET /api/frames', ...(TEST_ROUTES_ENABLED ? ['POST /api/test/recenter-probe', 'POST /api/test/command-probe'] : []), 'WS /ws'],
+      routes: ['GET /api/status', 'POST /api/scan', 'POST /api/connect', 'POST /api/pair-trigger', 'POST /api/pair', 'POST /api/disconnect', 'POST /api/forget-os', 'POST /api/command', 'POST /api/arc-probe', 'POST /api/move-to', 'POST /api/capture-photo', 'GET /api/capture-device', 'POST /api/grid-capture', 'POST /api/grid-advance', 'POST /api/grid-stop', 'GET /api/scan-sessions', 'GET /api/frames', ...(TEST_ROUTES_ENABLED ? ['POST /api/test/recenter-probe', 'POST /api/test/command-probe'] : []), 'WS /ws'],
     },
   ],
   'GET /api/status': async () => [200, statusPayload()],
@@ -1297,7 +1350,16 @@ const routes = {
     // driving the same motors (see moveRefusal).
     const motionRefused = moveRefusal({ scanRunning: gridRunning, parked: stationGate !== null, outsideMotion: externalMotions.size > 0 });
     if (motionRefused) return [409, { error: motionRefused.message, remediation: motionRefused.remediation }];
-    const result = await asExternalMotion((motion) => moveToClosedLoop({ yawDeg, pitchDeg, toleranceDeg, speedDegPerSec, tickMs, settleMs, maxMs, motion }));
+    // The target, against the arc this backend is using. A move-to used to drive wherever it was
+    // told, so an MCP recenter aimed at pan 0, inside the fallback arc's dead zone, and a sweep
+    // interpolated straight through it. Checked after the 409s, so a running scan answers the same
+    // whatever the target. Synchronous, with no await before the move registers below, so nothing
+    // can start in between. An omitted axis still means 0, as it always did.
+    const panDeg = yawDeg ?? 0;
+    const tiltDeg = pitchDeg ?? 0;
+    const targetProblem = moveTargetProblem({ panDeg, tiltDeg, arc: currentArc() });
+    if (targetProblem) return [400, { ...targetProblem, reachableArc: arcPayload() }];
+    const result = await asExternalMotion((motion) => moveToClosedLoop({ yawDeg: panDeg, pitchDeg: tiltDeg, toleranceDeg, speedDegPerSec, tickMs, settleMs, maxMs, motion }));
     return [200, result];
   },
 
@@ -1403,10 +1465,10 @@ const routes = {
     // step clears the scanner app's 20° minRotationDeg keyframe threshold — a finer default
     // drives the gimbal through positions that emit no keyframe at all.
     const tilts = (body.tilts ?? [-25, 0]).map(Number);
-    const badTilts = tilts.filter((t) => !Number.isFinite(t) || t > 16 || t < -45);
+    const badTilts = tilts.filter((t) => !isTiltReachable(t));
     if (badTilts.length) {
       return [400, {
-        error: `tilt ${badTilts.join(', ')}° is outside the measured travel (-45°..+16°) — driving into the tilt stop jams it.`,
+        error: `tilt ${badTilts.join(', ')}° is outside the measured travel (${TILT_MIN_DEG}°..+${TILT_MAX_DEG}°) — driving into the tilt stop jams it.`,
         remediation: 'Keep tilt rows within about -40°..+10°.',
       }];
     }
@@ -1463,11 +1525,10 @@ const routes = {
     const prefix = body.prefix ?? `grid-${Date.now()}`;
     const client = capturePhotos ? new AndroidMcpClient({ url: device.url, token: device.token }) : null;
 
-    res.writeHead(200, {
+    res.writeHead(200, responseHeaders(req, {
       'Content-Type': 'application/x-ndjson',
-      'Access-Control-Allow-Origin': '*',
       'Cache-Control': 'no-cache',
-    });
+    }));
     const emit = (event) => {
       broadcast({ type: 'grid-progress', ...event });
       // A dead NDJSON client must not become a failed capture. The run deliberately survives its
@@ -1781,6 +1842,11 @@ const routes = {
       // payload still advertising a prompt that nothing is listening for.
       stationGate = null;
       gridRunning = false;
+      // A stop request belongs to the run it stopped. It used to be cleared only when the NEXT grid
+      // started, so after any stopped run a standalone arc probe (runArcProbe checks this flag)
+      // gave up at once with "stopped by request", and that probe is the step the jam message
+      // tells the operator to run.
+      gridCancelRequested = false;
       if (client) await client.close();
       broadcast({ type: 'status', ...statusPayload() });
     }
@@ -1957,29 +2023,72 @@ const routes = {
   },
 };
 
+/**
+ * Refusals by the access gate, logged at most once per five seconds with a running total, for the
+ * same reason as warnDroppedInbound. The origin is logged so the operator can allowlist it. A token
+ * never is.
+ */
+let refusedTotal = 0;
+let refusedWarnedAt = 0;
+function warnRefused(verdict, origin, what) {
+  refusedTotal++;
+  const now = Date.now();
+  if (now - refusedWarnedAt < 5000) return;
+  refusedWarnedAt = now;
+  console.warn(`[access] ${refusedTotal} request(s) refused since start; most recent: ${what} from ${origin ? `origin ${origin}` : 'no browser origin'}, ${verdict.status} ${verdict.error}`);
+}
+
+/** The access ruling for an HTTP request or a /ws upgrade, from ./access.mjs's rules. */
+function accessVerdict(req, url, upgrade) {
+  return decideAccess({
+    method: req.method,
+    origin: req.headers.origin,
+    hostHeader: req.headers.host,
+    authorization: req.headers.authorization,
+    queryToken: upgrade ? url.searchParams.get('token') : null,
+    upgrade,
+    settings: ACCESS,
+  });
+}
+
+/** Parse a request URL without trusting the Host header to be well formed. */
+function requestUrl(req) {
+  try {
+    return new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  } catch {
+    return new URL(req.url, 'http://localhost');
+  }
+}
+
 const server = http.createServer(async (req, res) => {
+  // The preflight runs nothing and cannot carry the token, so it is answered as it is. The request
+  // it precedes is judged below on its own, before any handler.
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    });
+    res.writeHead(204, responseHeaders(req));
     res.end();
     return;
   }
 
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  const url = requestUrl(req);
   const key = `${req.method} ${url.pathname}`;
+  // The gate, before the route table: an origin this backend does not accept, or a missing or wrong
+  // token, never reaches a handler, so no frame can leave for it.
+  const verdict = accessVerdict(req, url, false);
+  if (!verdict.ok) {
+    warnRefused(verdict, req.headers.origin, key);
+    sendJson(res, verdict.status, { error: verdict.error, remediation: verdict.remediation }, req);
+    return;
+  }
   if (url.pathname.startsWith('/api/test/') && !TEST_ROUTES_ENABLED) {
     sendJson(res, 404, {
       error: `Test route disabled: ${key}`,
       remediation: 'The test routes are off. Restart the backend with BACKEND_TEST_ROUTES=1 in the shell that starts it, to use them.',
-    });
+    }, req);
     return;
   }
   const handler = routes[key];
   if (!handler) {
-    sendJson(res, 404, { error: `No route for ${key}` });
+    sendJson(res, 404, { error: `No route for ${key}` }, req);
     return;
   }
   try {
@@ -1989,20 +2098,36 @@ const server = http.createServer(async (req, res) => {
     const result = await handler(req, url, res);
     if (result !== undefined) {
       const [code, body] = result;
-      sendJson(res, code, body);
+      sendJson(res, code, body, req);
     }
   } catch (err) {
     if (res.headersSent) {
       res.end(JSON.stringify({ phase: 'error', error: err.message }) + '\n');
-    } else if (err instanceof MotionRefusedError || err instanceof PayloadHexError) {
-      sendJson(res, err.status, { error: err.message, remediation: err.remediation });
+    } else if (err instanceof MotionRefusedError || err instanceof PayloadHexError || err instanceof RequestBodyError) {
+      sendJson(res, err.status, { error: err.message, remediation: err.remediation }, req);
     } else {
-      sendJson(res, 500, { error: err.message });
+      sendJson(res, 500, { error: err.message }, req);
     }
   }
 });
 
-const wss = new WebSocketServer({ server, path: '/ws' });
+/**
+ * The /ws upgrade's own access check. CORS does not apply to a WebSocket, so without this any page
+ * could open /ws, read the gimbal's telemetry and the relayed phone frames, and push frames of its
+ * own. The same rules as HTTP, except that the token may come as `?token=`, since a browser cannot
+ * set headers on a WebSocket.
+ */
+function verifyWsClient({ req }, done) {
+  const verdict = accessVerdict(req, requestUrl(req), true);
+  if (verdict.ok) {
+    done(true);
+    return;
+  }
+  warnRefused(verdict, req.headers.origin, 'WS /ws');
+  done(false, verdict.status, verdict.error);
+}
+
+const wss = new WebSocketServer({ server, path: '/ws', verifyClient: verifyWsClient });
 wss.on('connection', (ws) => {
   wsClients.add(ws);
   ws.send(JSON.stringify({ type: 'status', ...statusPayload() }));
@@ -2019,9 +2144,19 @@ wss.on('connection', (ws) => {
 // BACKEND_NO_LISTEN=1 skips the listener. The interlock test drives `server` with fake requests and
 // never binds a port (see server/wp-f2-backend-interlock.test.mjs).
 if (!process.env.BACKEND_NO_LISTEN) {
-  server.listen(PORT, () => {
-    console.log(`Osmo BLE backend: http://localhost:${PORT}  (WebSocket at /ws)`);
-  });
+  const onListening = () => {
+    console.log(`Osmo BLE backend: http://${ACCESS.host ?? 'localhost'}:${PORT}  (WebSocket at /ws)`);
+    console.log(`[access] ${describeAccess(ACCESS)}`);
+    for (const problem of ACCESS.problems) console.warn(`[access] ${problem}`);
+    if (!ACCESS.token && !ACCESS.host) {
+      console.warn('[access] No OSMO_BACKEND_TOKEN, listening on every interface: anything that can reach this port '
+        + 'can drive the gimbal. Set OSMO_BACKEND_TOKEN, or BACKEND_HOST=127.0.0.1 when nothing else needs to reach it.');
+    }
+  };
+  // BACKEND_HOST is the bind address. Unset means every interface, the old behaviour, which the
+  // documented rig needs: the operator's phone reaches the page and this backend over the network.
+  if (ACCESS.host) server.listen(PORT, ACCESS.host, onListening);
+  else server.listen(PORT, onListening);
 }
 
 /**
@@ -2029,9 +2164,17 @@ if (!process.env.BACKEND_NO_LISTEN) {
  * without listening. setScanStateForTest puts the interlock in the state a grid run leaves it in.
  * transportForTest hands over the one transport so a test can stub the characteristic a write goes to.
  */
-export { routes, server };
+export { routes, server, wss };
 export function transportForTest() {
   return transport;
+}
+/** Hand one inbound /ws message to the relay, as a socket would. `from` stands in for the sender. */
+export function relayInboundForTest(from, data) {
+  handleInboundWsMessage(from, Buffer.from(typeof data === 'string' ? data : JSON.stringify(data)), false);
+}
+/** Whether a stop request is still pending, the flag runArcProbe checks. */
+export function gridCancelRequestedForTest() {
+  return gridCancelRequested;
 }
 export function setScanStateForTest({ scanRunning, parked = false }) {
   gridRunning = Boolean(scanRunning);

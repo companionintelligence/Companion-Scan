@@ -23,7 +23,7 @@ export const PHONE_TELEMETRY = 'phone-telemetry';
  * @property {number|null} headingAccuracyDeg  Reported +/- on `heading`; null when unknown.
  * @property {number|null} pitch        Device pitch, degrees.
  * @property {number|null} roll         Device roll, degrees.
- * @property {number|null} lat
+ * @property {number|null} lat          The relay nulls these four (see withoutLocation).
  * @property {number|null} lng
  * @property {number|null} accuracyM    GPS horizontal accuracy (68% radius).
  * @property {number|null} altitudeM
@@ -54,6 +54,20 @@ export function isPhoneTelemetry(msg) {
     && numOrNull(msg.accuracyM) && numOrNull(msg.altitudeM)
     && typeof msg.at === 'string'
     && (msg.deviceLabel === null || typeof msg.deviceLabel === 'string');
+}
+
+/**
+ * The same frame with its location removed: `lat`, `lng`, `accuracyM` and `altitudeM` nulled, every
+ * key kept, so it still passes isPhoneTelemetry.
+ *
+ * The backend relay applies this before it caches or re-broadcasts a frame. It used to send the
+ * phone's position to every /ws client and return it from GET /api/status, and nothing reads it:
+ * the control page shows heading, pitch, roll, the label and the sample's age. If a consumer ever
+ * needs the position, relaying it is a one-line change in server/backend.mjs. Until then, an address
+ * that never leaves the phone's own page cannot leak from this one.
+ */
+export function withoutLocation(frame) {
+  return { ...frame, lat: null, lng: null, accuracyM: null, altitudeM: null };
 }
 
 /** Fill a partial sample out to the full shape, so consumers never branch on missing keys. */

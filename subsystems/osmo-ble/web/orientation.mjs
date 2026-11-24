@@ -26,6 +26,7 @@
 // is shown with the heading instead of a bare degree value.
 
 import { quaternionDelta, quatToEulerDeg, quatToGimbalControlDeg } from '../protocol/telemetry.mjs';
+import { wrapDeg } from '../protocol/stall.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 function svgEl(tag, attrs = {}) {
@@ -69,9 +70,10 @@ const PHONE_AGE_SHOW_MS = 3000;
 const PHONE_AGE_STALE_MS = 10000;
 
 // Shortest signed difference between two angles, so a comparison spanning the +/-180° seam
-// reads as a few degrees rather than ~360.
+// reads as a few degrees rather than ~360. The subsystem's one wrap, from ../protocol/stall.mjs;
+// this file used to keep a third copy of it.
 function angleDiffDeg(a, b) {
-  return ((((a - b) % 360) + 540) % 360) - 180;
+  return wrapDeg(a - b);
 }
 
 function buildCompass() {

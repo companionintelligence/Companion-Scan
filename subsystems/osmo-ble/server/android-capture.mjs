@@ -39,7 +39,7 @@ function parseMcpBody(contentType, text) {
 export class AndroidMcpClient {
   /**
    * @param {object} opts
-   * @param {string} opts.url    e.g. http://beam-pro-1.capybara-ulmer.ts.net:8080/mcp
+   * @param {string} opts.url    e.g. http://<device>.<tailnet>.ts.net:8080/mcp
    * @param {string} opts.token  bearer token from that device's Settings -> Access
    */
   constructor({ url, token }) {
@@ -146,16 +146,7 @@ export async function capturePhoto(client, { path, cameraId = '0', resolution = 
 }
 
 /**
- * Serpentine ordering: each row is traversed opposite to the one before it, so the gimbal never
- * has to swing back across the full pan range between rows. Measured on a real run, the first
- * position of row 2 converged in 3 ticks against 7-26 for the rest, precisely because it starts
- * where row 1 ended.
+ * The grid order lives in protocol/dome.mjs now, beside the planner it belongs with.
+ * Re-exported so the existing `import { planGrid } from './android-capture.mjs'` keeps working.
  */
-export function planGrid({ pans, tilts }) {
-  const grid = [];
-  tilts.forEach((tilt, row) => {
-    const order = row % 2 === 0 ? pans : [...pans].reverse();
-    for (const pan of order) grid.push({ pan, tilt });
-  });
-  return grid;
-}
+export { planGrid } from '../protocol/dome.mjs';

@@ -6,8 +6,8 @@ import { SERVICE_UUID, WRITE_CHAR_CANDIDATES_FULL, PAIRING_TRIGGER_BYTES } from 
 import { MsgIdSequence, buildSetPairingPin, buildGimbalRecenter, buildGimbalResetAndCenter, buildGimbalSetMode, buildGimbalSpeedControl, buildGimbalStickControlEnable, buildRawCommand } from '../protocol/commands.mjs';
 import { GIMBAL_MODE } from '../protocol/constants.mjs';
 import { decodeQuaternion } from '../protocol/telemetry.mjs';
-import { attachJoystick } from './joystick.mjs';
 import { attachOrientationReadout } from './orientation.mjs';
+import { createLog, rawCommandFiller, attachStickToggle, attachLatchedJoystick } from './controls.mjs';
 import { attachFrameLog } from './frame-log.mjs';
 import { attachCoverage } from './coverage.mjs';
 
@@ -32,11 +32,8 @@ const els = {
 };
 const orientationReadout = attachOrientationReadout(els.orientation);
 
-function loadIntoRawCommand({ cmdSet, cmdId, payloadHex }) {
-  els.rawCmdSet.value = cmdSet;
-  els.rawCmdId.value = cmdId;
-  if (payloadHex !== undefined) els.rawPayload.value = payloadHex;
-}
+// Shared with the Server pathway (./controls.mjs), which used to keep its own copy.
+const loadIntoRawCommand = rawCommandFiller({ cmdSet: els.rawCmdSet, cmdId: els.rawCmdId, payload: els.rawPayload });
 const frameLog = attachFrameLog(els.frames, { onSelect: loadIntoRawCommand });
 const coverage = attachCoverage(els.coverage, { onSelect: loadIntoRawCommand });
 
@@ -59,15 +56,14 @@ function logAndTrackTx(frame, meta = {}) {
 
 const PROPERTY_NAMES = ['broadcast', 'read', 'writeWithoutResponse', 'write', 'notify', 'indicate', 'authenticatedSignedWrites', 'reliableWrite', 'writableAuxiliaries'];
 
-function log(line, cls = '') {
-  const row = document.createElement('div');
-  if (cls) row.className = cls;
-  row.textContent = `${new Date().toLocaleTimeString()}  ${line}`;
-  logEl.appendChild(row);
-  logEl.scrollTop = logEl.scrollHeight;
-}
+const log = createLog(logEl);
 
-function setStatus(text) {
+/**
+ * `link` is what the status dot reads (ui.mjs): 'connected' or 'disconnected'. The dot used to
+ * guess from the text.
+ */
+function setStatus(text, link = 'disconnected') {
+  statusEl.dataset.link = link;
   statusEl.textContent = text;
 }
 
@@ -166,7 +162,7 @@ class WebBleClient {
       const characteristic = allChars.find((c) => c.uuid === uuid);
       if (characteristic) this.writeCandidates.push({ characteristic, withResponse, uuid });
     }
-    setStatus(`Connected: ${this.device.name || this.device.id}`);
+    setStatus(`Connected: ${this.device.name || this.device.id}`, 'connected');
     setControlsEnabled(true);
   }
 
@@ -417,57 +413,29 @@ els.landscape.addEventListener('click', async () => {
   }
 });
 
-// Promoted to the main view since the test matrix flags this as a possible precondition for
-// motion commands to be honored — a local toggle (not read back from the device, which has no
-// query for this state) tracking what we last told it.
-let stickEnabled = false;
-els.stickToggle.addEventListener('click', async () => {
-  const next = !stickEnabled;
-  const frame = buildGimbalStickControlEnable(client.msgIds.next(), next);
-  try {
+// The stick toggle and the joystick's latched-speed guard are shared with the Server pathway
+// (./controls.mjs); only the transport is this pathway's own.
+attachStickToggle(els.stickToggle, {
+  log,
+  send: async (enable) => {
+    const frame = buildGimbalStickControlEnable(client.msgIds.next(), enable);
     await client.sendRaw(frame);
-    logAndTrackTx(frame, { label: `StickControlEnable(${next})` });
-    stickEnabled = next;
-    els.stickToggle.textContent = `Stick: ${stickEnabled ? 'ON' : 'OFF'}`;
-    els.stickToggle.classList.toggle('active', stickEnabled);
-  } catch (err) {
-    log(`Stick control toggle failed: ${err.message}`, 'warn');
-  }
+    logAndTrackTx(frame, { label: `StickControlEnable(${enable})` });
+  },
 });
 
-// Joystick: click-drag, touch-drag, or focus + arrow keys. Continuously streams a speed
-// vector while active, auto-stops (zero speed) on release.
-// speedLatched: a non-zero speed has gone out and no stop has followed it yet.
-let speedLatched = false;
-attachJoystick(els.joystickPad, {
-  onMove: (vector) => {
-    speedLatched = true;
-    client.sendRaw(buildGimbalSpeedControl(client.msgIds.next(), vector)).catch((err) => log(`Joystick move failed: ${err.message}`, 'warn'));
-  },
-  onStop: () => {
-    speedLatched = false;
-    client.sendRaw(buildGimbalSpeedControl(client.msgIds.next(), {})).catch(() => {
-      /* best-effort stop */
+attachLatchedJoystick(els.joystickPad, {
+  log,
+  sendMove: (vector) => client.sendRaw(buildGimbalSpeedControl(client.msgIds.next(), vector)),
+  sendStop: () => client.sendRaw(buildGimbalSpeedControl(client.msgIds.next(), {})),
+  // Capped like disconnect(): a write that never returns cannot hold the page open.
+  exitStop: () => {
+    if (!client.connected) return;
+    const stop = client.sendRaw(buildGimbalSpeedControl(client.msgIds.next(), {})).catch(() => {
+      /* best-effort: the page is going away either way */
     });
+    void Promise.race([stop, new Promise((resolve) => setTimeout(resolve, 2000))]);
   },
-});
-
-// Leaving mid-drag (tab closed or hidden) would leave the last speed latched on the gimbal, because
-// nothing sends the stop once the page is gone. Sent only while a speed is latched, so hiding the
-// tab with the joystick at rest sends nothing. Capped like disconnect(): a write that never returns
-// cannot hold the page open.
-function stopOnPageExit() {
-  if (!speedLatched) return;
-  speedLatched = false;
-  if (!client.connected) return;
-  const stop = client.sendRaw(buildGimbalSpeedControl(client.msgIds.next(), {})).catch(() => {
-    /* best-effort: the page is going away either way */
-  });
-  void Promise.race([stop, new Promise((resolve) => setTimeout(resolve, 2000))]);
-}
-window.addEventListener('pagehide', stopOnPageExit);
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') stopOnPageExit();
 });
 
 els.rawSend.addEventListener('click', async () => {
