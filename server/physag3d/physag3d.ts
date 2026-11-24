@@ -49,8 +49,8 @@
  * tokens reach the worker, which has a shell.
  */
 import { isAbsolute, join, relative, resolve, SEPARATOR } from '@std/path'
-import { whichPath } from '../exec_probe.ts'
-import { describeBudget, MAX_TIMER_MS, runWithDeadline } from '../run_with_deadline.ts'
+import { locateTool, runnerToolLookup } from '../exec_probe.ts'
+import { describeBudget, KILL_GRACE_MS, MAX_TIMER_MS, runWithDeadline } from '../run_with_deadline.ts'
 import { isServerSessionId, sessionDirPath } from '../session_id.ts'
 import { stderrTail } from '../splat/splat_train.ts'
 import { KEYFRAME_FILE_RE, queueKeyframeWrite } from '../wp-a-keyframes.ts'
@@ -449,6 +449,11 @@ export interface PhysAg3DRunOptions {
   env?: EnvReader
   /** Injected for tests: stands in for execute.py. */
   _spawn?: PhysAg3DSpawn
+  /**
+   * Stops the run when it fires: the job pump passes its job's signal, so a job
+   * it has given up on does not leave its child running (F-27).
+   */
+  signal?: AbortSignal
 }
 
 export interface PhysAg3DResult {
@@ -500,7 +505,8 @@ async function runSteps(opts: PhysAg3DRunOptions, progress: { runAttempted: bool
   const env = opts.env ?? processEnv
   const params = resolveParams(opts, env)
   const log = opts.log ?? ((line: string) => console.log(line))
-  const spawn = opts._spawn ?? defaultSpawn
+  const spawn: PhysAg3DSpawn = opts._spawn ??
+    ((bin, args, env, deadlineMs) => defaultSpawn(bin, args, env, deadlineMs, opts.signal))
   const skip = (skippedReason: string): PhysAg3DResult => ({
     status: 'skipped',
     skippedReason,
@@ -516,7 +522,9 @@ async function runSteps(opts: PhysAg3DRunOptions, progress: { runAttempted: bool
   if (!(await isFile(script))) return skip('PHYSAG3D_DIR does not hold execute.py')
   const configPath = resolve(params.configPath)
   if (!(await isFile(configPath))) return skip('PHYSAG3D_CONFIG names no file')
-  const python = await whichPath(params.python)
+  // The shared resolver (server/exec_probe.ts), the one GET /capabilities uses: a bare name is looked up on PATH.
+  const pythonLocation = await locateTool(runnerToolLookup('physag3d-python'), { explicit: params.python })
+  const python = pythonLocation.found ? pythonLocation.path ?? null : null
   if (!python) return skip('PHYSAG3D_PYTHON (python3 on PATH when unset) is not a runnable interpreter')
 
   if (!isAssetId(opts.assetId)) {
@@ -803,11 +811,14 @@ async function defaultSpawn(
   args: string[],
   env: Record<string, string>,
   deadlineMs: number,
+  signal?: AbortSignal,
 ): Promise<PhysAg3DSpawnResult> {
   const output = await runWithDeadline(
     bin,
     { args, env, clearEnv: true, stdin: 'null', stdout: 'piped', stderr: 'piped' },
     deadlineMs,
+    KILL_GRACE_MS,
+    signal,
   )
   const decoder = new TextDecoder()
   return {

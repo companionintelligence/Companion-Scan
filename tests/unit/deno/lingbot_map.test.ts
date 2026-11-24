@@ -89,7 +89,9 @@ Deno.test('runLingBotMapReconstruction rejects invalid session dirs without spaw
 })
 
 Deno.test({
-  name: 'runLingBotMapReconstruction reports structured error when python is missing',
+  // A missing interpreter is a missing tool: the same green skip a missing torch or checkpoint is (FN-136), with
+  // the fix in the reason the job prints and a manifest the job's skip artifact can link to.
+  name: 'runLingBotMapReconstruction skips with a remediation when python is missing, and writes the manifest',
   permissions: {
     run: ['/this/binary/definitely/does/not/exist'],
     read: true,
@@ -105,9 +107,14 @@ Deno.test({
       scriptPath: `${tmp}/missing.py`,
       python: '/this/binary/definitely/does/not/exist',
     })
-    assertEquals(result.status, 'error')
-    assert(result.exitCode === 3 || result.exitCode === 2)
-    assert(typeof result.error === 'string' && result.error.length > 0)
+    assertEquals(result.status, 'skipped')
+    assertEquals(result.exitCode, 0)
+    assertStringIncludes(result.skippedReason ?? '', '/this/binary/definitely/does/not/exist')
+    assertStringIncludes(result.skippedReason ?? '', 'LINGBOT_MAP_PYTHON')
+    assertStringIncludes(result.remediation ?? '', 'LINGBOT_MAP_PYTHON')
+    const manifest = JSON.parse(await Deno.readTextFile(`${sessionDir}/lingbot-map.manifest.json`))
+    assertEquals(manifest.status, 'skipped')
+    assertStringIncludes(manifest.remediation, 'LINGBOT_MAP_PYTHON')
     await Deno.remove(tmp, { recursive: true })
   },
 })

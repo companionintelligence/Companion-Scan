@@ -33,34 +33,49 @@
  *
  * ADR 0001 (reuse, don't duplicate) shapes what is and isn't here. The
  * *resolution convention* — an env var always wins, then PATH, then the
- * documented no-sudo install path — is one convention that four runners spell
- * out separately today (`FALLBACK_COLMAP_BINS` colmap_poses.ts:96,
- * `DEFAULT_BRUSH_BIN` splat_train.ts:97, `FALLBACK_SPIRULA_BINS`
- * spirula_train.ts:128, and the `DEFAULT_*_PYTHON` pairs in panoptic_scan.ts
- * and splat_detect.ts). `toolSpecs()` below is that convention as data, in one
- * table. It is deliberately not imported from those five modules: every one of
- * them is under concurrent edit, and a report that fails to build when a
- * trainer is being refactored is a report nobody runs. The collapse direction
- * is the other way — each runner should eventually resolve through
- * `resolveTool()` here and delete its own constant — which is the same "the
- * type belongs elsewhere, the other file is in flight" note colmap_poses.ts
- * already carries for `ColmapReconstructionQuality`. Until then the candidate
- * paths are stated once here and their sources are cited per entry, so a drift
- * is a grep, not a mystery.
+ * documented no-sudo install path — is one convention, and it lives in one
+ * place: `runnerToolLookups()` and `locateTool()` in server/exec_probe.ts.
+ * Every runner resolves its tool through that pair, and `toolSpecs()` below is
+ * the same table with labels and version probes added, so the report and the
+ * job cannot disagree. They used to: this file kept its own copy of the paths,
+ * looked on PATH for Brush and Spirula when the runners did not, and reported a
+ * trainer "ok" whose job then skipped.
  *
  * No new env vars are invented. Every name below is one a runner already
  * reads; ffmpeg deliberately has none, because `scripts/ingest-video.mjs`
  * resolves it from bare PATH and giving the probe an override the ingest path
  * would ignore is worse than having none.
+ *
+ * The network services (the 4d-capture host, Companion Memory, the inference
+ * engine) are rows too, of kind `service`. Their `found` means an address is
+ * configured. Whether it answered is `reachable`, and that is measured only
+ * when versions are on: `?versions=0` stays pure filesystem lookups, because
+ * the browser fetches it.
  */
-import { isRunnable, whichPath, type ExecPlatform } from './exec_probe.ts'
+import {
+  type EnvReader,
+  type ExecPlatform,
+  isRunnable,
+  locateTool,
+  readEnv,
+  resolveHome as resolveToolHome,
+  type ResolvedVia,
+  runnerToolLookups,
+  type ToolKind as LookupKind,
+  type ToolLookup,
+  whichPath,
+} from './exec_probe.ts'
 import { runWithDeadline } from './run_with_deadline.ts'
+import { configFromEnv as memoryPushConfigFromEnv } from './memory_push.ts'
+import { FDANYONE_HOST_REMEDIATION } from './person4d/person_4d.ts'
+import { onnxModelPaths } from './lfm-driver-onnx.ts'
+import { normalizeOllamaHost } from '../src/shared/ollama-host.ts'
 
-/** How a tool is looked for: an executable, a checkout dir, or a data file. */
-export type ToolKind = 'binary' | 'python' | 'dir' | 'file'
+/** How a tool is looked for: an executable, a checkout dir, a data file, either of those, or a network service. */
+export type ToolKind = LookupKind | 'service'
 
 /** Which of the three resolution steps actually produced the path. */
-export type ResolvedVia = 'env' | 'path' | 'fallback'
+export type { EnvReader, ResolvedVia }
 
 /**
  * What a python interpreter says about its own torch.
@@ -68,7 +83,7 @@ export type ResolvedVia = 'env' | 'path' | 'fallback'
  * The single most useful field on this whole report, because torch is the one
  * dependency that is per-interpreter rather than per-machine: on 2026-08-30
  * this box's `~/.venvs/panoptic/bin/python` had torch 2.13.0+cu130 while the
- * bare `python3` that `lingbot_map.ts:115` defaults to had none. The capability
+ * bare `python3` that lingbot_map.ts's `runLingBotMapReconstruction` defaults to had none. The capability
  * was on the machine and absent from the process that needed it, and no
  * machine-level probe can see that difference.
  */
@@ -114,6 +129,13 @@ export interface ToolCapability {
   remediation?: string
   /** Every candidate tried, in order. A false negative has to be debuggable. */
   searched: string[]
+  /**
+   * A `service` row only, and only when probed with versions on: whether the
+   * configured address answered its health request. Absent when not measured.
+   */
+  reachable?: boolean
+  /** A `service` row's answer, or why it gave none. */
+  detail?: string
 }
 
 export type GpuVendor = 'nvidia' | 'amd' | 'apple'
@@ -224,7 +246,7 @@ export interface VersionProbe {
 export interface ToolSpec {
   id: string
   label: string
-  kind: ToolKind
+  kind: LookupKind
   usedBy: string
   /** Env var a runner already reads. Never a new one. */
   envVar?: string
@@ -237,71 +259,55 @@ export interface ToolSpec {
 }
 
 /**
- * Home directory for expanding the documented fallback paths.
- *
- * `HOME ?? '~'` is the idiom every runner uses; USERPROFILE is added because
- * this report is the one thing that must not silently mis-describe a Windows
- * box, and `~/...` there resolves to nothing at all.
+ * Home directory for expanding the documented fallback paths. The one rule is
+ * `resolveHome` in server/exec_probe.ts (HOME, then USERPROFILE, then `~`);
+ * kept exported here under its old name.
  */
 export function resolveHome(env: EnvReader): string {
-  return env('HOME') ?? env('USERPROFILE') ?? '~'
+  return resolveToolHome(env)
 }
 
-export type EnvReader = (name: string) => string | undefined
-
 /**
- * One row per external dependency, mirroring what each runner resolves today.
- * Each `fallbacks` entry cites the constant it mirrors; keep them in step.
+ * One row per external tool: the shared resolution table (runnerToolLookups in
+ * server/exec_probe.ts, which every runner resolves through) plus what only the
+ * report needs, a label, the reason to care, and a cheap version probe.
  */
 export function toolSpecs(home: string): ToolSpec[] {
+  const L = runnerToolLookups(home)
+  const row = (lookup: ToolLookup, extra: Pick<ToolSpec, 'label' | 'usedBy'> & Partial<ToolSpec>): ToolSpec => ({
+    id: lookup.id,
+    kind: lookup.kind,
+    ...(lookup.envVar ? { envVar: lookup.envVar } : {}),
+    ...(lookup.pathName ? { pathName: lookup.pathName } : {}),
+    fallbacks: lookup.fallbacks,
+    remediation: lookup.remediation,
+    ...extra,
+  })
   return [
-    {
-      id: 'ffmpeg',
+    row(L.ffmpeg, {
       label: 'ffmpeg',
-      kind: 'binary',
-      usedBy: 'Upload Content — /ingest-video and /ingest-photos (scripts/ingest-*.mjs)',
-      // No env var on purpose: ingest-video.mjs spawns the bare name, so an
-      // override here would describe a resolution the ingest path cannot make.
-      pathName: 'ffmpeg',
-      fallbacks: [],
-      remediation:
-        'Install ffmpeg (`apt install ffmpeg` / `brew install ffmpeg`), or drop a static build ' +
-        '(https://johnvansickle.com/ffmpeg/) somewhere already on PATH, e.g. ~/.local/bin. ' +
-        'Already installed? Restart the server — it resolves ffmpeg from the PATH it started with.',
+      // /ingest-photos runs neither ffmpeg nor ffprobe (scripts/ingest-photos.mjs); only video ingest does.
+      usedBy: 'Upload Content — /ingest-video (scripts/ingest-video.mjs)',
       version: {
         args: ['-version'],
         parse: (out) => firstMatch(out, /ffmpeg version (\S+)/),
       },
-    },
-    {
-      id: 'ffprobe',
+    }),
+    row(L.ffprobe, {
       label: 'ffprobe',
-      kind: 'binary',
       usedBy: 'Video ingest clip duration, which sets the adaptive keyframe fps',
-      pathName: 'ffprobe',
-      fallbacks: [],
       // Its own row rather than a footnote on ffmpeg: ingest-video.mjs guards
       // on ffmpeg and then calls ffprobe, so a build that ships only the former
       // fails past the guard, which is exactly the shape of failure this
       // report exists to pre-empt.
-      remediation:
-        'ffprobe ships with ffmpeg — install the full package rather than a single binary, ' +
-        'or put the ffprobe from the same static build on PATH beside ffmpeg.',
       version: {
         args: ['-version'],
         parse: (out) => firstMatch(out, /ffprobe version (\S+)/),
       },
-    },
-    {
-      id: 'colmap',
+    }),
+    row(L.colmap, {
       label: 'COLMAP',
-      kind: 'binary',
       usedBy: 'colmap-poses — the CPU pose source for pose-less sessions',
-      envVar: 'COLMAP_BIN',
-      pathName: 'colmap',
-      // Mirrors FALLBACK_COLMAP_BINS, server/colmap/colmap_poses.ts:96.
-      fallbacks: [`${home}/.local/micromamba/envs/colmap/bin/colmap`],
-      remediation: 'Install COLMAP (`brew install colmap` / `apt install colmap`) or set COLMAP_BIN.',
       version: {
         // `colmap --version` is not a recognised command (measured on 3.13.0:
         // it prints an error and still exits 0). `colmap help` prints the
@@ -314,40 +320,18 @@ export function toolSpecs(home: string): ToolSpec[] {
           return /with CUDA/.test(both) ? `${v} (CUDA)` : v
         },
       },
-    },
-    {
-      id: 'brush',
+    }),
+    row(L.brush, {
       label: 'Brush (brush-cli)',
-      kind: 'binary',
       usedBy: 'splat-train — Gaussian-splat training, the default backend',
-      envVar: 'BRUSH_BIN',
-      pathName: 'brush-cli',
-      // Mirrors DEFAULT_BRUSH_BIN, server/splat/splat_train.ts:97.
-      fallbacks: [`${home}/brush/target/release/brush-cli`],
-      remediation:
-        'Build Brush (`git clone https://github.com/ArthurBrussee/brush ~/brush && ' +
-        'cd ~/brush && cargo build --release -p brush-cli`) or set BRUSH_BIN to an existing brush-cli. ' +
-        'Needs a Vulkan/Metal-capable GPU; see docs/pipelines/splat-train.md — Setup.',
       version: {
         args: ['--version'],
         parse: (out) => firstMatch(out, /brush-cli\s+(\S+)/),
       },
-    },
-    {
-      id: 'spirula',
+    }),
+    row(L.spirula, {
       label: 'Spirula Studio',
-      kind: 'binary',
       usedBy: 'splat-train with SPLAT_BACKEND=spirula — the alternate trainer',
-      envVar: 'SPIRULA_BIN',
-      pathName: 'spirula',
-      // Mirrors FALLBACK_SPIRULA_BINS, server/splat/spirula_train.ts:128.
-      // Probed by name only; that module is under concurrent edit and is
-      // deliberately not imported (see this file's header).
-      fallbacks: [`${home}/opt/spirula/spirula`, `${home}/.local/bin/spirula`, '/usr/local/bin/spirula'],
-      remediation:
-        'Download a prebuilt Spirula Studio release (https://github.com/harry7557558/spirula-studio/releases — ' +
-        'the ubuntu-vulkan-x86_64 zip), unzip it to ~/opt/spirula/spirula, and `chmod +x` it; ' +
-        'or set SPIRULA_BIN to an existing binary. Optional — SPLAT_BACKEND=brush is the default.',
       version: {
         // `--version` prints a bare date-stamped version and nothing else
         // (measured: `2026.8.28`, exit 0), so the first non-empty line *is*
@@ -355,115 +339,263 @@ export function toolSpecs(home: string): ToolSpec[] {
         args: ['--version'],
         parse: (stdout, stderr) => firstLine(`${stdout}\n${stderr}`),
       },
-    },
-    {
-      id: 'panoptic-python',
+    }),
+    row(L['panoptic-python'], {
       label: 'Panoptic venv interpreter',
-      kind: 'python',
       usedBy: 'panoptic-scan — per-keyframe segmentation (Mask2Former)',
-      envVar: 'PANOPTIC_PYTHON',
-      // Mirrors DEFAULT_PANOPTIC_PYTHON, server/panoptic/panoptic_scan.ts:38.
-      fallbacks: [`${home}/.venvs/panoptic/bin/python`],
-      remediation: 'Create the venv and set PANOPTIC_PYTHON (see docs/pipelines/panoptic-scan.md — Setup).',
-    },
-    {
-      id: 'panoptic-worker',
+    }),
+    row(L['panoptic-worker'], {
       label: 'Panoptic worker checkout',
-      kind: 'dir',
       usedBy: 'panoptic-scan — holds panoptic_worker.py',
-      envVar: 'PANOPTIC_DIR',
-      // Mirrors DEFAULT_PANOPTIC_DIR, server/panoptic/panoptic_scan.ts:39.
-      fallbacks: [`${home}/panoptic`],
-      remediation: 'Install the worker and set PANOPTIC_DIR (see docs/pipelines/panoptic-scan.md — Setup).',
-    },
-    {
-      id: 'splat-detect-python',
+    }),
+    row(L['splat-detect-python'], {
       label: 'splat_analyzer venv interpreter',
-      kind: 'python',
       usedBy: 'splat-detect — object detection over a trained splat',
-      envVar: 'SPLAT_DETECT_PYTHON',
-      // Mirrors DEFAULT_DETECT_PYTHON, server/splat/splat_detect.ts:39.
-      fallbacks: [`${home}/.venvs/splat-analyzer/bin/python`],
-      remediation: 'Create the venv and set SPLAT_DETECT_PYTHON (see docs/splat-detect.md — Setup).',
-    },
-    {
-      id: 'splat-detect-dir',
+    }),
+    row(L['splat-detect-dir'], {
       label: 'splat_analyzer checkout',
-      kind: 'dir',
       usedBy: 'splat-detect — holds run_local.py and pointcloud_to_gs.py',
-      envVar: 'SPLAT_DETECT_DIR',
-      // Mirrors DEFAULT_DETECT_DIR, server/splat/splat_detect.ts:40.
-      fallbacks: [`${home}/splat_analyzer`],
-      remediation: 'Clone splat_analyzer and set SPLAT_DETECT_DIR (see docs/splat-detect.md — Setup).',
-    },
-    {
-      id: 'lingbot-map-python',
+    }),
+    row(L['lingbot-map-python'], {
       label: 'LingBot-Map interpreter',
-      kind: 'python',
       usedBy: 'lingbot-map-reconstruct — point clouds and poses from keyframes',
-      envVar: 'LINGBOT_MAP_PYTHON',
-      // lingbot_map.ts:115 defaults to the bare name, so PATH is the fallback
-      // here rather than a venv — and that default is precisely why this row's
-      // torch block matters (ADR 0007: the bare python3 has no torch).
-      pathName: 'python3',
-      fallbacks: [],
-      remediation:
-        'Point LINGBOT_MAP_PYTHON at an interpreter with torch installed ' +
-        '(see README — `LingBot-Map server processing`).',
-    },
-    {
-      id: 'lingbot-map-model',
+    }),
+    row(L['lingbot-map-model'], {
       label: 'LingBot-Map checkpoint',
-      kind: 'file',
       usedBy: 'lingbot-map-reconstruct — the model weights',
-      envVar: 'LINGBOT_MAP_MODEL_PATH',
-      // No documented default path: the runner passes '' and the worker skips.
-      fallbacks: [],
-      remediation: 'Download the checkpoint and set LINGBOT_MAP_MODEL_PATH (see README — `LingBot-Map server processing`).',
-    },
-    {
-      id: 'physag3d-python',
+    }),
+    row(L['physag3d-python'], {
       label: 'PhysAg3D launcher interpreter',
-      // 'binary', not 'python': execute.py needs only the standard library, so the torch probe would report a
-      // missing torch that nothing here wants.
-      kind: 'binary',
       usedBy: "thing-interactive-asset — runs PhysAg3D's execute.py (Python 3.11 or later)",
-      envVar: 'PHYSAG3D_PYTHON',
-      // server/physag3d/physag3d.ts defaults to the bare name, as lingbot_map.ts does.
-      pathName: 'python3',
-      fallbacks: [],
-      remediation:
-        "Point PHYSAG3D_PYTHON at the PhysAg3D checkout's venv interpreter, Python 3.11 or later " +
-        '(see docs/pipelines/physag3d.md — Setup).',
       version: {
         args: ['--version'],
         parse: (stdout, stderr) => firstMatch(`${stdout}\n${stderr}`, /Python\s+(\S+)/),
       },
-    },
-    {
-      id: 'physag3d-dir',
+    }),
+    row(L['physag3d-dir'], {
       label: 'PhysAg3D checkout',
-      kind: 'dir',
       usedBy: 'thing-interactive-asset — holds execute.py',
-      envVar: 'PHYSAG3D_DIR',
-      // No default: the job runs only where an operator has named a checkout, because a run sends the image off the box.
-      fallbacks: [],
-      remediation:
-        'Clone PhysAg3D (https://github.com/Supra-3D/PhysAg3D) and set PHYSAG3D_DIR to the checkout ' +
-        '(see docs/pipelines/physag3d.md — Setup).',
-    },
-    {
-      id: 'physag3d-config',
+    }),
+    row(L['physag3d-config'], {
       label: 'PhysAg3D runtime config',
-      kind: 'file',
       usedBy: 'thing-interactive-asset — names the agent CLI and the generation host the image goes to',
-      envVar: 'PHYSAG3D_CONFIG',
-      fallbacks: [],
-      remediation:
-        "Write a runtime config from the checkout's examples/ and set PHYSAG3D_CONFIG to it " +
-        '(see docs/pipelines/physag3d.md — Setup).',
-    },
+    }),
+    row(L['splat-finish-node'], {
+      label: 'node (for splat-transform)',
+      usedBy: 'splat-finish — runs the splat-transform CLI that writes .sog and .compressed.ply',
+      version: {
+        args: ['--version'],
+        parse: (stdout) => firstMatch(stdout, /^v?(\d+\.\d+\.\d+)/m),
+      },
+    }),
+    row(L['splat-transform-cli'], {
+      label: 'splat-transform CLI',
+      usedBy: 'splat-finish — @playcanvas/splat-transform, an npm devDependency',
+    }),
+    row(L['sensenova-bash'], {
+      label: 'SenseNova launcher shell',
+      usedBy: 'sensenova-vision — runs scripts/run_sensenova_vision.sh (wsl.exe on Windows)',
+    }),
+    row(L['sensenova-dir'], {
+      label: 'SenseNova-Vision checkout',
+      usedBy: 'sensenova-vision — holds scripts/run_sensenova_vision.sh',
+    }),
+    row(L['sensenova-model'], {
+      label: 'SenseNova-Vision model',
+      usedBy: 'sensenova-vision — the model weights',
+    }),
   ]
+}
+
+// ── Services ─────────────────────────────────────────────────────────────────
+
+/** The longest a service health request may take. A probe, not a stage. Untuned. */
+export const SERVICE_PROBE_TIMEOUT_MS = 3_000
+
+/** Where a service is, as the report may print it: an origin only, never a path, user or token. */
+export function serviceOrigin(raw: string): string | null {
+  try {
+    const url = new URL(raw)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : null
+  } catch {
+    return null
+  }
+}
+
+interface ServiceProbe {
+  /** The row with `found`, `path` (an origin), `via` and `remediation` filled. */
+  row: ToolCapability
+  /** The health request, when the service has a cheap one. Credentials go in headers, never in the row. */
+  health?: { url: string; headers: Record<string, string>; ok: (res: Response) => Promise<string | null> }
+  /**
+   * The address is a default nobody configured. An unmeasured default is not
+   * evidence of anything, so the row is found only when its health request was
+   * made and answered, never on a `versions: false` report.
+   */
+  foundOnlyIfReachable?: boolean
+  /** A local directory that must exist for the row to be found (the ONNX model). */
+  requiresDir?: string
+}
+
+/**
+ * The three network dependencies, as the modules that use them configure them:
+ * person_4d.ts's FDANYONE_HOST, memory_push.ts's `configFromEnv`, and the
+ * inference engine's INFERENCE_MODE and OLLAMA_HOST (server/inference.ts).
+ */
+export function serviceProbes(env: EnvReader): ServiceProbe[] {
+  const probes: ServiceProbe[] = []
+
+  // ── The 4d-capture host ──
+  const fdHost = (env('FDANYONE_HOST') ?? '').trim().replace(/\/+$/, '')
+  const fdOrigin = fdHost ? serviceOrigin(fdHost) : null
+  const fdToken = env('FDANYONE_TOKEN')
+  probes.push({
+    row: {
+      id: 'fdanyone-host',
+      label: '4d-capture service',
+      kind: 'service',
+      usedBy: 'person-4d-reconstruct — the off-box 4DAnyone + Brush service (subsystems/4d-capture)',
+      envVar: 'FDANYONE_HOST',
+      found: fdOrigin !== null,
+      ...(fdOrigin ? { path: fdOrigin, via: 'env' as const } : {}),
+      searched: ['env:FDANYONE_HOST'],
+      ...(fdOrigin ? {} : {
+        remediation: fdHost
+          ? `FDANYONE_HOST is not an http(s) URL. ${FDANYONE_HOST_REMEDIATION}`
+          : FDANYONE_HOST_REMEDIATION,
+      }),
+    },
+    ...(fdOrigin
+      ? {
+        health: {
+          url: `${fdHost}/health`,
+          headers: fdToken ? { Authorization: `Bearer ${fdToken}` } : {},
+          ok: async (res) => {
+            const body = await res.json().catch(() => null) as { stub?: unknown } | null
+            return body && body.stub === true ? 'answered (stub mode)' : 'answered'
+          },
+        },
+      }
+      : {}),
+  })
+
+  // ── Companion Memory ──
+  const memory = memoryPushConfigFromEnv(env)
+  const memoryOrigin = memory.enabled ? serviceOrigin(memory.baseUrl) : null
+  probes.push({
+    row: {
+      id: 'companion-memory',
+      label: 'Companion Memory (CI-Server)',
+      kind: 'service',
+      // A Hub connection made while the server runs is not in the environment; GET /memory/status reports that.
+      usedBy: 'memory-push — sends a scan and its detections to Companion Memory',
+      envVar: 'CI_SERVER_URL',
+      found: memoryOrigin !== null,
+      ...(memoryOrigin ? { path: memoryOrigin, via: 'env' as const } : {}),
+      searched: ['env:CI_SERVER_URL', 'env:CI_SERVER_TOKEN'],
+      ...(memoryOrigin ? {} : {
+        remediation:
+          'Companion Memory is not connected. Connect it from the Hub, or set CI_SERVER_URL and CI_SERVER_TOKEN. ' +
+          'A Hub connection made since the server started shows in GET /memory/status, not here.',
+      }),
+    },
+  })
+
+  // ── The inference engine ──
+  const requested = env('INFERENCE_MODE')
+  const mode = requested === 'onnx' ? 'onnx' : requested === 'mock' ? 'mock' : 'ollama'
+  if (mode === 'ollama') {
+    const configured = Boolean(env('OLLAMA_HOST'))
+    const ollama = normalizeOllamaHost(env('OLLAMA_HOST'))
+    const origin = serviceOrigin(ollama)
+    probes.push({
+      row: {
+        id: 'inference-engine',
+        label: 'Inference engine (Ollama)',
+        kind: 'service',
+        usedBy: 'capture inference — /infer, the VLM object detection during a scan (INFERENCE_MODE=ollama)',
+        envVar: 'OLLAMA_HOST',
+        found: origin !== null,
+        ...(origin ? { path: origin, via: configured ? 'env' as const : 'fallback' as const } : {}),
+        searched: [configured ? 'env:OLLAMA_HOST' : `default:${origin ?? ollama}`],
+        ...(origin ? {} : { remediation: 'OLLAMA_HOST is not a usable address. Set it to host:port or a URL.' }),
+      },
+      foundOnlyIfReachable: !configured,
+      ...(origin
+        ? {
+          health: {
+            url: `${ollama}/api/tags`,
+            headers: {},
+            ok: async (res) => {
+              const body = await res.json().catch(() => null) as { models?: unknown[] } | null
+              const n = Array.isArray(body?.models) ? body!.models!.length : 0
+              return n === 0 ? 'answered, but no models are pulled' : `answered, ${n} model(s) pulled`
+            },
+          },
+        }
+        : {}),
+    })
+  } else {
+    // onnx reads its model from disk and mock needs nothing: both are local, so `found` is the whole answer.
+    const { modelDir } = onnxModelPaths(env)
+    probes.push({
+      row: {
+        id: 'inference-engine',
+        label: `Inference engine (${mode})`,
+        kind: 'service',
+        usedBy: `capture inference — /infer, the VLM object detection during a scan (INFERENCE_MODE=${mode})`,
+        envVar: 'INFERENCE_MODE',
+        found: true,
+        path: mode === 'onnx' ? modelDir : 'mock',
+        via: 'env',
+        searched: mode === 'onnx' ? ['env:INFERENCE_MODE', modelDir] : ['env:INFERENCE_MODE'],
+      },
+      ...(mode === 'onnx' ? { requiresDir: modelDir } : {}),
+    })
+  }
+  return probes
+}
+
+/**
+ * Whether this process may reach `url` without asking. The CLI's documented
+ * flags (`--allow-read --allow-env --allow-run`) grant no network, and a fetch
+ * there would either prompt in a terminal or fail and read as "the service is
+ * down". Neither is true, so an unpermitted probe is not made at all.
+ */
+export function networkPermitted(url: string): boolean {
+  try {
+    return Deno.permissions.querySync({ name: 'net', host: new URL(url).host }).state === 'granted'
+  } catch {
+    return false
+  }
+}
+
+/** Ask one service's health URL, bounded. Never throws. */
+async function probeServiceHealth(
+  probe: ServiceProbe,
+  doFetch: typeof fetch,
+  timeoutMs: number,
+): Promise<{ reachable: boolean; detail: string }> {
+  if (!probe.health) return { reachable: false, detail: 'no health request' }
+  try {
+    const res = await doFetch(probe.health.url, {
+      headers: probe.health.headers,
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => {})
+      return {
+        reachable: false,
+        detail: res.status === 401 || res.status === 403
+          ? `refused the credentials (HTTP ${res.status})`
+          : `answered HTTP ${res.status}`,
+      }
+    }
+    return { reachable: true, detail: (await probe.health.ok(res)) ?? 'answered' }
+  } catch (err) {
+    const timedOut = err instanceof DOMException && err.name === 'TimeoutError'
+    return { reachable: false, detail: timedOut ? `no answer within ${timeoutMs} ms` : 'did not answer' }
+  }
 }
 
 // ── Probing ──────────────────────────────────────────────────────────────────
@@ -497,14 +629,16 @@ export interface CapabilityProbeOptions {
   /** Entry names of a directory, or [] when it cannot be read. Vulkan ICDs only. */
   _listDir?: (path: string) => Promise<string[]>
   _run?: (bin: string, args: string[]) => Promise<RunResult | null>
+  /** The services' health requests. Called only when versions are on. */
+  _fetch?: typeof fetch
 }
 
 /**
  * Resolve one tool: env var, then PATH, then the documented install paths.
  *
- * The order is the runners' order and is load-bearing — an explicit env var is
- * taken at its word and only probed, exactly as `resolveColmapBin` does, so an
- * operator who names a binary is never quietly overridden by a fallback.
+ * A thin adapter over `locateTool` in server/exec_probe.ts, the resolver every
+ * runner uses, so the report and the job take the same path through the same
+ * steps. Kept exported, with its old signature, for the callers that have it.
  * `searched` records every candidate whether it hit or not.
  */
 export async function resolveTool(
@@ -517,29 +651,14 @@ export async function resolveTool(
     isFile: (path: string) => Promise<boolean>
   },
 ): Promise<{ found: boolean; path?: string; via?: ResolvedVia; searched: string[] }> {
-  const searched: string[] = []
-  const exists = async (candidate: string): Promise<boolean> => {
-    searched.push(candidate)
-    if (spec.kind === 'dir') return await opts.isDir(candidate)
-    if (spec.kind === 'file') return await opts.isFile(candidate)
-    return await opts.isRunnable(candidate, opts.platform)
-  }
-
-  const explicit = spec.envVar ? opts.env(spec.envVar) : undefined
-  if (explicit) {
-    return { found: await exists(explicit), path: explicit, via: 'env', searched }
-  }
-
-  if (spec.pathName && spec.kind !== 'dir' && spec.kind !== 'file') {
-    searched.push(`PATH:${spec.pathName}`)
-    const hit = await opts.which(spec.pathName, opts.platform)
-    if (hit) return { found: true, path: hit, via: 'path', searched }
-  }
-
-  for (const candidate of spec.fallbacks) {
-    if (await exists(candidate)) return { found: true, path: candidate, via: 'fallback', searched }
-  }
-  return { found: false, searched }
+  return await locateTool(spec as ToolLookup, {
+    platform: opts.platform,
+    env: opts.env,
+    isRunnable: opts.isRunnable,
+    which: opts.which,
+    isDir: opts.isDir,
+    isFile: opts.isFile,
+  })
 }
 
 /**
@@ -662,8 +781,9 @@ export function assessPipelines(
 
   const stages: Array<{ id: string; label: string; requires: string[]; warn?: () => string[] }> = [
     {
+      // Video only: /ingest-photos runs neither tool.
       id: 'ingest-video',
-      label: 'Upload Content (video / photos)',
+      label: 'Upload Content (video)',
       requires: ['ffmpeg', 'ffprobe'],
     },
     {
@@ -733,6 +853,44 @@ export function assessPipelines(
     },
   ]
 
+  // A service that was measured and did not answer is a warning, not a block:
+  // it may be down for a minute, and its job reports that itself when it runs.
+  const unreachable = (id: string, who: string): string[] => {
+    const t = byId.get(id)
+    return t?.found === true && t.reachable === false
+      ? [`${who} at ${t.path} did not answer: ${t.detail ?? 'no detail'}.`]
+      : []
+  }
+  stages.push(
+    {
+      id: 'splat-finish',
+      label: 'Splat web delivery (.sog + compressed PLY)',
+      requires: ['splat-finish-node', 'splat-transform-cli'],
+    },
+    {
+      id: 'sensenova-vision',
+      label: 'SenseNova-Vision',
+      requires: ['sensenova-bash', 'sensenova-dir', 'sensenova-model'],
+    },
+    {
+      id: 'person-4d-reconstruct',
+      label: '4D person reconstruction (delegated)',
+      requires: ['fdanyone-host'],
+      warn: () => unreachable('fdanyone-host', 'The 4d-capture service'),
+    },
+    {
+      id: 'memory-push',
+      label: 'Push to Companion Memory',
+      requires: ['companion-memory'],
+    },
+    {
+      id: 'capture-inference',
+      label: 'Capture inference (VLM detection)',
+      requires: ['inference-engine'],
+      warn: () => unreachable('inference-engine', 'The inference engine'),
+    },
+  )
+
   return stages.map((s) => {
     const missing = s.requires.filter((id) => !found(id))
     return {
@@ -756,13 +914,7 @@ export function assessPipelines(
 export async function probeCapabilities(opts: CapabilityProbeOptions = {}): Promise<CapabilityReport> {
   const platform = opts.platform ?? Deno.build.os
   const arch = opts.arch ?? Deno.build.arch
-  const env: EnvReader = opts.env ?? ((name) => {
-    try {
-      return Deno.env.get(name)
-    } catch {
-      return undefined
-    }
-  })
+  const env: EnvReader = opts.env ?? readEnv
   const home = opts.home ?? resolveHome(env)
   const timeoutMs = opts.timeoutMs ?? 10_000
   const wantVersions = opts.versions !== false
@@ -806,6 +958,35 @@ export async function probeCapabilities(opts: CapabilityProbeOptions = {}): Prom
         const v = out ? spec.version.parse(out.stdout, out.stderr) : null
         if (v) tool.version = v
       }
+    }
+    tools.push(tool)
+  }
+
+  // Network services: configured or not, and reachable only when measured. A
+  // `versions: false` report makes no request at all.
+  const doFetch = opts._fetch ?? fetch
+  for (const probe of serviceProbes(env)) {
+    const tool = probe.row
+    if (probe.requiresDir && !(await deps.isDir(probe.requiresDir))) {
+      tool.found = false
+      tool.remediation = `No ONNX model at ${probe.requiresDir}. Run \`npm run setup:models\`, or set MODEL_DIR.`
+    }
+    let notProbed = 'versions off'
+    if (tool.found && wantVersions && probe.health) {
+      if (opts._fetch || networkPermitted(probe.health.url)) {
+        const health = await probeServiceHealth(probe, doFetch, Math.min(timeoutMs, SERVICE_PROBE_TIMEOUT_MS))
+        tool.reachable = health.reachable
+        tool.detail = health.detail
+      } else {
+        notProbed = 'this process has no network permission; add --allow-net'
+        tool.detail = notProbed
+      }
+    }
+    if (tool.found && probe.foundOnlyIfReachable && tool.reachable !== true) {
+      tool.found = false
+      tool.remediation = tool.reachable === false
+        ? `Nothing answered at the default address ${tool.path}: ${tool.detail}. Start Ollama, or set OLLAMA_HOST.`
+        : `The default address ${tool.path} was not probed (${notProbed}). Probe with versions on, or set OLLAMA_HOST.`
     }
     tools.push(tool)
   }
@@ -1157,6 +1338,10 @@ export function formatCapabilityReport(report: CapabilityReport): string {
             : `absent — ${t.torch.error ?? 'no detail'}`
         }`,
       )
+    }
+    if (t.kind === 'service' && (t.reachable !== undefined || t.detail)) {
+      const state = t.reachable === undefined ? 'not probed' : t.reachable ? 'reachable' : 'UNREACHABLE'
+      lines.push(`          ${state}: ${t.detail ?? ''}`)
     }
     if (t.remediation) lines.push(`          fix: ${t.remediation}`)
   }

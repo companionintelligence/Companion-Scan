@@ -12,7 +12,8 @@ import type { Thing, ThingObservation } from '../../../src/world/types.ts'
 
 Deno.test('normalizes common object synonyms', () => {
   assertEquals(normalizeThingLabel('Armchair'), 'chair')
-  assertEquals(normalizeThingLabel('Television'), 'monitor')
+  // server/prompt.ts's canon, since wave 14-0002: television is a tv, and a tv is not a monitor.
+  assertEquals(normalizeThingLabel('Television'), 'tv')
   assertEquals(normalizeThingLabel('settee'), 'sofa')
 })
 

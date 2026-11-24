@@ -81,12 +81,15 @@ Deno.test({
         await Deno.writeFile(`${sessionDir}/kf-${String(i).padStart(5, '0')}.jpg`, new Uint8Array([0xff, 0xd8, 0xff, 0xd9]))
       }
 
+      // A model path must name something (a missing one is a skip), so the fixture makes one.
+      const modelPath = `${root}/models/sensenova-test`
+      await Deno.mkdir(modelPath, { recursive: true })
       const result = await runSenseNovaVision({
         sessionDir,
         outputDir: `${root}/out`,
         task: 'recon3d',
         repoDir: repo,
-        modelPath: '/models/sensenova-test',
+        modelPath,
         bashBin: 'bash',
       })
       assertEquals(result.status, 'ok', `expected ok, got ${result.status}: ${result.remediation ?? result.error}`)

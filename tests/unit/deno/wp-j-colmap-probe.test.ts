@@ -60,7 +60,9 @@ Deno.test({
       const located = await locateColmapBin('colmap', 5_000)
 
       assertEquals(located.pathProbe, 'found')
-      assertEquals(located.bin, 'colmap')
+      // The absolute path the shared resolver found on PATH, the same one GET /capabilities reports, rather than
+      // the bare name (wave 14-0002).
+      assertEquals(located.bin, bin)
     } finally {
       Deno.env.set('PATH', previousPath)
       await Deno.remove(root, { recursive: true })

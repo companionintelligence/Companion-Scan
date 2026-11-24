@@ -54,12 +54,16 @@ export const LEGACY_STATUS_TO_WORLD: Record<JobStatus, WorldJobStatus> = {
 }
 
 /**
- * Mirrors main.ts's `DEFAULT_WORKER_CAPABILITIES` (main.ts:1086) —
- * duplicated rather than imported because main.ts cannot be imported
- * without running its unconditional top-level side effects (hostname
- * resolution, VLM engine load, `Deno.serve`). Same constraint, same
- * precedent as world_job_pump.ts duplicating `MAX_JOB_HISTORY` as
- * `MAX_WORLD_JOB_HISTORY` for the identical reason (see that file's header).
+ * main.ts's `DEFAULT_WORKER_CAPABILITIES` as it stood when this migration
+ * was written, stamped on the legacy optimize-scan jobs it converts. It is a
+ * snapshot, not a mirror: main.ts's list has since grown (sensenova-vision,
+ * panoptic, 4d-capture, physag3d), and both still name open3d and vggt, which
+ * no job runs (wave 14 lists that for the owner). Duplicated rather than
+ * imported because main.ts cannot be imported without running its
+ * unconditional top-level side effects (hostname resolution, VLM engine load,
+ * `Deno.serve`). Same constraint, same precedent as world_job_pump.ts
+ * duplicating `MAX_JOB_HISTORY` as `MAX_WORLD_JOB_HISTORY` for the identical
+ * reason (see that file's header).
  */
 export const DEFAULT_WORKER_CAPABILITIES = ['cpu', 'onnx', 'ollama', 'open3d', 'splat', 'vggt', 'lingbot-map']
 

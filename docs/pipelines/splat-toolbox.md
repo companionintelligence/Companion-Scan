@@ -35,7 +35,7 @@ stay in `scans/sessions/<id>/`.
 | **Ingest video** | ffmpeg (+ adaptive fps + blur gate) | `scripts/ingest-video.mjs` / `POST /ingest-video` | keyframe session (pose-less) |
 | **Ingest photos** | sharp/jimp (+ EXIF ordering + blur gate) | `scripts/ingest-photos.mjs` / `POST /ingest-photos` | keyframe session(s) (pose-less) |
 
-### GPU placement (beta-1, 2× RX 7900 XTX)
+### GPU placement (the multi-GPU AMD host, 2× RX 7900 XTX)
 
 Placement differs by engine, and **the HIP device numbering is inverted vs
 `rocm-smi`** — do not trust the index you read off `rocm-smi` for the pin:
@@ -43,7 +43,7 @@ Placement differs by engine, and **the HIP device numbering is inverted vs
 | Engine | Pin env | Value on this box |
 |--------|---------|-------------------|
 | Brush (train / compress) | `CUBECL_WGPU_DEFAULT_DEVICE` | wgpu adapter index |
-| splat_analyzer torch/HIP (detect) | `HIP_VISIBLE_DEVICES` | `1` |
+| splat_analyzer torch/HIP (detect) | `HIP_VISIBLE_DEVICES` | `1` on this host. Unset is no pin (the default since wave 14): set it here |
 
 Unpinned Ollama has OOM'd torch jobs; keep the pins explicit when running detect
 alongside a warm model.
@@ -119,7 +119,7 @@ when both exist it is the model with a measured reprojection error behind it.
     -d '{"type":"splat-train","scanId":"scan-<id>"}'
   ```
 
-**Env:** `BRUSH_BIN` (default `~/brush/target/release/brush-cli`). Missing
+**Env:** `BRUSH_BIN` (then `brush-cli` on PATH, then `~/brush/target/release/brush-cli`). Missing
 binary → a `skipped` manifest with a remediation hint, never a crash. Full
 env/params table in `splat-train.md`.
 
@@ -174,7 +174,9 @@ for the calibration runbook and the plan to surface detections in the AR scanner
 
 **Env:** `SPLAT_DETECT_PYTHON` (default `~/.venvs/splat-analyzer/bin/python`),
 `SPLAT_DETECT_DIR` (default `~/splat_analyzer`), `HIP_VISIBLE_DEVICES` (default
-`1`), `POINT_SPLAT_SIZE` (default `6`). A missing python/dir → a `skipped`
+unset: no pin, so torch takes its first device; it used to default to `1`, the second GPU of
+one host), `POINT_SPLAT_SIZE` (default `6`), `SPLAT_DETECT_QUALITY` (default `medium`, 90
+views; `low` is 24). A missing python/dir → a `skipped`
 manifest; an analyzer crash or a run with no `interactions.json` → an `error`
 manifest carrying a stderr tail.
 
@@ -298,9 +300,12 @@ manually re-run it after tuning, via the job queue.
 **Env:** `SPLAT_FINISH_AUTO` (default on; `0` disables the auto-chain),
 `SPLAT_FINISH_GPU` (default `cpu`; a WebGPU adapter index from `-L` — dawn/
 Vulkan numbering, NOT a HIP id), `SPLAT_FINISH_SH_ITERS` (k-means iterations,
-default 10), `SPLAT_TRANSFORM_CLI` (override the cli.mjs path). A missing
-input splat or CLI → a `skipped` manifest with a remediation; a CLI crash or a
-run with no output → an `error` manifest carrying the stderr tail.
+default 10), `SPLAT_TRANSFORM_CLI` (override the cli.mjs path),
+`SPLAT_FINISH_NODE` (default `node` on PATH). A missing input splat, CLI or
+node → a `skipped` manifest with a remediation (a missing node used to fail the
+job); a CLI crash or a run with no output → an `error` manifest carrying the
+stderr tail. `GET /capabilities` reports node and the CLI as the
+`splat-finish-node` and `splat-transform-cli` rows.
 
 ---
 

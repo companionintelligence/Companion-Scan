@@ -33,16 +33,33 @@
  * See docs/factory/10-4d-person-capture/0005-frame-set-contract-and-job.md.
  */
 import type { Person4DManifest } from '../../src/world/manifests.ts'
-import { budgetFromEnv, describeBudget } from '../run_with_deadline.ts'
+import { abortReasonOf, budgetFromEnv, describeBudget, intFromEnv, writeRunnerManifest } from '../run_with_deadline.ts'
 
 export interface Person4DClip {
   clientId: string | null
-  /** URL the subsystem fetches the clip from — reachable on the tailnet. */
+  /**
+   * URL the subsystem fetches the clip from — reachable on the tailnet. It
+   * fetches with `Authorization: Bearer <FDANYONE_TOKEN>` and Range requests,
+   * following Content-Range (the clip route sends at most 8 MiB per 206).
+   */
   url: string
   mimeType: string
+  /** The pose track recorded beside the clip, fetched with the same token. */
   poseTrackUrl: string | null
   /** The member's TakeSync record, passed through verbatim. Never defaulted. */
   sync: unknown
+  /**
+   * The clip's length in ms, when known. The subsystem prefers the pose track's
+   * own `durationMs` and then ffprobe, so this is the last resort, not a claim.
+   */
+  durationMs?: number | null
+  /**
+   * The member scan's session-to-Place matrix (`ScanManifest.localToWorld`,
+   * column-major), for a member that is in the Place frame. Pose-track poses
+   * are in each phone's own session frame; this is what puts N phones in one,
+   * so a clip without it cannot be one of a multi-camera take's views.
+   */
+  localToWorld?: number[] | null
 }
 
 export interface Person4DParams {
@@ -78,6 +95,12 @@ export interface Person4DOptions {
   _fetch?: typeof fetch
   /** Injected for tests, so polling does not actually sleep. */
   _sleep?: (ms: number) => Promise<void>
+  /**
+   * Stops the run when it fires: the job pump passes its job's signal (F-27).
+   * Every request is cut short with it, and polling ends. The remote take keeps
+   * running on the subsystem, where a later submit re-attaches to it.
+   */
+  signal?: AbortSignal
 }
 
 export interface Person4DResult {
@@ -86,6 +109,13 @@ export interface Person4DResult {
   /** Trailing log text, for the job's error field. */
   log: string
 }
+
+/**
+ * What fixes an unconfigured host. The capability report's `fdanyone-host` row
+ * prints the same sentence, so the job's hint and the report agree.
+ */
+export const FDANYONE_HOST_REMEDIATION =
+  'Set FDANYONE_HOST to a 4d-capture subsystem (needs a CUDA GPU with ~44 GiB) — see docs/pipelines/4d-person.md'
 
 const DEFAULT_VIEWS_PER_LAYER = 6
 const DEFAULT_TIMESTEP_FPS = 5
@@ -115,15 +145,6 @@ export function resolveParams(opts: Person4DOptions): Person4DParams {
   }
 }
 
-function intFromEnv(name: string, fallback: number): number {
-  const raw = Deno.env.get(name)
-  if (!raw) return fallback
-  // Floor first, then accept only a whole number of at least 1. Testing before
-  // flooring let 0.5 through, and flooring that gave 0.
-  const whole = Math.floor(Number(raw))
-  return Number.isFinite(whole) && whole >= 1 ? whole : fallback
-}
-
 /**
  * 4DAnyone requires `views_per_layer` to be divisible by 4 or 6. Validated
  * here rather than upstream because a bad value fails deep inside the model,
@@ -145,6 +166,10 @@ export function buildSubmitRequest(opts: Person4DOptions, params: Person4DParams
       // Passed through exactly as recorded. A take whose members never measured
       // each other must not arrive looking synchronised.
       sync: c.sync ?? null,
+      // Null, never a guess: a length of 0 plans no timesteps, and an identity
+      // matrix would claim every phone stood at the Place origin.
+      durationMs: typeof c.durationMs === 'number' && Number.isFinite(c.durationMs) && c.durationMs > 0 ? c.durationMs : null,
+      localToWorld: isMatrix16(c.localToWorld) ? c.localToWorld : null,
     })),
     params: {
       viewsPerLayer: params.viewsPerLayer,
@@ -173,14 +198,8 @@ function baseManifest(opts: Person4DOptions, params: Person4DParams): Person4DMa
 }
 
 async function writeManifest(path: string, manifest: Person4DManifest): Promise<void> {
-  try {
-    await Deno.mkdir(path.slice(0, path.lastIndexOf('/')), { recursive: true })
-    await Deno.writeTextFile(path, JSON.stringify(manifest, null, 2))
-  } catch (err) {
-    // A manifest we could not write is not a reason to fail the job — the
-    // in-memory result still reaches the coordinator.
-    console.error('[person-4d] could not write manifest:', err)
-  }
+  // Beside the scan in SCANS_DIR, so creating the directory is safe here.
+  await writeRunnerManifest(path, manifest, 'person-4d', { mkdir: true })
 }
 
 /**
@@ -191,8 +210,8 @@ async function writeManifest(path: string, manifest: Person4DManifest): Promise<
 export async function runPerson4D(opts: Person4DOptions): Promise<Person4DResult> {
   const params = resolveParams(opts)
   const manifest = baseManifest(opts, params)
-  const doFetch = opts._fetch ?? fetch
-  const sleep = opts._sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)))
+  const doFetch = withJobSignal(opts._fetch ?? fetch, opts.signal)
+  const sleep = opts._sleep ?? ((ms: number) => abortableSleep(ms, opts.signal))
 
   if (opts.clips.length === 0) {
     manifest.status = 'error'
@@ -203,8 +222,7 @@ export async function runPerson4D(opts: Person4DOptions): Promise<Person4DResult
 
   if (!params.host) {
     manifest.skippedReason = 'FDANYONE_HOST is not set'
-    manifest.remediation =
-      'Set FDANYONE_HOST to a 4d-capture subsystem (needs a CUDA GPU with ~44 GiB) — see docs/pipelines/4d-person.md'
+    manifest.remediation = FDANYONE_HOST_REMEDIATION
     await writeManifest(opts.manifestPath, manifest)
     return { status: 'skipped', manifest, log: manifest.skippedReason }
   }
@@ -237,6 +255,13 @@ export async function runPerson4D(opts: Person4DOptions): Promise<Person4DResult
     const body = await res.json() as { attached?: boolean }
     attached = body.attached === true
   } catch (err) {
+    if (opts.signal?.aborted) {
+      // The job was given up on mid-submit: that is not the host being down.
+      manifest.status = 'error'
+      manifest.error = `stopped: ${abortReasonOf(opts.signal)}`
+      await writeManifest(opts.manifestPath, manifest)
+      return { status: 'error', manifest, log: manifest.error }
+    }
     // Unreachable is a skip, not an error: the same contract as a missing
     // binary. The appliance keeps working without a GPU host attached.
     manifest.skippedReason = `4d-capture subsystem unreachable at ${params.host}`
@@ -252,6 +277,12 @@ export async function runPerson4D(opts: Person4DOptions): Promise<Person4DResult
   let last: Record<string, unknown> = {}
   while (Date.now() < deadline) {
     await sleep(params.pollIntervalMs)
+    if (opts.signal?.aborted) {
+      manifest.status = 'error'
+      manifest.error = `stopped: ${abortReasonOf(opts.signal)}; the take may still be running on the subsystem, and a new submit re-attaches to it`
+      await writeManifest(opts.manifestPath, manifest)
+      return { status: 'error', manifest, log: manifest.error }
+    }
     let status: Record<string, unknown>
     try {
       const res = await doFetch(`${params.host}/takes/${encodeURIComponent(opts.takeId)}`, {
@@ -392,6 +423,37 @@ function frameFailureReason(err: unknown, requestTimeoutMs: number): string {
     return `timed out after ${describeBudget(requestTimeoutMs)}`
   }
   return err instanceof Error ? err.message : String(err)
+}
+
+/**
+ * `fetch`, with the job's signal joined to each request's own timeout signal,
+ * so one abort ends whichever request is in flight.
+ */
+function withJobSignal(doFetch: typeof fetch, jobSignal: AbortSignal | undefined): typeof fetch {
+  if (!jobSignal) return doFetch
+  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+    doFetch(input, {
+      ...init,
+      signal: init?.signal ? AbortSignal.any([init.signal, jobSignal]) : jobSignal,
+    })) as typeof fetch
+}
+
+/** A poll sleep that ends early when the job's signal fires. */
+function abortableSleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (signal?.aborted) return resolve()
+    const timer = setTimeout(done, ms)
+    function done() {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', done)
+      resolve()
+    }
+    signal?.addEventListener('abort', done, { once: true })
+  })
+}
+
+function isMatrix16(m: unknown): m is number[] {
+  return Array.isArray(m) && m.length === 16 && m.every((v) => typeof v === 'number' && Number.isFinite(v))
 }
 
 function numberOr(v: unknown): number | undefined {

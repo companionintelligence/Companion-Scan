@@ -61,6 +61,8 @@
 import type { ScanReviewStatus } from '../../src/world/types.ts'
 import type { CentreStats } from './splat_ply_stats.ts'
 import { centreStats, fractionOutside, readPlyCentres } from './splat_ply_stats.ts'
+// The one fractional, zero-admitting env rule (server/run_with_deadline.ts), shared with colmap_poses.ts.
+import { numFromEnv } from '../run_with_deadline.ts'
 
 /** Why a splat was judged degenerate. Codes, so a caller can branch without parsing prose. */
 export type SplatQualityReason =
@@ -398,10 +400,4 @@ export function scaleFrameOf(posedFrames?: { fromCapture: number; fromSolver: nu
 
 function round3(n: number): number {
   return Number.isFinite(n) ? Math.round(n * 1000) / 1000 : 0
-}
-
-function numFromEnv(name: string, fallback: number): number {
-  const raw = Deno.env.get(name)
-  const n = raw ? Number(raw) : NaN
-  return Number.isFinite(n) && n >= 0 ? n : fallback
 }
