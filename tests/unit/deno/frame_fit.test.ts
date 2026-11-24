@@ -2885,9 +2885,10 @@ Deno.test('ADR 0002: the module uses no runtime-specific API and imports only br
   assert(!/\bDeno\b/.test(source), 'no Deno reference of any kind')
   assert(!/\b(window|document|navigator|localStorage|sessionStorage|indexedDB|HTMLCanvasElement)\b/.test(source), 'no DOM')
   const imports = [...source.matchAll(/^import\s[^\n]*?from\s+'([^']+)'/gm)].map((m) => m[1]!).sort()
-  assertEquals(imports, ['../capture/pose-delta.ts', './calibration-evidence.ts', './geo.ts', './types.ts'])
-  // The siblings it pulls in must be clean as well, or the browser build inherits the problem.
-  for (const sibling of ['../../../src/world/geo.ts', '../../../src/world/calibration-evidence.ts', '../../../src/capture/pose-delta.ts']) {
+  assertEquals(imports, ['../capture/pose-delta.ts', './anchor-placement.ts', './calibration-evidence.ts', './distance-text.ts', './geo.ts', './scale-mode.ts', './types.ts'])
+  // The siblings it pulls in must be clean as well, or the browser build inherits the problem. anchor-placement.ts holds
+  // the anchor radius both this file and the decal read, and scale-mode.ts the units union (FN-086).
+  for (const sibling of ['../../../src/world/geo.ts', '../../../src/world/calibration-evidence.ts', '../../../src/capture/pose-delta.ts', '../../../src/world/anchor-placement.ts', '../../../src/world/scale-mode.ts', '../../../src/world/mat4.ts', '../../../src/world/distance-text.ts']) {
     assert(!/\bDeno\./.test(await read(sibling)), `${sibling} calls a Deno API`)
   }
 })

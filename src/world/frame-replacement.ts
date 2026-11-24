@@ -15,12 +15,11 @@
  * `src/world/frame-generations.ts` is the server slice's, and holds the rules both halves share: which write is a new
  * generation, how the history is kept, which scans are in a Place frame. This file is what only the phone does: it stamps a
  * finished calibration, offers the upgrade, and reads the two answers it asks for (`GET /projects/:id/frame-status` and the
- * refusal of a merge). It imports one thing from that file, `outsidePlaceFrameOf`, the statement a record makes that its scan is
- * in no frame, because the stamp and the server's counts must read it as one rule. The rest it does not import, because the two
- * slices were built apart. Three names are in both:
- * `newFrameId` and `frameIdOf` are the same function in each, and `FrameReplaces` the same shape. Where the two slices are put
- * together, the copies below are deleted and re-exported from there. `ReferenceStatus` is not that file's `FrameStatus`: that
- * is the body the server answers, and this is what the phone keeps of it.
+ * refusal of a merge). It takes from that file `outsidePlaceFrameOf`, the statement a record makes that its scan is in no frame,
+ * because the stamp and the server's counts must read it as one rule, and the three names the two slices used to define each:
+ * `newFrameId`, `frameIdOf` and `FrameReplaces` are defined there and re-exported here, so the phone's importers keep their
+ * import (F-41). `ReferenceStatus` is not that file's `FrameStatus`: that is the body the server answers, and this is what the
+ * phone keeps of it.
  *
  * ## Unknown generations
  *
@@ -34,21 +33,19 @@
  * Each reader below takes the body ADR 0011 gives (its "Interface for the client slice") and nothing else, and answers
  * null, or "not known", for anything it cannot read. A caller treats that as the cautious case and never as "none".
  */
-import { newArRunId, type RunIdRandomSource } from '../shared/ar-run-id.ts'
-import { outsidePlaceFrameOf } from './frame-generations.ts'
+import { frameIdOf, isFrameReplaceReason, newFrameId, outsidePlaceFrameOf, type FrameReplaces } from './frame-generations.ts'
 import { isFrameId, isFrameRevision } from './spatial-frame.ts'
 import type { FrameReplaceReason, ProjectSpatialFrame, ScanCalibration } from './types.ts'
 
 // ── Ids ──────────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * A fresh frame id: a UUID, or on a page with no `randomUUID` (an old webview) the time and random bytes, the way
- * `newArRunId` mints an AR-run id, which this reuses (ADR 0001). Both shapes are what `isFrameId` accepts, so the id is safe
- * in a URL, a file name and a local key (`<projectId>:<frameId>:<role>`).
+ * A fresh frame id (`newFrameId`: a UUID, or on a page with no `randomUUID` the time and random bytes, as `newArRunId` mints
+ * an AR-run id), and the id of the generation a frame is, or null for an unknown one (`frameIdOf`, read from any member,
+ * because the server's validator accepts the field on both). One definition each, in ./frame-generations.ts, re-exported
+ * here for the phone's importers (F-41).
  */
-export function newFrameId(source?: RunIdRandomSource): string {
-  return newArRunId(source)
-}
+export { frameIdOf, newFrameId }
 
 /**
  * The generation a scan's calibration was measured against, or null when it names none: a one-point or known-distance
@@ -59,35 +56,26 @@ export function calibrationFrameIdOf(calibration: ScanCalibration | null | undef
   return isFrameId(calibration.frameId) ? calibration.frameId : null
 }
 
-/**
- * The id of the generation a frame is, or null for an unknown one: no id, or one that is not an id. Read from any member,
- * because the server's validator accepts the field on both and a record from another build may carry it where this one never
- * writes it.
- */
-export function frameIdOf(frame: ProjectSpatialFrame | null | undefined): string | null {
-  if (!frame) return null
-  const id = (frame as { frameId?: unknown }).frameId
-  return isFrameId(id) ? id : null
-}
-
 // ── The write ────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * What a write says about the frame it replaces: the body field `replaces` of `PUT /projects/:id/spatial-frame`. `frameId`
- * is the id of the frame the SERVER holds and this write replaces, or null when that frame has none (a legacy one). The
- * server refuses the write unless it equals the id of the frame it holds, and records the replaced frame in
- * `Project.frameHistory` with this `reason`.
+ * What a write says about the frame it replaces: the body field `replaces` of `PUT /projects/:id/spatial-frame`, defined
+ * in ./frame-generations.ts. `frameId` is the id of the frame the SERVER holds and this write replaces, or null when that
+ * frame has none (a legacy one). The server refuses the write unless it equals the id of the frame it holds, and records
+ * the replaced frame in `Project.frameHistory` with this `reason`.
  */
-export interface FrameReplaces {
-  frameId: string | null
-  reason: FrameReplaceReason
-}
+export type { FrameReplaces }
 
-/** Whether `value` is a well formed `replaces`: what the pending-frame row is read back as, which a person's storage may have changed. */
+/**
+ * Whether `value` is a well formed `replaces`: what the pending-frame row is read back as, which a person's storage may have
+ * changed. Stricter than the server's `parseFrameReplaces` on one point, on purpose: the phone wrote this row itself, with
+ * `frameId` always present, so a row without one was changed by something else and is not used. The reasons are the server's
+ * list (`FRAME_REPLACE_REASONS`, through `isFrameReplaceReason`), not a second copy of it.
+ */
 export function isFrameReplaces(value: unknown): value is FrameReplaces {
   if (typeof value !== 'object' || value === null) return false
   const { frameId, reason } = value as { frameId?: unknown; reason?: unknown }
-  return (frameId === null || isFrameId(frameId)) && (reason === 'override' || reason === 'upgrade' || reason === 'merge')
+  return (frameId === null || isFrameId(frameId)) && isFrameReplaceReason(reason)
 }
 
 /** How a calibration reaches the Place's frame: as a first visit and a return visit do, or as an upgrade. */

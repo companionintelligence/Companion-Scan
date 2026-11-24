@@ -249,32 +249,135 @@ The everyday user must understand there are **four distinct capture pipelines**,
 
 **User goal:** open the world, see scans placed correctly, and organize/label/compose them.
 
-**Screens/controls today** (the **Companion Scan Spatial Editor** at `/editor?project=<id>`, implemented by `viewer.html`; legacy token/API paths remain compatible):
-- **Top toolbar** — render modes (one active): `◼ Solid` (`#mode-solid`), `☁ Points` (`#mode-points`), `⬡ Wire` (`#mode-wire`), `🏷 Semantic` (`#mode-semantic`); spatial tools `📏 Measure` (`#btn-measure`, two-click metric distance, real meters since the world is metric ENU), `🗺 Map` (`#btn-geomap`, Leaflet pins per GPS-tagged scan), `📡 Live` (`#btn-livefeed`, WebRTC PiP); nav `🥽 WebXR` (`#webxr-link`), `← AR App` (`#back-link`).
-- **Sidebar tabs** (`.sidebar-tab`): **Scans / World / Layers / Edit**.
-  - **Scans** (`#scan-list`): `.scan-item` per scan with `.scan-visible` checkbox, name, `.scan-meta` (`<date> · accuracy N.Nm` or `manual align` for a scan with no calibration; for a calibrated scan `<date> · <tier> · <status> · spacing N cm off`, with a `.scan-calibration-note` line under it for what the status did not check, and a warning line when the scan's tier is not the tier of the Place's stored frame: `src/viewer/scan-calibration-chip.ts`), `.scan-status` (`<status> · NN% coverage`). Selecting a scan attaches the transform gizmo and jumps to Edit.
-  - **Project**: Place details, Area hierarchy, scan/layer/job counts, GIS/local origin, and the time-range control live in the left drawer. **Share** is a top-bar menu with view/comment/edit/scanner/owner links. **Guided Processing** (Prepare, Understand, Reconstruct, Publish) and the advanced queue live in the right drawer.
-  - **Layers** (`#layers-panel-content`): GLB+sidecar layers (`#layer-list` — Point cloud, Meshes, Floors, Detections, Labels, Camera path, Camera frustums, RGB frames, Depth, Semantic masks; `splat` excluded here; `.layer-meta` = `<count> · <source>` where source ∈ glb/sidecar/derived/future, count falls back to literal `planned`); LingBot-Map Reconstruction section (`#lingbot-map-status`, point/path toggles); Splat Toolbox (see Phase 3).
-  - **Edit** (`#tab-edit`): empty-state `#edit-no-selection`; on selection — Selected Object (`#edit-obj-name`, `#edit-obj-meta`), Transform (`#transform-translate` "Move" / `#transform-rotate` "Rotate" / `#transform-scale` "Scale" + `#edit-save-transform` "Save Transform"), Semantic Tag (`#tag-grid`, 34 chips from `SEMANTIC_TAGS`), Notes (`#edit-notes` + `#edit-save-notes`), Visibility (`#edit-hide-object` "Hide Object (saved as patch)").
-- **Viewport HUD** — `⟳ Reset` (`#btn-reset-camera`), `☁ Cloud`, `🏷 Labels`, `⬡ Bounds`, `💾 Save Tags`; `#world-hud` compass, adaptive meter scale bar, ENU/geo coordinate readout; `#hud-info` counts; `#inspector-panel` on object click.
+**Where:** the **Companion Scan Spatial Editor** at `/editor?project=<id>` (or `?world=<slug>`), implemented by `viewer.html` and `src/viewer/viewer.ts`. `?project=` opens the Place's own world (`project-<id>`), and `?token=` is the share link's role. The headset editor (`xr-world.html`) opens the same world by the same rule (`src/viewer/world-rules.ts`).
+
+**Screens/controls today:**
+- **Top toolbar.**
+  - The Place's name (`#toolbar-project-name`).
+  - Three counts:
+    - scans (`#toolbar-scan-count`);
+    - layers (`#toolbar-layer-count`): how many of the Scene layers rows have something to show in this Place;
+    - jobs (`#toolbar-job-count`): active out of listed.
+  - The **Views** menu (`#view-menu`):
+    - Filter objects (`#view-filter-objects`, e.g. `chair, desk  ·  -wall`);
+    - Render mode (`#view-mode-select`: Solid, Points, Wireframe, Semantic);
+    - toggles for GIS map (`#view-toggle-map`), Hit points, Ground planes, Scanned objects, Camera trail, Image frustums, Scanned images, Ground grid, Tags and Calibration anchors.
+  - **Live** (`#btn-livefeed`), only in a build with `VITE_ENABLE_WEBRTC_LIVE=true`.
+  - The **Navigate** menu (`#workspace-menu`):
+    - **Scan a Place** (`#scan-place-link`). In the desktop app it reads **Add media to a Place**, because a computer can upload a walkthrough but cannot walk a room.
+    - The WebXR scanner, which the native shells drop.
+    - The account chip.
+    - Inside a shell, also the Scan server and Legal notices.
+  - The **Share** menu.
+- **Left rail tabs** (`.sidebar-tab`): **Project, Scans, Things, Layers, Edit**, and **Places**, hidden unless the build sets `VITE_ENABLE_PLACE_COMPOSER=true`.
+  - The Project, Layers and Edit panels open in the right drawer (`#details-drawer`).
+  - While Layers is open, the Map Quality headline and the Scene layers list sit in the rail under the tabs (`#sidebar-layer-info`).
+  - Each drawer collapses and reopens from a tab that stays outside it (`src/viewer/editor-layout.ts`).
+  - **Scans** (`#tab-scans`):
+    - The **timeline** (`#timeline-scrubber`). It has two handles over the Place's capture sessions and shows only when there is more than one. The scans, Things and Items tree outside the range are hidden.
+    - The frame banner (`#frame-banner`).
+    - The scan list. Each `.scan-item` has a visibility checkbox and the scan's name.
+    - A meta line (`src/viewer/scan-calibration-chip.ts`): the calibration chip, or the GPS accuracy (or `manual align`) for a scan with no calibration, plus what the calibration did not check.
+    - The frame chip (`src/viewer/frame-banner.ts`: "previous reference", "not in Place frame" or "frame not recorded"). A scan in a Place frame made with another method than the Place's own also says "Different frame from this Place". The two chips ask one predicate, so a row never shows both.
+    - Tracking notes, and `.scan-status`.
+    - Selecting a scan frames it, attaches the transform gizmo and fills the per-scan panels.
+  - **Things** (`#tab-things`):
+    - search, label and scan filters;
+    - each row focuses the Thing in the scene;
+    - each row has Relabel (Save, or Clear back to the AI label).
+  - **Items** (right drawer, `#details-items`), for the Scans and Things tabs:
+    - the Place → building → floor → room → scan outliner, with each scan's Things, or a note saying why a scan has none;
+    - **Review comments** for the Place or the selected scan.
+  - **Project** (`#tab-world`, right drawer):
+    - the Place hierarchy editor (type, names, **Save Place structure**);
+    - the Places at this address and Other Places switcher;
+    - **Guided Processing** (Prepare, Understand, Reconstruct, Publish);
+    - **World export** (Phase 4);
+    - **Alignment checks** (place-register proposals: Show, Apply);
+    - the **Advanced queue** (Phase 3).
+  - **Layers** (right drawer):
+    - **Map Quality**: a Preview → Reconstructed → Photoreal stepper, the reconstruction verdict and the processing line;
+    - **Scene layers** (`#layer-list`);
+    - **Previous reference**;
+    - **LingBot-Map**;
+    - **SenseNova Vision**;
+    - **Placed objects**;
+    - **Splat tools**.
+  - **Edit** (right drawer):
+    - the save line;
+    - **Hidden objects**: every object a Hide patch took out of the scene, each with **Show**, which saves a `visible: true` patch. A hidden object cannot be clicked, so this list is the way back.
+    - With a selection:
+      - **Selected Object**;
+      - **Transform**: Move, Rotate, Scale, and **Save Transform**, which writes an `EditPatch`;
+      - for a whole scan, **Place precisely** (nudges and numeric offsets, snap, Discard changes, Reset to calibrated, Undo last save, Fix size) and **Compare** (tints, see-through);
+      - **Semantic Tag** chips (`SEMANTIC_TAGS`);
+      - **Notes**;
+      - **Visibility**: **Hide Object**, saved as a patch.
+- **Scene layers rows:**
+  - Listed: Point cloud, Meshes, Floors, Detections, Labels, Camera path, Camera frustums, RGB frames, 4D person and Calibration anchors.
+  - Not listed:
+    - Depth and Semantic masks, because nothing draws them yet;
+    - the static Gaussian splat, which has its controls in Splat tools.
+  - A row's count is what the scans' manifests report, else how many objects of that layer are loaded. A camera layer with no reported count and nothing drawn says `no frames`, and any other such layer says `none`.
+  - The **4D person** row is the switch for a person capture's splat sequence. A hidden sequence is paused.
+- **One switch per layer.** These all write the same visibility, so they always agree:
+  - the HUD's **Cloud**, **Labels** and **Bounds** buttons;
+  - the Views toggles;
+  - the Scene layers rows.
+
+  Detection bounds start hidden.
+- **Viewport HUD:**
+  - bottom right: Reset, Cloud, Labels, Bounds, and Save Tags, which posts every unsaved tag and note;
+  - top: the compass, the scale bar, **Measure** and the coordinate readout;
+  - the info line;
+  - the floating inspector, on an object click.
+- **Measure** (`#btn-measure`) draws a line between two clicks on scan geometry and labels its length with an `m`. The `m` is real only on GLB scan geometry (`src/viewer/measure.ts`):
+  - LingBot-Map clouds have no recovered scale;
+  - a splat cannot be clicked;
+  - the splat renderer's quad at the origin can be.
 
 **How placement works (verified):**
-- The world frame is always `{ type:'ENU_Y_UP', units:'meters', axes:{x:east,y:up,z:north} }`, anchored at `originGeoPose` (inferred from the first GPS-tagged scan; else null → `#world-origin-label` shows `Local`).
-- **GPS scans** are auto-placed at their true east/up/north offset via `geoToEnu`, with compass bearing baked into `localToWorld`.
-- **No-GPS scans** ("manual align") land on a fallback 3 m grid (6-wide); `accuracyM` is null. Video-ingest scans get the same grid placement.
-- **Manual alignment today** = select the scan, drag the transform gizmo, hit **Save Transform** → POSTs an `EditPatch` (`scope:'scan'`); reload re-applies the matrix. This is fully functional and persistent.
+- **The declared frame.** Every world file declares `{ type:'ENU_Y_UP', units:'meters', axes:{x:'east', y:'up', z:'north'} }`, anchored at `originGeoPose`: the GPS fix of a located scan, taken when the world file was made (`inferWorldOrigin`, newest upload first), not the Place's landmark.
+- **Calibrated scans** are placed by their stored calibration (`projectTransform`) in their Place's frame.
+  - A two-point frame's +Z is its landmark → marker baseline.
+  - A one-point frame's +Z is north and its +X west.
+  - Neither is the declared (east, up, north), so the compass and the coordinate readout are only approximate in a Place world.
+- **GPS scans with no calibration** are placed at their east/up/north offset (`geoToEnu`) and turned by the phone's compass heading when the scan was exported.
+  - That is a rotation alone into a left-handed frame, so the scan is mirrored east-west against the GPS layout.
+  - The heading is not the bearing of the session's own axis.
+  - `src/world/enu.ts` sets this out. Fixing it is a pending owner decision (the right-handed, z-south scene).
+- **No-GPS scans** ("manual align") land on a fallback 3 m grid, six to a row. Video-ingest scans get the same grid placement.
+- **Manual alignment** is the gizmo and **Save Transform** (a `scope: 'scan'` `EditPatch`). A reload re-applies it, and **Undo last save** takes the last one back.
 
-**Guidance signals:** scan-meta calibration or accuracy strings and coverage strings; the compass, scale bar, and ENU/geo coordinate readout track the orbit camera continuously; layer counts and source tags in the Layers tab.
+**Guidance signals:**
+- the scan list's calibration, frame and coverage lines;
+- the compass, scale bar and coordinate readout, which follow the orbit camera;
+- the layer rows' counts and sources;
+- the toolbar's counts.
 
 **Gaps:**
-- The editor is a flat panel of always-on controls — there is no "1. Import 2. Align 3. Reconstruct 4. Export" sequence telling a non-expert what to do next.
-- Heavy unexplained jargon ("ENU", "Extract layers", "Merge points", "semantic pass").
-- `align-scan` and `merge-points` *look* like automated registration but are placeholders. They still report `completed`, but the job list now prints the job's result under it, which for these says `No-op:` and what was not done, and neither the guided Prepare step nor the advanced job menu offers `align-scan`. The guided Prepare and Understand steps say in their own copy that indexing, layer extraction and semantic analysis are not built yet. Real alignment today is the manual gizmo.
-- **Time across *scans* is stored but not scrubbable.** `capturedAt`, per-frame timestamps, and the ordered `EditPatch[]` history all exist, but there is no timeline / scrubber / before-vs-after diff spanning them; comparing two visits is still a matter of toggling `.scan-visible` checkboxes. A *single* asset can now animate — a `splat4d` person sequence plays on its own clock — but that is one capture moving, not the map's timeline. The two senses of "4D" are distinguished in ADR 0006.
+- There is no "1. Import 2. Align 3. Reconstruct 4. Export" sequence telling a non-expert what to do next beyond the Guided Processing steps.
+- Heavy jargon remains ("ENU", "Extract layers", "Merge points", "semantic pass").
+- `align-scan` and `merge-points` *look* like automated registration but are placeholders.
+  - They report `completed`, and the job list prints their `No-op:` result.
+  - The guided Prepare and Understand steps say in their own copy that indexing, layer extraction and semantic analysis are not built yet.
+  - Real alignment today is the gizmo and the Alignment checks' Apply.
+- The timeline narrows the scans shown by capture time. There is no before/after diff of two visits.
+- The editor has no keyboard shortcuts.
 
-**Where "4D" (time) is visible today:** the **Camera path** layer draws the phone's real capture trajectory as an orange line through every frame pose; **Camera frustums** show oriented view cones along that path; **RGB frames** (off by default) hang the actual photos in space at their poses; multiple scans of the same place coexist and toggle independently; and the **Live Feed** (`📡`) is the clearest 4D moment — while someone walks the room the editor grows a live point cloud and a moving device frustum in real time. A **4D person** layer (`splat4d`), produced by a person capture, plays a splat sequence on a loop.
+**Where "4D" (time) is visible today:**
+- the timeline;
+- the **Camera path**, **Camera frustums** and **RGB frames** layers, drawn from a scan's frame set and only from it: a scan with no usable frames draws no trail;
+- the **4D person** layer (`splat4d`), a person capture's splat sequence on a loop;
+- the **Live** feed, in a build that enables it: while someone walks the room, the editor grows a live point cloud and a moving device frustum.
 
-**Recommended improvements:** add a lightweight guided sequence for first-time worlds; relabel/explain jobs at point of use; visually distinguish placeholder vs real jobs; introduce a time scrubber / scan-diff as a later iteration.
+The two senses of "4D" are distinguished in ADR 0006.
+
+**Recommended improvements:**
+- a lightweight guided sequence for first-time worlds;
+- explain jobs at the point of use;
+- visually distinguish placeholder jobs from real ones;
+- a scan-diff view as a later iteration.
 
 ---
 
@@ -285,43 +388,80 @@ The everyday user must understand there are **four distinct capture pipelines**,
 **User goal:** turn raw scans into richer artifacts (dense point clouds, splats, detected objects) without understanding the pipeline.
 
 **One queue, two UI surfaces — do not conflate them:**
-- The **Guided Processing** drawer shows the editor-driven stages — preparation, understanding, reconstruction, and publishing — with the advanced queue available for expert use.
-- **`optimize-scan`** — the GLB optimizer that writes `.opt.glb` / `.lodN.glb` / `.manifest.json` — runs through the *same* WorldJob queue since the 01-merge-jobs wave (`docs/adr/0003-merged-job-system.md`; it used to be a separate `jobs.ts` system), but deliberately keeps its original UI surface: transient scan-status text ("Optimization queued…" / "Optimizing (quantize/draco/LODs)…"), filtered *out* of the Processing Queue list so upload bursts can't crowd out the reconstruction jobs that panel exists to show. This is where **progressive LOD** comes from.
+- **The Project tab.** **Guided Processing** shows the editor-driven stages: preparation, understanding, reconstruction and publishing. The **Advanced queue** is for expert use.
+- **`optimize-scan`**, the GLB optimizer, writes `.opt.glb` / `.lodN.glb` / `.manifest.json`. This is where **progressive LOD** comes from.
+  - It runs through the *same* WorldJob queue (`docs/adr/0003-merged-job-system.md`).
+  - It keeps its own surface: transient scan-status text ("Optimization queued…" / "Optimizing (quantize/draco/LODs)…").
+  - It is filtered *out* of the job list, so upload bursts cannot crowd out the reconstruction jobs.
 
-**World job types (21):** the `WorldJobType` union — see the full table in [`../architecture.md`](../architecture.md) § World Job Types & Processing, which is where they are described. The Queue-Job dropdown exposes 14 of them (`#job-type` → `POST /worlds/:slug/jobs`) and the Splat Toolbox fires `splat-train` / `splat-detect` with its own payload; the other seven are reached differently — `optimize-scan` automatically on upload (see above), `memory-push` from the Publish step (which also queues `export-world`), and `colmap-poses`, `splat-align`, `panoptic-scan`, `panoptic-lift` and `person-4d-reconstruct` only via the API, with no UI entry point. Keep these distinct from the **sync `/process-scan` actions** (`object-count`, `scene-description`, `floor-plan`) — a different route and pipeline, surfaced on the phone panel's `Server Processing` block.
+**World job types (23):** the `WorldJobType` union in `src/world/types.ts`; [`../architecture.md`](../architecture.md) § World Job Types & Processing describes them.
+- **The Advanced queue's `#job-type` select** offers 13 of them (`POST /worlds/:slug/jobs`): `ingest`, `extract-layers`, `merge-points`, `semantic-pass`, `depth-reconstruct`, `thing-correspondence`, `lingbot-map-reconstruct`, `splat-train`, `splat-detect`, `splat-finish`, `sensenova-vision`, `export-world` and `place-register`.
+  - A job that reads one scan needs a selected scan (`SCAN_REQUIRED_JOB_TYPES`, `src/world/job-types.ts`). The line under the select says whether the chosen job runs on the selected scan or the whole Place, and **Queue Job** refuses a scan-backed job with no scan selected.
+- **Other surfaces:**
+  - Splat tools queue `splat-train` and `splat-detect` with their own payload.
+  - The SenseNova panel queues `sensenova-vision`.
+  - The Publish step queues `memory-push` and `export-world`.
+  - `optimize-scan` runs on upload.
+- **The rest** are queued by the server or reached through the API.
+- **Not this queue:** the **sync `/process-scan` actions** (`object-count`, `scene-description`, `floor-plan`) are a different route and pipeline, on the phone panel's `Server Processing` block.
 
 **Screens/controls today:**
-- **Guided Processing** (right drawer): stage actions queue the relevant selected-scan jobs; **Advanced queue** retains `#job-type`, `#btn-queue-job`, and `#job-list` for expert use.
-- **Splat Toolbox** (Layers tab, `#splat-toolbox-section`): `#btn-splat-train` "Train splat"; `#splat-download-link` "Download .ply" (hidden until trained); `#splat-layer-toggle` "Show trained splat"; Detect objects — `#splat-detect-prompt` (placeholder `sofa, chair, table, tv, lamp`) + `#btn-splat-detect` "Detect" + `#splat-detect-toggle` "Show detected object boxes"; External splat `<details>` — `#splat-url-input` + `#btn-load-splat-url` "Load", `#splat-file-input` "Load from file…" (`.ply,.spz,.splat,.ksplat,.sog,.zip`).
+- **Guided Processing** (Project tab): each stage queues its jobs for the selected scan.
+- **Advanced queue** (Project tab): `#job-type`, the job-type line (`#job-type-hint`), `#btn-queue-job` and `#job-list`, the newest eight with each job's result sentence.
+- **Map Quality** (Layers): the tier stepper and the reconstruction verdict.
+  - No line for a scan whose poses never went through the solver.
+  - A "not known" line when the server does not serve the solver's report, or the read fails, so it is not mistaken for "never ran" (`src/viewer/artifact-read.ts`).
+- **SenseNova Vision** (Layers):
+  - the task (`#sensenova-task`), optional labels and **Run SenseNova**;
+  - the panel shows the selected scan's latest SenseNova job: queued, running, failed, skipped (with the runtime hint), or completed with its result and the names of its output files;
+  - the files stay on the server, which has no route to open them from the editor yet.
+- **Placed objects** (Layers): what panoptic-lift placed in the scan, with firm and unsure markers.
+  - It says "nothing has looked for things" only when the lift has not run.
+  - When the server does not serve the record, or the read fails, it says that is not known.
+- **Splat tools** (Layers, `#splat-toolbox-section`):
+  - `#btn-splat-train` "Train splat";
+  - "Download .ply", and "Download .sog" once splat-finish has run;
+  - `#splat-layer-toggle` "Show trained splat";
+  - **Detect objects**: `#splat-detect-prompt` (placeholder `sofa, chair, table, tv, lamp`), `#btn-splat-detect` "Detect" and `#splat-detect-toggle` "Show detected object boxes", which shows and hides the boxes' captions with them;
+  - **External splat**: a URL or a file (`.ply,.spz,.splat,.ksplat,.sog,.zip`).
 
 **What each job writes (✅ = real file when the worker is wired; ⚠ = plan/placeholder metadata only):**
 
 | Job | Real? | Artifact / where it surfaces |
 |---|---|---|
 | `ingest` | ⚠ | `ingest-report`; job list only |
-| `extract-layers` | ⚠ | `layer-manifest`; Layers-tab counts |
-| `align-scan` | ⚠ | `alignment-report` (`method: local-placeholder-open3d-ready`, labelled a placeholder); moves nothing and sets no status (it used to set `aligned`); the result says `No-op:`; requires ≥2 scans |
+| `extract-layers` | ⚠ | `layer-manifest`; job list only |
+| `align-scan` | ⚠ | `alignment-report` (`method: local-placeholder-open3d-ready`, labelled a placeholder); moves nothing and sets no status; the result says `No-op:`; not offered in the editor |
 | `merge-points` | ⚠ | `merge-points-report`; job list only |
-| `semantic-pass` | ⚠ | `semantic-report`; job list only (it used to set the scan's status; none of the six does now) |
+| `semantic-pass` | ⚠ | `semantic-report`; job list only |
 | `depth-reconstruct` | ⚠ | `depth-plan`; job list only |
-| `lingbot-map-reconstruct` | ✅ | `lingbot-map.manifest.json` + `.point-cloud.ply` + `.poses.json` + `.lingbot.glb`; **Layers → LingBot-Map Reconstruction** section |
-| `splat-train` | ✅ | `.splat.ply` (+ `.compressed.ply` + manifest); **Splat Toolbox** status "Trained splat ready — N gaussians", toggle, Download .ply |
-| `splat-detect` | ✅ | `.interactions.json` (+ manifest); **Splat Toolbox → Detect objects**; 3D boxes + labels in viewport |
-| `splat-finish` | ✅ | `.sog` + `.compressed.ply` (+ manifest); auto-chains after `splat-train` unless `SPLAT_FINISH_AUTO=0` |
+| `lingbot-map-reconstruct` | ✅ | `lingbot-map.manifest.json` + `.point-cloud.ply` + `.poses.json` + `.lingbot.glb`; **Layers → LingBot-Map** |
+| `splat-train` | ✅ | `.splat.ply` (+ `.compressed.ply` + manifest); **Splat tools**: "Trained splat ready — N gaussians", toggle, Download .ply |
+| `splat-detect` | ✅ | `.interactions.json` (+ manifest); **Splat tools → Detect objects**; 3D boxes and their captions in the viewport |
+| `splat-finish` | ✅ | `.sog` + `.compressed.ply` (+ manifest); auto-chains after `splat-train` unless `SPLAT_FINISH_AUTO=0`; Download .sog |
+| `sensenova-vision` | ✅ | output files under the server's scan store, listed by name in the **SenseNova Vision** panel; a skip names the runtime to install |
 | `memory-push` | ✅ | `memory-event` (a `capture.scan` push to CI-Server); job list only — inert until the Companion Hub connects Companion Memory (it sets `CI_SERVER_URL` and `CI_SERVER_TOKEN`), or both are set by hand. See [Companion Hub](../operations/COMPANION_HUB.md) |
-| `export-world` | ✅ | `<slug>.world.glb` (a `world-glb` artifact): every scan's GLB under its `localToWorld`, plus one node per Thing with its tag in `extras`. The job list shows no link to it, so it is fetched at `GET /worlds/<slug>/export.glb` |
-| `place-register` | ✅ | `place-register-proposal`: how a scan's walls line up with the Place's other calibrated scans, and the move that would line them up better; **World tab → Alignment checks** card (Show, Apply). Queued when a second calibrated scan is uploaded to a Place, or from the dropdown. It never moves a scan and never sets `aligned`; Apply writes an ordinary scan patch with its provenance. See [`../pipelines/place-register.md`](../pipelines/place-register.md) |
-| `optimize-scan` | ✅ | `.opt.glb` + `.lodN.glb` + `.manifest.json`; surfaces as the per-scan status chip and progressive LOD loading — deliberately **not** in the job list (see above) |
+| `export-world` | ✅ | `<slug>.world.glb` (a `world-glb` artifact): every scan's GLB under its `localToWorld`, plus one node per Thing with its tag in `extras`; **Project → World export** links it |
+| `place-register` | ✅ | `place-register-proposal`: how a scan's walls line up with the Place's other calibrated scans, and the move that would line them up better; **Project → Alignment checks** (Show, Apply). Queued when a second calibrated scan is uploaded to a Place, or from the Advanced queue. It never moves a scan and never sets `aligned`; Apply writes an ordinary scan patch with its provenance. See [`../pipelines/place-register.md`](../pipelines/place-register.md) |
+| `optimize-scan` | ✅ | `.opt.glb` + `.lodN.glb` + `.manifest.json`; the per-scan status line and progressive LOD loading — deliberately **not** in the job list |
 
-**Guidance signals:** on the `/events` WebSocket, a `world-job-update` with `status:completed` for the three real job types invalidates the scan's cached layer and re-runs the relevant panel refresh, so Layers updates without a manual reload. Failure reasons (`jobFailureReason`) are human-ish: `depth-reconstruct` / `lingbot-map-reconstruct` / `splat-train` fail fast without a `sessionId` ("requires RGB keyframe observations. Start keyframe streaming before export."); `align-scan` needs ≥2 scans; missing binaries (Brush, splat-analyzer, lingbot python) yield a **`skipped` manifest with a remediation hint** — the job still shows `completed`.
+**Guidance signals:**
+- On the `/events` WebSocket, a `world-job-update` refreshes the job list.
+- A completed LingBot-Map, splat or panoptic-lift job re-reads the scan's layer, so Layers updates without a reload.
+- Failure reasons (`jobFailureReason`) are sentences.
+- A missing GPU tool writes a **`skipped` manifest with a remediation hint**, and the job still shows `completed`.
 
 **Gaps:**
-- **Planned-vs-real is half visible.** Six of the twenty-one job types (`ingest`, `extract-layers`, `align-scan`, `merge-points`, `semantic-pass`, `depth-reconstruct`) write only plan/placeholder metadata and still report `completed` like the real ones, but their result now starts `No-op:` and the job list prints it. The status word itself is not yet different.
-- **When-to-run-which is undocumented in-UI.** `splat-detect` needs a trained `.splat.ply` (or lingbot cloud) first; `splat-train` needs a keyframe session; video-ingest scans silently need `lingbot-map-reconstruct` before training. The only feedback is a failure string *after* running.
-- **Job outputs aren't linked from where jobs launch.** `#job-list` shows type/status/time and the job's result sentence; the artifacts surface in a different tab (Layers) after re-selecting the scan. `#splat-download-link` is the sole download affordance.
-- Two queues both called "jobs" (`optimize-scan` LOD text vs the World queue) blur one mental model.
+- **Planned-vs-real is half visible.** Six job types (`ingest`, `extract-layers`, `align-scan`, `merge-points`, `semantic-pass`, `depth-reconstruct`) write only plan/placeholder metadata and still report `completed`. Their result starts `No-op:`, and the job list prints it, but the status word is the same.
+- **When-to-run-which is only partly in the UI.** The Advanced queue says when a job needs a scan, but not its other prerequisites:
+  - `splat-detect` needs a trained splat first;
+  - `splat-train` needs a keyframe session.
+- **Job outputs are not linked from the job list.** They surface in the Layers panels, the World export section and the download links.
 
-**Recommended improvements:** badge placeholder jobs distinctly from real ones; disable/annotate jobs whose prerequisites aren't met; link artifacts from the job list; unify "jobs" naming or clearly separate "optimizing" from "processing."
+**Recommended improvements:**
+- badge placeholder jobs distinctly from real ones;
+- annotate jobs whose prerequisites are not met;
+- link artifacts from the job list.
 
 ---
 
@@ -332,16 +472,19 @@ The everyday user must understand there are **four distinct capture pipelines**,
 **User goal:** hand a specific person a private, explorable copy — scoped to what they should see.
 
 **Screens/controls today:**
-- **Share** (top bar, `#share-links`): copyable **view / comment / edit / scanner / owner** capability links sourced from `/worlds/<slug>/share`. Recipients open only the granted Place in the Spatial Editor.
-- **Publish** (right drawer): queues `memory-push`, which pushes the scan to Companion Memory, and `export-world`, which writes the Place's `.world.glb` (`GUIDED_WORKFLOWS.publish`, `src/viewer/viewer.ts`). `export-world` remains the compatibility job name until the server API is renamed.
+- **Share** (top bar, `#share-links`): copyable **view / comment / edit / owner** links, and a **Scan with a phone** block for the scanner link, sourced from `/worlds/<slug>/share`. Each has a QR that shows only on a click. Recipients open only the granted Place in the Spatial Editor.
+- **Publish** (Project tab, `GUIDED_WORKFLOWS.publish` in `src/viewer/viewer.ts`) queues:
+  - `memory-push`, which pushes the scan to Companion Memory;
+  - `export-world`, which writes the Place's `.world.glb`.
+- **World export** (Project tab, `#world-export-section`): once an `export-world` job has completed, **Download world GLB** links `GET /worlds/<slug>/export.glb`, carrying the page's world token, under that job's result sentence.
 
-**Guidance signals:** the World-tab stat tiles (scan/layer/job counts, origin label) give a sense of world completeness before sharing.
+**Guidance signals:** the toolbar's scan, layer and job counts.
 
 **Gaps:**
 - On the **phone** side the loop doesn't close: after `Export GLB` there's no `View in 3D →` link back to the world.
-- `export-world` builds the Place's `.world.glb`, but the editor shows no link to it: the job list shows type, status and time only, so the file is fetched by URL (`/worlds/<slug>/export.glb`, which needs a viewer's world token wherever strict world auth is on). Roles are functional but the "make a shareable bundle" action is not yet a first-class button.
+- Roles are functional, but the Share menu does not say what each role can do.
 
-**Recommended improvements:** promote `export-world` to a labelled "Export / Share this world" button that links the file it wrote; add the phone-side `View in 3D →` (§3.2 item 6); show role capabilities inline (what each role can do) so an owner shares confidently.
+**Recommended improvements:** add the phone-side `View in 3D →` (§3.2 item 6); show role capabilities inline, so an owner shares confidently.
 
 ---
 
@@ -400,7 +543,7 @@ Building on the merged accessibility/onboarding work:
 
 1. **Guided world flow.** Should the desktop editor gain an explicit, dismissible "Import → Align → Reconstruct → Export" wizard for first-time worlds, or stay a flat expert panel with better in-context hints? What's the right default for a non-expert vs a returning power user?
 2. **Placeholder-vs-real legibility.** What's the clearest way to show that `align-scan` / `merge-points` currently record intent rather than produce artifacts — a badge, a disabled state, a "coming soon" tag — without lying about capability?
-3. **Time navigation.** The data for a real 4D experience exists (`capturedAt`, per-frame timestamps, `EditPatch[]` history). What's the first useful slice — a two-scan before/after toggle, a camera-path scrubber, or an edit-history timeline?
+3. **Time navigation.** The data for a real 4D experience exists (`capturedAt`, per-frame timestamps, `EditPatch[]` history), and the editor's timeline (`#timeline-scrubber`) already narrows the scans by capture time. What's the next useful slice — a two-scan before/after toggle, a camera-path scrubber, or an edit-history timeline?
 4. **Verdict-gated export.** Once the verdict is on the phone, how hard should `needs-rescan` gate export — a soft confirm, or a stronger nudge? How do we avoid nagging users who legitimately want a partial scan?
 5. **Capture-mode defaults.** Should keyframe streaming be on by default (so reconstruction jobs "just work" later) or stay opt-in to save bandwidth? How do we teach the tradeoff without a wall of text?
 6. **Job prerequisites in-UI.** Should the editor auto-chain dependent jobs (e.g. auto-run `lingbot-map-reconstruct` before `splat-train` for video-ingest scans) or just surface the ordering as guidance?

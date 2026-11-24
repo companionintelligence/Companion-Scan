@@ -37,7 +37,8 @@
  * Guessing a verdict the producer did not make is the failure ADR 0005 rule 3
  * names: a claim with no measurement behind it.
  */
-import type { ScanReviewStatus } from '../world/types'
+import type { ScanReviewStatus } from '../world/types.ts'
+import { artifactProblemText, readArtifact, type ArtifactRead } from './artifact-read.ts'
 
 /** Why a solve was judged degenerate. Mirrors `ColmapQualityReason`. */
 export type ReconstructionQualityReason = 'low-registration-ratio' | 'too-few-points'
@@ -94,21 +95,38 @@ export function colmapPosesManifestUrl(sessionId: string): string {
 }
 
 /**
- * Read a session's COLMAP manifest. Returns null when there is none — which is
- * the ordinary case for a scan whose poses came from the device or from
- * LingBot-Map, not a failure, so the caller hides the line rather than
- * reporting an absence.
+ * Read a session's COLMAP manifest, with the four answers ./artifact-read.ts tells apart (F-22). `not-run` is the
+ * ordinary case for a scan whose poses came from the device or from LingBot-Map: the caller hides the line. A server
+ * with no route for the manifest, or a read that failed, is `not-served` or `error`, which used to look the same as
+ * `not-run`.
  */
+export function readReconstructionQuality(
+  sessionId: string,
+  fetcher: (url: string) => Promise<Response> = fetch,
+): Promise<ArtifactRead<ColmapPosesManifestRead>> {
+  return readArtifact<ColmapPosesManifestRead>(colmapPosesManifestUrl(sessionId), fetcher)
+}
+
+/** The manifest when there is one, else null, whatever the reason. Kept for any importer; the editor reads the answer. */
 export async function fetchReconstructionQuality(
   sessionId: string,
   fetcher: (url: string) => Promise<Response> = fetch,
 ): Promise<ColmapPosesManifestRead | null> {
-  try {
-    const resp = await fetcher(colmapPosesManifestUrl(sessionId))
-    if (!resp.ok) return null
-    return (await resp.json()) as ColmapPosesManifestRead
-  } catch {
-    return null
+  const read = await readReconstructionQuality(sessionId, fetcher)
+  return read.state === 'found' ? read.value : null
+}
+
+/**
+ * The verdict for an answer: the manifest's own verdict when it was read, none for `not-run` (nothing to say about a
+ * scan that never ran the solver), and an `unrated` line that says why nothing is known for the other two.
+ */
+export function reconstructionVerdictFor(read: ArtifactRead<ColmapPosesManifestRead>): ReconstructionVerdict | null {
+  if (read.state === 'found') return formatReconstructionVerdict(read.value)
+  if (read.state === 'not-run') return null
+  return {
+    tone: 'unrated',
+    headline: 'Whether the camera tracked through this capture is not known.',
+    detail: artifactProblemText(read, 'the camera-position report') ?? '',
   }
 }
 

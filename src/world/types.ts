@@ -177,11 +177,12 @@ export interface Project {
   /**
    * The frames this Place held before the current one, oldest first: one entry each time a write replaced
    * the frame (see {@link FrameHistoryEntry}). Only the server writes it: `applySpatialFrameWrite` will append
-   * the entry in the same step as the frame write that replaces the frame, and keep the last 20 (WP-08), and
-   * until then nothing writes it. A whole-record PUT carries the stored value over and ignores the body's, as
-   * it does for `spatialFrameRevision` (`placeFromBody`, server/wp-a-projects.ts), and so does the phone's
-   * copy of the Place (`ProjectStore.updateProject`). The editor will read it, to list scans of an earlier
-   * frame as "previous reference" and to count how many a replacement affects (WP-08). Absent on a Place whose
+   * the entry in the same step as the frame write that replaces the frame, and keeps the last 20 (WP-08:
+   * `applySpatialFrameWrite` in server/wp-a-projects.ts, with the entry built in server/place_frames.ts). A
+   * whole-record PUT carries the stored value over and ignores the body's, as it does for
+   * `spatialFrameRevision` (`placeFromBody`, server/wp-a-projects.ts), and so does the phone's copy of the Place
+   * (`ProjectStore.updateProject`). The editor reads it (src/viewer/frame-banner.ts) to list scans of an earlier
+   * frame as "previous reference" and to say when the reference was replaced (WP-08). Absent on a Place whose
    * frame has not been replaced since the field existed, and on every Place saved before it: a replacement made
    * earlier left no entry, so absence is not proof that the frame was never replaced.
    */
@@ -864,6 +865,11 @@ export interface LocalFrame {
      * `'north'` is what every world file says today. (east, up, north) is a
      * left-handed set of axes, and the AR sessions placed in it are
      * right-handed, so a session placed by rotation alone comes out mirrored.
+     * Today that is the server's GPS fallback, for a scan with no stored
+     * calibration (./enu.ts, "Which placements are mirrored today"). A
+     * calibrated scan is placed in its Place's frame, whose axes are not
+     * (east, up, north) either: a one-point frame's +X is west, and a two-point
+     * frame's +Z is its baseline.
      *
      * `'south'` is the right-handed scene proposed in ./enu.ts (x east, y up,
      * z south), in which a rotation places a session exactly. No code writes it
@@ -1195,8 +1201,8 @@ export interface ScanManifest {
   /**
    * The Place frame generation the scan was calibrated against: `ScanCalibration.frameId` from the sidecar's
    * calibration record (`calibrationFromMeta` in server/calibration_fields.ts), on the two-point tier. The
-   * editor will compare it with the Place frame's `frameId` to tell scans of the current reference from scans of
-   * an earlier one (WP-08). Absent when the record has none: a scan calibrated before frame ids existed (an
+   * editor compares it with the Place frame's `frameId` (`frameChipFor`, src/viewer/frame-banner.ts) to tell scans
+   * of the current reference from scans of an earlier one (WP-08). Absent when the record has none: a scan calibrated before frame ids existed (an
    * unknown generation, which reads as neutral, never as another), a one-point scan, an uncalibrated one.
    *
    * This and the four fields below are never `null`: when the sidecar has no value the server's manifest builder
@@ -1220,8 +1226,8 @@ export interface ScanManifest {
    * Which check the scan's `calibrationStatus` rests on (`ScanCalibration.checkedBy`): `'constellation'`
    * when three or more points were compared with the Place's stored ones and a fit of them backs it,
    * `'separation'` when only the distance between two was. Absent when the record does not say, or says
-   * `'constellation'` with no fit of three or more points behind it. The scan list's chip will read it to say
-   * what was and was not checked.
+   * `'constellation'` with no fit of three or more points behind it. The scan list's chip reads it to say
+   * what was and was not checked (src/viewer/scan-calibration-chip.ts).
    */
   calibrationCheckedBy?: CheckedBy
   /**

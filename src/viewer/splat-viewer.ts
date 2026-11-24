@@ -18,6 +18,7 @@
  */
 import * as THREE from 'three'
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark'
+import { isMatrix16 } from '../world/mat4.ts'
 
 /** Creates the scene's SparkRenderer and adds it. Call once per scene. */
 export function attachSparkRenderer(renderer: THREE.WebGLRenderer, scene: THREE.Scene): SparkRenderer {
@@ -61,6 +62,20 @@ export function disposeSplat(loaded: LoadedSplat): void {
 }
 
 /**
+ * A sidecar's 4x4 in ROW order (how splat-align and panoptic-lift write theirs) as a `THREE.Matrix4`, whose `set` takes
+ * row order. The one place that reading is written down: this file's splat alignment and the panoptic marker group
+ * (./panoptic-layer.ts) both use it. The caller checks the sixteen numbers first.
+ */
+export function matrix4FromRowMajor(m: readonly number[]): THREE.Matrix4 {
+  return new THREE.Matrix4().set(
+    m[0]!, m[1]!, m[2]!, m[3]!,
+    m[4]!, m[5]!, m[6]!, m[7]!,
+    m[8]!, m[9]!, m[10]!, m[11]!,
+    m[12]!, m[13]!, m[14]!, m[15]!,
+  )
+}
+
+/**
  * Places a loaded splat with the ROW-MAJOR 4x4 similarity transform that
  * `SplatAlignManifest.projectTransform` carries (SfM space → a Place's metric
  * project space). Returns false, leaving the mesh untouched, for any matrix it
@@ -85,16 +100,8 @@ export function disposeSplat(loaded: LoadedSplat): void {
  * not interchangeable.
  */
 export function applyRowMajorTransform(loaded: LoadedSplat, rowMajor: readonly number[]): boolean {
-  if (rowMajor.length !== 16) return false
-  for (const n of rowMajor) {
-    if (!Number.isFinite(n)) return false
-  }
-  const matrix = new THREE.Matrix4().set(
-    rowMajor[0], rowMajor[1], rowMajor[2], rowMajor[3],
-    rowMajor[4], rowMajor[5], rowMajor[6], rowMajor[7],
-    rowMajor[8], rowMajor[9], rowMajor[10], rowMajor[11],
-    rowMajor[12], rowMajor[13], rowMajor[14], rowMajor[15],
-  )
+  if (!isMatrix16(rowMajor)) return false
+  const matrix = matrix4FromRowMajor(rowMajor)
   // A singular (or near-singular) matrix cannot be decomposed into a meaningful
   // position/quaternion/scale — decompose() would hand back a degenerate scale
   // and the splat would collapse to a point or plane. Reject instead.

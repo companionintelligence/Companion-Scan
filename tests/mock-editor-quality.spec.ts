@@ -151,7 +151,8 @@ test.describe('map-quality headline', () => {
     test.skip(!API_URL, 'API_URL required to route fixture artifacts')
     page.on('pageerror', (err) => console.error('[page]', err))
     await routeArtifacts(page)
-    await page.goto('/viewer.html?world=default')
+    // ?mock=editor: window.__quality exists only in a dev build opened with it (src/viewer/viewer.ts).
+    await page.goto('/viewer.html?world=default&mock=editor')
 
     // Select on the (default-active) Scans tab, then read the headline on Layers.
     const fixture = page.locator('.scan-item', { hasText: 'splat-fixture' }).first()
@@ -162,13 +163,17 @@ test.describe('map-quality headline', () => {
 
     // Inject a queued job for the selected scan and re-render the world panel;
     // the processing line reads world.jobs, so this exercises the real path
-    // without waiting on a GPU trainer.
-    await page.evaluate(() => {
+    // without waiting on a GPU trainer. A missing hook fails here, by name, rather
+    // than leaving the assertion below to time out.
+    const injected = await page.evaluate(() => {
       const w = window as unknown as {
         __quality?: { injectJob: (type: string, scanId: string | null) => void }
       }
-      w.__quality?.injectJob('splat-train', null)
+      if (!w.__quality) return false
+      w.__quality.injectJob('splat-train', null)
+      return true
     })
+    expect(injected, 'window.__quality is installed (dev build, ?mock=editor)').toBe(true)
     await expect(page.locator('#quality-processing')).toBeVisible({ timeout: 10_000 })
     await expect(page.locator('#quality-processing-text')).toContainText('training splat')
     await page.screenshot({ path: join(SCREENSHOT_DIR, 'editor-quality-processing.png'), fullPage: false })

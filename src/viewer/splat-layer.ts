@@ -44,9 +44,10 @@ import type {
   SplatTrainManifest as ServerSplatTrainManifest,
   SplatFinishManifest as ServerSplatFinishManifest,
   SplatAlignManifest as ServerSplatAlignManifest,
-} from '../world/types'
-import { loadSplat, disposeSplat, applyRowMajorTransform, type LoadedSplat } from './splat-viewer'
+} from '../world/types.ts'
+import { loadSplat, disposeSplat, applyRowMajorTransform, type LoadedSplat } from './splat-viewer.ts'
 import { apiUrl } from '../shared/api-base.ts'
+import { isMatrix16 } from '../world/mat4.ts'
 
 /**
  * Viewer-side read of a splat-train manifest — the real server type
@@ -164,7 +165,12 @@ export interface ScanSplatLayer {
 
 /** Base name a scan's splat artifacts share, e.g. `home.glb` → `home`. */
 export function scanArtifactBase(scan: ScanManifest): string {
-  return scan.filename.replace(/\.glb$/, '')
+  return scanArtifactBaseOf(scan.filename)
+}
+
+/** {@link scanArtifactBase} for a bare filename: the one place the `.glb` suffix is taken off. */
+export function scanArtifactBaseOf(filename: string): string {
+  return filename.replace(/\.glb$/, '')
 }
 
 /** URL of a scan's splat-train manifest on the gated artifact route. */
@@ -279,10 +285,7 @@ export function resolveSplatAlignment(align: SplatAlignManifest | undefined): Sp
   }
 
   const transform = align.projectTransform
-  if (
-    !Array.isArray(transform) || transform.length !== 16 ||
-    !transform.every((n) => typeof n === 'number' && Number.isFinite(n))
-  ) {
+  if (!isMatrix16(transform)) {
     return { state: 'unaligned', reason: 'splat-align reported ok but carried no usable 4x4 projectTransform' }
   }
 
@@ -409,6 +412,12 @@ export function formatAlignmentStatus(alignment: SplatAlignment | undefined): st
 export async function fetchScanSplatLayer(
   scan: ScanManifest,
   fetcher: (url: string) => Promise<Response> = fetch,
+  /**
+   * The URL SparkJS is handed for a served path. SparkJS makes that request itself and cannot take `fetcher`, so a
+   * credential the fetcher adds has to be in this URL too: the editor passes its token-adding URL builder. Defaults to
+   * the server's origin alone (`apiUrl`).
+   */
+  resolveUrl: (path: string) => string = apiUrl,
 ): Promise<ScanSplatLayer | null> {
   const manifestResp = await fetcher(splatManifestUrl(scan))
   if (!manifestResp.ok) return null
@@ -457,7 +466,7 @@ export async function fetchScanSplatLayer(
   let lastError: unknown
   for (const candidate of candidates) {
     try {
-      loaded = await loadSplat({ kind: 'url', url: withOrigin(fetcher, candidate.url) })
+      loaded = await loadSplat({ kind: 'url', url: resolveUrl(candidate.url) })
       loadedFrom = candidate
       break
     } catch (e) {
@@ -496,21 +505,6 @@ export async function fetchScanSplatLayer(
     loadedSource: loadedFrom.source,
     gaussianCount: manifest.gaussianCount ?? loaded.mesh.numSplats,
   }
-}
-
-/**
- * SparkJS resolves the SplatMesh URL itself (it can't take our custom
- * `fetcher`), so if the caller's fetcher rewrites the origin (e.g. a test
- * server on another port) we surface that origin here. In the normal viewer
- * the fetcher is the global `fetch` and the relative URL is used as-is.
- */
-function withOrigin(fetcher: (url: string) => Promise<Response>, url: string): string {
-  // The viewer passes a token-appending fetcher whose output stays same-origin,
-  // so a relative URL is correct in production. The Capacitor shell has no
-  // same origin, so apiUrl() adds the server's origin there. Test harnesses
-  // that need a cross-origin URL pass an absolute one via the manifest path already.
-  void fetcher
-  return apiUrl(url)
 }
 
 export function disposeScanSplatLayer(layer: ScanSplatLayer): void {

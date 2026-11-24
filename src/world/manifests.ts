@@ -4,8 +4,8 @@
  * Every background pipeline stage (splat-train, splat-detect, splat-finish)
  * writes a `<base>.splat-<stage>.manifest.json` sidecar next to a scan (e.g.
  * `<base>.splat-train.manifest.json`). Both the Deno
- * server drivers (splat_train.ts, splat_detect.ts, splat_finish.ts, all at
- * the repo root) and the browser viewer (src/viewer/splat-layer.ts,
+ * server drivers (splat_train.ts, splat_detect.ts, splat_finish.ts, all in
+ * server/splat/) and the browser viewer (src/viewer/splat-layer.ts,
  * src/viewer/splat-detect-layer.ts) need the exact same shape.
  *
  * This file — not the three driver .ts files — is the single canonical

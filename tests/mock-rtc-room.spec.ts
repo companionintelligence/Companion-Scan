@@ -47,7 +47,24 @@ async function startBroadcasting(page: Page, room: string): Promise<void> {
   await page.click('#panel-stream-btn')
 }
 
+/**
+ * The live feed is opt-in (src/rtc/feature.ts). A build started without VITE_ENABLE_WEBRTC_LIVE=true has no Live button
+ * and no broadcaster, so every test here waited out its timeout and was listed in tests/known-failures.json. It is
+ * skipped by name instead, and runs when the flag is on (FN-094).
+ */
+async function skipUnlessLiveFeed(page: Page): Promise<void> {
+  await page.goto('/404.html')
+  const enabled = await page.evaluate(async () => {
+    // @ts-expect-error browser-runtime specifier, resolved by Vite in the page — not resolvable by tsc
+    const feature = await import('/src/rtc/feature.ts')
+    return (feature as { WEBRTC_LIVE_ENABLED?: unknown }).WEBRTC_LIVE_ENABLED === true
+  })
+  test.skip(!enabled, 'the live feed is off in this build: start Vite with VITE_ENABLE_WEBRTC_LIVE=true')
+}
+
 test.describe('live-feed room rendezvous', () => {
+  test.beforeEach(async ({ page }) => { await skipUnlessLiveFeed(page) })
+
   test.setTimeout(150_000)
 
   test('the phone joins the room named by ?world=, not "default"', async ({ page, context }) => {

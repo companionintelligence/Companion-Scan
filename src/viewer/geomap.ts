@@ -15,6 +15,7 @@
  * placed correctly.
  */
 import type { BasemapHandle } from '../geo/basemap-layer'
+import { escapeHtml as escHtml } from './html'
 
 export interface ProjectLocationEntry {
   projectId: string
@@ -395,8 +396,4 @@ function buildPopupHtml(loc: ProjectLocationEntry): string {
       </a>
     </div>
   `
-}
-
-function escHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
