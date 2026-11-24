@@ -196,6 +196,8 @@ export interface ScanARPlugin {
   addListener(event: 'hits', listener: (e: NativeHitsEvent) => void): Promise<NativeListenerHandle>
   addListener(event: 'tracking', listener: (e: NativeTrackingEvent) => void): Promise<NativeListenerHandle>
   addListener(event: 'error', listener: (e: NativeErrorEvent) => void): Promise<NativeListenerHandle>
+  /** The geo view closed, by its Close button or by closeGeoView. iOS only, like openGeoView. */
+  addListener(event: 'geoViewClosed', listener: () => void): Promise<NativeListenerHandle>
 }
 
 /** The ScanAR plugin, or null outside the native shell or when the shell has not registered it. */

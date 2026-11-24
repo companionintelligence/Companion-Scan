@@ -42,7 +42,7 @@ interface GeoViewCall {
   places: Array<{ name: string; lat: number; lng: number }>
 }
 
-type ShellWindow = { __geoViewCalls: GeoViewCall[] }
+type ShellWindow = { __geoViewCalls: GeoViewCall[]; __closeGeoView: () => void }
 
 /** A Scan server on another origin than the page, as a shell sees its server. */
 const SERVER = 'https://scan.example.test'
@@ -51,21 +51,28 @@ const SERVER_KEY = 'companion-scan-server'
 
 /**
  * Makes the page believe it runs in the Capacitor shell, before any page script, as the shell's bridge does. On iOS
- * the ScanAR plugin has openGeoView, which records what it is handed.
+ * the ScanAR plugin has openGeoView, which records what it is handed, and the geoViewClosed event, which
+ * `__closeGeoView` sends as the view's Close button does.
  */
 async function emulateShell(page: Page, platform: 'android' | 'ios'): Promise<void> {
   await page.addInitScript((os) => {
     const calls: GeoViewCall[] = []
+    const closed: Array<() => void> = []
     const win = window as unknown as ShellWindow & { Capacitor: unknown }
     win.__geoViewCalls = calls
+    win.__closeGeoView = () => closed.forEach((listener) => listener())
     const openGeoView = async (options: GeoViewCall) => {
       calls.push(options)
       return { shown: options.places.length }
     }
+    const addListener = async (event: string, listener: () => void) => {
+      if (event === 'geoViewClosed') closed.push(listener)
+      return { remove: async () => undefined }
+    }
     win.Capacitor = {
       isNativePlatform: () => true,
       getPlatform: () => os,
-      Plugins: os === 'ios' ? { ScanAR: { openGeoView } } : {},
+      Plugins: os === 'ios' ? { ScanAR: { openGeoView, addListener } } : {},
     }
   }, platform)
 }
@@ -251,6 +258,20 @@ test.describe('locar.js viewer', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0].places.map((place) => place.name).sort()).toEqual(['East test place', 'South test place'])
     await expect(page.locator('#viewer-status')).toContainText('places: 2 shown in the native geo view')
+    const reopen = page.getByRole('button', { name: 'Show Places again' })
+    await expect(reopen).toHaveCount(0)
+
+    // The view's Close comes back to the page, which says so and shows the same pins again without reading them twice.
+    await page.evaluate(() => (window as unknown as ShellWindow).__closeGeoView())
+    await expect(page.locator('#viewer-status')).toContainText('places: 2 with a pin · the native geo view is closed')
+    await reopen.click()
+    await page.waitForFunction(() => (window as unknown as ShellWindow).__geoViewCalls.length > 1)
+    const again = await page.evaluate(() => (window as unknown as ShellWindow).__geoViewCalls)
+    expect(again).toHaveLength(2)
+    expect(again[1].places).toEqual(again[0].places)
+    await expect(page.locator('#viewer-status')).toContainText('places: 2 shown in the native geo view')
+    await expect(reopen).toHaveCount(0)
+
     expect(requested.filter((url) => new URL(url).pathname === '/project-locations')).toEqual([`${SERVER}/project-locations`])
     expect(problems).toEqual([])
   })

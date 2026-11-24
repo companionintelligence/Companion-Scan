@@ -185,6 +185,11 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
                 call.reject("The web view is not ready to place the camera behind.")
                 return
             }
+            // The geo view runs its own ARKit session, and ARKit runs one at a time (openGeoView refuses the other way).
+            guard self.geoView == nil else {
+                call.reject("Close the geo view before starting a scan: ARKit runs one session at a time.")
+                return
+            }
             if self.arView != nil {
                 // The same options answer with the session already running. Different options start it again,
                 // so the reply always describes the session the caller asked for.

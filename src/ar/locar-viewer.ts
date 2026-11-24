@@ -211,24 +211,49 @@ function mountServerButton(): void {
   document.getElementById('viewer-actions')?.prepend(button)
 }
 
+/** The button that shows the native geo view again after its Close. Drawn only while the view is closed. */
+function mountReopenButton(open: () => void): void {
+  if (document.getElementById('viewer-reopen')) return
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.id = 'viewer-reopen'
+  button.textContent = 'Show Places again'
+  button.addEventListener('click', () => {
+    button.remove()
+    open()
+  })
+  document.getElementById('viewer-actions')?.prepend(button)
+}
+
 function startNative(plugin: NonNullable<ReturnType<typeof scanARPlugin>>): void {
   hook.native = true
   render()
   // With no server there is nothing to hand over. The server dialog is open, and a save reloads the page.
   if (serverMissing()) return
+  const showGeoView = (places: PinnedPlace[]): Promise<void> =>
+    Promise.resolve(plugin.openGeoView?.({ places: places.map(({ name, lat, lng }) => ({ name, lat, lng })) }))
+      .then((result) => {
+        flags.places = `${result?.shown ?? 0} shown in the native geo view`
+        render()
+      })
+  const showError = (error: unknown): void => {
+    flags.places = `could not open the native geo view (${error instanceof Error ? error.message : String(error)})`
+    render()
+  }
+  // The view's Close comes back to this page. Say so, and offer the view again with the pins already read.
+  plugin.addListener?.('geoViewClosed', () => {
+    flags.places = `${hook.places.length} with a pin · the native geo view is closed`
+    render()
+    mountReopenButton(() => {
+      showGeoView(hook.places).catch(showError)
+    })
+  })?.catch(() => undefined)
   loadPins()
     .then((places) => {
       hook.places = places
-      return plugin.openGeoView?.({ places: places.map(({ name, lat, lng }) => ({ name, lat, lng })) })
+      return showGeoView(places)
     })
-    .then((result) => {
-      flags.places = `${result?.shown ?? 0} shown in the native geo view`
-      render()
-    })
-    .catch((error: unknown) => {
-      flags.places = `could not open the native geo view (${error instanceof Error ? error.message : String(error)})`
-      render()
-    })
+    .catch(showError)
 }
 
 function startLocar(): void {

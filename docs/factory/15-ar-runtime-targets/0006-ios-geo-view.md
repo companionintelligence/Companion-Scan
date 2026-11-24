@@ -48,6 +48,7 @@ N/A.
 ## Definition of Done
 
 - [x] The Mobile Build iOS Simulator job compiles the branch. Run 45256020164, at `8858c08` on 2026-11-23, succeeded. It fetched the package, built it as the module `ARKit_CoreLocation`, and compiled `GeoViewController.swift` and `ScanARPlugin.swift` with no error or warning in either. The same run's Android debug job passed too.
+- [x] Close comes back to the viewer page, which says the view is closed and offers "Show Places again" with the pins it already read (the `geoViewClosed` event). A scan refuses to start while the geo view is open, as the geo view refuses while a scan runs.
 - [ ] A device run: labels at the Places' directions, and the view closes and stops location.
 - Before any store build, not this ticket:
   - [ ] The location purpose string in `Info.plist` covers placing labels in the geo view.
