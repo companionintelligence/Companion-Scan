@@ -1178,76 +1178,318 @@ Step 3, one row for each loss:
 | Headset off 10 s | | | | | |
 | Headset off until it sleeps | | | | | |
 
-### Procedure 8 — fiducial feasibility (DX8)
+### Procedure 8 — reading a printed marker (DX8)
 
-*Can a phone find a printed tag, place it precisely enough to define a Place frame, and keep doing
-it without overheating?* This needs WP-14a (the detector and the print sheets) and WP-14b (the
-`?debug=tag` and `?debug=tagneg` readouts and the marker step). Every readout that comes with
-WP-14b is marked *(after WP-14b)*, and the sheets *(after WP-14a)*: a build without that package
-does not write them. The pass lines are the ones the spec of WP-14b adopts, except where a step says
-that it is this page's own reading, and they are **adopted, not measured** (ADR 0005 rule 5): this
-procedure is what replaces them. A fail sends the project to the AprilTag build the spec holds as
-its contingency, not to a retuned constant.
+*Can a phone read a printed marker well enough, and rarely enough wrongly, to place a Place's frame on it?* The marker
+reader (`src/ar/fiducial/`, fed by the camera frames `ARProvider.onCameraFrame` hands it) is built, and has been tested on
+synthetic frames only: nothing has measured it on a phone. Every limit it applies is **adopted, not measured** (ADR 0005
+rule 5): the tag 40 px across for a pose and 24 px for an identity alone, 12 frames over 1 s, the camera moved 0.2 m or
+turned 15°, the frames' heading agreeing to 1° (and the whole orientation to 3°), a tag seen no more than 70° off its
+face and between 0.3 m and 10 m away, a scale check at 3%, 8 frames a second, and a lag of one frame between the pixels
+and the pose. This procedure measures what those assume. No constant changes until it has: a number that looks wrong is a finding to
+send, not a reason to retune. What it cannot yet measure is at the end.
 
-**Apparatus.** Three phones, all on 8th Wall: the oldest iPhone you have, a mid-range Android and a
-Pixel. (Whether the build gives the WebXR runtime camera frames to read is for WP-14b to say, so no
-step here depends on it.) Sheets printed at 100%, never "fit to page": A4 with the 160 mm tag and A3
-with the 200 mm and 230 mm tags, from `scripts/print-fiducial.mjs` *(after WP-14a)*. Measure the
-100 mm scale bar and the black square of every print with a steel rule, to 0.5 mm, and write both
-down: the size you use is the one you measured, except in step 8. Fix the wall tag on a flat, rigid
-backing with its centre 1.2 m above the floor, and lay a second sheet flat on the floor. For the wall
-tag, tape a floor mark at each range *r* and angle *a* off its normal: *r* sin *a* along the wall
-from the tag's foot and *r* cos *a* out from it, with the phone held at the tag's height. For the
-floor tag, tape marks 1, 2, 3 and 5 m from it along the floor and hold the phone 1.4 m above each. A
-tag is read for pose from a side of 40 pixels and for identity only from 24, and the side is
-f × size ÷ range face-on (an oblique view shortens it by the cosine of the angle): at a focal length
-f of 720 px a 40 pixel side is 2.9 m for the 160 mm tag, 3.6 m for the 200 mm tag and 4.1 m for the
-230 mm tag. So the 5 m cells show what the detector does beyond its pose range. The real f comes
-from the phone's projection. For the floor tag the phone is 1.4 m up, so the line of sight is longer
-than the distance *d* along the floor, and the side is f × size × 1.4 ÷ (*d*² + 1.4²): for the
-200 mm tag that is 68 px at 1 m, 34 px at 2 m, 18 px at 3 m and 7.5 px at 5 m. Only the 1 m floor
-cell is in pose range, the 2 m cell is in identity range, and the 3 m and 5 m cells lie below the
-24 pixel identity limit: they are recorded, for the horizontal-mount policy, and not judged.
+**Which runtimes.** The reader needs the camera's pixels. The 8th Wall path (iPhone Safari, Android Chrome) hands the page
+one frame per engine tick. WebXR (`webxr.html`) hands it none: there the kit writes one line of each kind it was asked for, with `un` `webxr-no-camera-access`,
+and those lines are the whole result for that path. Nor do the native shells (ScanAR): there the lines say `rt` `native` and `un` `no-frame-feed`. Run each once to see them; do everything else on the 8th Wall path.
 
-**Arm it.** `npm run qr -- "?debug=remote,probe,tag"`. `probe` is in the build today; `tag` is not.
-`?debug=tag` *(after WP-14b)* writes the stage times, the side in pixels, the ambiguity ratio, the
-residuals, the fused spread, the lag fit, `P[0]`, `P[5]`, `P[8]` and `P[9]` of the projection, `cols`,
-`rows`, the canvas size and the fit mode. The build as it is writes the `[8thwall][aspect]` line
-(`console.log`, so it needs `remote,verbose`) with `fit`, `canvas`, `frame`, `fovYDeg`,
-`projectionAspect` and `crop`. It is printed once, about 4 s after the camera starts, and step 6
-reads it: load the page for that step with `?debug=remote,tag,verbose` and leave `verbose` out
-everywhere else, because it fills the relay's 50-message buffer with the scanner's ticks.
+#### The instruments
 
-| Step | Action | Write down | Pass when |
+`?debug=tag` writes one **`[tag]` line a second** (of the camera's own clock) saying what the reader saw and what reading cost,
+and a **`[tagcam]` line** saying which camera and canvas it was (at the first frame, every 30 s, and when the sizes or the fit change).
+`?debug=tagneg` writes a **`[tagneg]` line every 30 s** of counts for the false-accept gate. All are tokens of the usual
+`?debug=` list: `remote` carries them off the phone to `npm run logs:watch`, as it does the probe line, and they go together.
+Neither changes what the scanner does. **No image leaves the phone and nothing is stored**: a line is numbers and short
+words, and the code that makes them keeps no frame, corner or crop, in either mode and however long the walk
+(`tests/unit/node/fiducial_tag_debug.test.ts` holds that, by counting what a collection of garbage leaves reachable).
+A line crosses the relay whole: the relay cuts a message at 880 characters, which would leave invalid JSON, so every column is bounded
+(a number beyond its column's range is `null`, never a clipped figure that reads as a measurement, and a word is cut at its column's length), and
+a test holds the longest line the bounds allow under that cap. **One run follows another**: when the reader's session ends (`done`,
+`failed` or `timed-out`) the next line says so (`ph`, and `ver` and `q`: it is the line written when its second is up), and the lines after it are about a new session, so
+a phone held at one mark and walked to the next on the same page load reads the next mark.
+
+```bash
+npm run qr -- "?debug=remote,tag&tagsize=200&tagheight=1.2"     # the reading runs
+npm run qr -- "?debug=remote,tagneg"                            # the false-accept run
+npm run qr -- "?debug=remote,tag&tagsize=200&tagheight=1.2&tagrate=10"   # the five-minute run
+```
+
+Page parameters, all optional and checked; one that is present and wrong writes a single `[tag]` line saying which, and
+starts nothing:
+
+| Parameter | What it is | Default |
+|---|---|---|
+| `tagsize` | The printed edge of the black square, in millimetres, 40 to 600. Use what a ruler says on the sheet, not what the file says | 200 |
+| `tagfamily` | `cscan-6x6-v1` or `cscan-5x5-v1` | `cscan-6x6-v1` (`DEFAULT_TAG_FAMILY_NAME`, `src/ar/fiducial/families.ts`) |
+| `taglag` | How many frames the pixels are taken to trail the pose, 0 to 8 | 1 (`DEFAULT_PIXEL_LAG_FRAMES`, adopted) |
+| `tagrate` | Frames a second asked of the camera feed, 1 to 30 | 8 (`DEFAULT_TAG_MAX_HZ`, adopted) |
+| `tagid` | Read only this tag, with no bit errors allowed: the way the scanner reads a Place's registered tag | any id of the family, one bit error allowed |
+| `tagheight` | The tag centre's height above the floor, in metres, 0 to 4, so that a frame can be placed without a fitted floor | none |
+
+**Collect it.** From the repo root on the box that serves the app (or where `SCANS_DIR` points), this prints, for each
+`[tag]` line, the phone's own time, the address the server saw, and the line, with `GAP` in front of a line whose predecessor
+from the same phone is missing. Give it `'[tagneg] '` for the other line. The notes under *The probe line* about gaps, the
+relay's 50 messages and the five seconds to wait before closing the tab apply unchanged: a missing line is a missing
+measurement, so run that again.
+
+```bash
+node -e 'const pre = process.argv[1]; const last = {}; for (const l of require("fs").readFileSync("scans/client-logs.jsonl","utf8").split("\n")) { try { const e = JSON.parse(l); if (!e.msg.startsWith(pre)) continue; const p = JSON.parse(e.msg.slice(pre.length)); const who = e.ip + " " + e.ua; const gap = p.n > 1 && last[who] !== p.n - 1 ? "GAP " : ""; last[who] = p.n; console.log(new Date(e.ts).toISOString(), e.ip, gap + JSON.stringify(p)) } catch {} }' '[tag] '
+```
+
+#### The `[tag]` line
+
+```
+[tag] {"v":1,"n":12,"rt":"8thwall","mode":"worker","fb":null,"un":null,"fr":8,"hit":8,"drop":0,"id":7,"side":61.3,"amb":1.8,"vang":38.2,"rng":2.41,"rms":0.31,"spd":4.2,"roi":0.88,"tCopy":0.62,"tRound":19.4,"tDet":11.8,"tWorker":12.6,"tPose":0.4,"tLuma":1.1,"tPyr":0.9,"tQuad":3.2,"tRefine":1.8,"tDecode":4.3,"fuseN":18,"fuseSpreadM":0.0123,"fuseRotDeg":0.84,"fuseHeadDeg":0.31,"fuseRms":0.29,"upm":1.0212,"upmBase":0.62,"lagRms0":0.74,"lagRms1":0.31,"lagRms2":0.69,"lagSpread0":0.0141,"lagSpread1":0.0123,"lagSpread2":0.0138,"lagBest":1,"lagTurn":24.6,"ph":"collecting","pr":0.67,"hint":"reading","ver":null,"q":null}
+```
+
+That line is an invented example of the shape, not a measurement. The code is `src/ar/fiducial/tag-debug.ts`, and a
+test (`tests/unit/node/fiducial_device_doc.test.ts`) keeps the table below equal to the keys it writes. A field that is not
+available is `null`, never zero. The medians are over the frames read since the last line, so one slow frame does not move
+them.
+
+| Field | Unit | What it is |
+|---|---|---|
+| `v` | | Line format. Always 1. |
+| `n` | | Which `[tag]` line this is since the page loaded. A gap in the numbers is a line that is missing. |
+| `rt` | | The AR runtime, as the probe line's `rt` names it: `8thwall`, `webxr` or `native` (a ScanAR shell). |
+| `mode` | | Where frames are read: `worker` (a Web Worker) or `main-thread` (the fallback). `null` when nothing started. |
+| `fb` | | Why the worker was given up for the main thread, when it was: `no-worker`, `worker-error`, `transfer-failed`, `init-failed` or `stalled`. `null` when it was not. |
+| `un` | | Why no frame is read at all: `webxr-no-camera-access`, `no-frame-feed` or `cover-fit` (the view crops the camera). `null` when frames are read. |
+| `fr` | | Frames read since the last line. |
+| `hit` | | Of those, frames in which a tag was found (with `tagid`, only that tag counts). `hit / fr` is the detection rate. |
+| `drop` | | Frames not read since the last line: the reader was still busy with the one before, or they came faster than the main thread takes them. |
+| `id` | | The id of the tag found in the latest frame that found one. |
+| `side` | px | Median, over the frames with a tag, of the mean side of its quad. |
+| `amb` | | Median ambiguity ratio, at most 10: the worse of the two mirror solutions' reprojection error over the better's. Near 1, one frame cannot tell them apart. |
+| `vang` | deg | Median angle between the tag's normal and the line to the camera: 0 is face-on. |
+| `rng` | m | Median distance from the camera to the tag's centre, from the printed size (`tagsize`) and the intrinsics. |
+| `rms` | px | Median reprojection error of the best pose. |
+| `spd` | deg/s | Median angular speed of the camera. |
+| `roi` | 0 to 1 | The share of frames read in the window round the last find, not the whole frame. |
+| `tCopy` | ms | Mean time the feed took to copy a frame's pixels, since the page loaded. |
+| `tRound` | ms | Median time from a frame being handed to the reader to its answer: how much older the pose has got by then. |
+| `tDet` | ms | Median time in the detector. |
+| `tWorker` | ms | Median time the worker took in all: the detector, and getting the frame in and the answer out. |
+| `tPose` | ms | Median time the page took to hand an answer to the session. |
+| `tLuma`, `tPyr`, `tQuad`, `tRefine`, `tDecode` | ms | Median time of the detector's own stages: grey conversion, the pyramid, finding quads, refining their edges, reading and matching them. |
+| `fuseN` | | Frames in the kit's rolling fusion: the latest 40 with the tag 40 px across or more, with the pose gates off. |
+| `fuseSpreadM` | m | The fused tag position's robust scatter over those frames. |
+| `fuseRotDeg` | deg | The fused orientation's, the whole rotation: tilt and spin as well as heading. |
+| `fuseHeadDeg` | deg | The fused **heading's**: the bearing of the axis the Place frame is built on (a wall tag's normal, a flat tag's printed up), the one rotation a tag fixes for the frame. `null` when the tag reads as neither upright nor flat. It is what the 1° gate judges. |
+| `fuseRms` | px | The fusion's median reprojection error. |
+| `upm` | | How many session units make a metre, as the printed size implies it, from the frames in the fusion. `null` until the camera has travelled 0.3 m across them (`MIN_SCALE_BASELINE_M`, adopted). About 1 where the unit is a metre. |
+| `upmBase` | m | The camera travel `upm` rests on. |
+| `lagRms0`, `lagRms1`, `lagRms2` | px | The lag fit: the median reprojection error when the pixels are paired with the pose of the same frame, of one frame older and of two. |
+| `lagSpread0`, `lagSpread1`, `lagSpread2` | m | The fused tag position's scatter at each of those lags. |
+| `lagBest` | | The lag with the smallest `lagRms0` to `lagRms2`: the fit's answer. `null` until it has 8 frames. |
+| `lagTurn` | deg | The largest turn between any two camera orientations in the frames of the fit. A fit means something only when this is not near zero, and only while the camera's speed changes (see Part D). |
+| `ph` | | The session's phase: `searching`, `collecting`, `done`, `failed` or `timed-out`. A session that ended is said in the next line written, and the lines after it are a new session's. |
+| `pr` | 0 to 1 | Its progress. |
+| `hint` | | The live hint code the session would show: `no-tag`, `move-closer`, `keep-uncovered`, `too-fast`, `ambiguous-view`, `sweep`, `move-for-scale`, `spread`, `steep-view`, `range`, `poor-fit`, `reading`, `bad-intrinsics`, `frame-shifted`, `other-tag`, `tilted`, `mount-mismatch`, `bad-height` or `need-floor`. |
+| `ver`, `q` | | When the session is done: its verdict (`verified` or `provisional`) and the quality of the read (`good`, `fair` or `poor`). |
+
+#### The `[tagcam]` line
+
+```
+[tagcam] {"v":1,"n":1,"rt":"8thwall","un":null,"p0":1.7578,"p5":2.3438,"p8":0,"p9":0,"cols":640,"rows":480,"cw":640,"ch":480,"fit":"contain","held":0,"unp":1}
+```
+
+An invented example, not a measurement. It says which camera and which canvas the `[tag]` lines were made through, and how often the feed could not
+deliver a frame (counts since the page loaded), so it is written once, when the first frame is read, then every 30 s, and when the pixel array, the canvas or the fit
+changes (not oftener than once a second). It is also what a view the reader
+refuses looks like: a page loaded with `?camerafit=cover` writes one `[tag]` line, one `[tagcam]` line and nothing more, with `un` `cover-fit` and the view that was refused.
+
+| Field | Unit | What it is |
+|---|---|---|
+| `v`, `n`, `rt` | | As in the `[tag]` line. |
+| `un` | | Why no frame is read at all, as in the `[tag]` line: `webxr-no-camera-access`, `no-frame-feed` or `cover-fit`. `null` when frames are read. |
+| `p0`, `p5`, `p8`, `p9` | | Entries 0, 5, 8 and 9 of the projection matrix the engine published for the frame (column-major, as in three.js): the two focal terms and the two principal-point offsets of the clip square. |
+| `cols`, `rows` | px | The camera pixel array the frames came with. |
+| `cw`, `ch` | px | The canvas the page draws the camera in. |
+| `fit` | | How the canvas shows the camera: `contain` (all of it) or `cover` (cropped: the reader refuses it, and `un` says `cover-fit`). |
+| `held` | | Ticks the feed did not deliver because the runtime held its pose over (it had none for that tick), since the page loaded. The feed forgets the poses before such a tick, so the frames that follow wait `taglag` ticks for the history to fill: if `held` is large against the frames read (`fr` over the run), pairing with a lagged pose is being starved. |
+| `unp` | | Due ticks the feed could not pair with a pose `taglag` ticks back, for want of that much history, since the page loaded. A few at the start and a few after each `held` tick are expected. |
+
+#### The `[tagneg]` line
+
+```
+[tagneg] {"v":1,"n":4,"rt":"8thwall","mode":"worker","fb":null,"un":null,"s":120,"frames":1190,"cand":41872,"groups":30211,"attempts":9640,"reach":2108,"det":0,"capped":0,"maxCand":212,"rejOff":0,"rejContrast":3012,"rejBorder":4520,"rejQuiet":0,"rejMatch":2108,"rejIds":0,"drop":14,"cols":640,"rows":480}
+```
+
+Another invented example, not a measurement. Every number in it is a **count since the page loaded**, so the last line of
+a run is the run, and a lost line costs nothing but its own moment.
+
+| Field | Unit | What it is |
+|---|---|---|
+| `v`, `n`, `rt`, `mode`, `fb`, `un` | | As in the `[tag]` line. |
+| `s` | s | Seconds of the camera's clock since the first frame counted. |
+| `frames` | | Frames read. |
+| `cand` | | Quads the geometry stage found, in all frames (`DetectorStats.candidates`): the number the false-accept gate counts. |
+| `groups` | | Of those, groups at one place and size. |
+| `attempts` | | Quads decoded (`DetectorStats.decodeAttempts`). Fewer than `cand`: the decode budget is 64 a frame, and quads in one group are tried until one reads. |
+| `reach` | | Decoded quads that got as far as the dictionary: `attempts` less those refused earlier for being off the frame, low contrast, a bad border or a noisy margin. |
+| `det` | | Tags reported. On a walk with no tag in view, every one is a false accept. |
+| `capped` | | Frames on which the decode budget ran out with quads unread. |
+| `maxCand` | | The most quads one frame had. |
+| `rejOff`, `rejContrast`, `rejBorder`, `rejQuiet`, `rejMatch`, `rejIds` | | Quads refused at each check: the sampled grid fell off the frame, the contrast was too low, the border was not black, the margin was not white, no code matched, or the code was another id than `tagid`. |
+| `drop` | | Frames not read, as in the `[tag]` line, since the page loaded. |
+| `cols`, `rows` | px | The camera pixel array. |
+
+#### Print and set up
+
+Print three sheets, one Place, three ids, **at 100% (actual size), never fit to page**, on a hard flat board: a curled
+sheet moves the corners. The sheet says what it is; measure its 100 mm bar with a ruler, and if the bar is not 100 mm, the black
+square is the bar's length over 100 times the size on the sheet: give *that* to the kit as `tagsize`.
+
+```bash
+npm run print:fiducial -- --id 3 --size-mm 160 --place-id dx8 --mount wall --mount-height-mm 1200 --out dx8-160.svg
+npm run print:fiducial -- --id 4 --size-mm 200 --place-id dx8 --mount wall --mount-height-mm 1200 --out dx8-200.svg
+npm run print:fiducial -- --id 5 --size-mm 230 --place-id dx8 --mount wall --mount-height-mm 1200 --out dx8-230.svg
+npm run print:fiducial -- --id 6 --size-mm 200 --place-id dx8 --mount horizontal --mount-height-mm 750 --out dx8-200-flat.svg
+```
+
+The 160 and 200 mm sheets print on A3 and the 230 mm one on A2 (an A4 sheet holds a tag up to 144 mm: the
+generator picks the smallest page that fits). The fourth lies on a table 0.75 m high. Fix one wall sheet at a time to a wall with the **centre of the black square 1.2 m above the floor**, with its edges straight and
+the wall around it plain (a marker in a busy scene is a harder read, and that is a different experiment).
+
+**Stand-on marks.** The wall's line on the floor, a mark at the point directly below the tag's centre (the *foot*), and for each run a
+mark at *d* out from the wall and *s* along it from the foot, so that you are *R* from the foot with the tag *θ* off straight
+ahead. (The tag is at 1.2 m and a phone at about 1.3 m: the line of sight is under 1% longer than *R* at every mark.) Mark them
+with tape once and measure them with the tape, not by eye.
+
+| Mark | Range *R* | View angle *θ* | Out from the wall *d* = *R* cos *θ* | Along the wall *s* = *R* sin *θ* |
+|---|---|---|---|---|
+| P1 | 1 m | 40° | 0.77 m | 0.64 m |
+| P2 | 2 m | 40° | 1.53 m | 1.29 m |
+| P3 | 3 m | 40° | 2.30 m | 1.93 m |
+| P5 | 5 m | 40° | 3.83 m | 3.21 m |
+| P3a | 3 m | 10° | 2.95 m | 0.52 m |
+| P3b | 3 m | 60° | 1.50 m | 2.60 m |
+
+**Devices.** Three phones: the oldest iPhone you have, the oldest Android phone, and one of each current kind, all on the
+8th Wall path (see *Devices* below for the fleet), each from a fresh page load.
+
+#### Part A — range, size and angle
+
+Hold the phone at about 1.3 m, the tag in the middle of the view and the phone still, for **4 s** at each run, and use the
+middle two lines. Do the runs in the table on each phone; the 200 mm sheet is the base case (P3, 40°). `tagsize` belongs to the
+sheet: load the page again with the size of the sheet you are about to read (the `id` column says which one was in view: 3, 4, 5 or 6).
+
+| Run | Sheet | Mark | Notes |
 |---|---|---|---|
-| 1 | Print and measure the sheets as above | The printed size in mm and the scale bar's reading, for every print | Each print is within 0.5% of its size (adopted), so that the 100% print is a true 100%: otherwise print it again |
-| 2 | Grid. On each phone, hold still for 2 s in each cell. The minimum is 16 cells: the 200 mm wall tag at 1, 2, 3 and 5 m, at 10°, 40° and 60° (12 cells), and the 200 mm floor tag at 1, 2, 3 and 5 m (4). The complete grid adds the 160 mm and 230 mm tags in the same cells (32 more) | Per cell: in how many of the hold's frames the tag was found, the side in pixels, and the spread over the hold of the per-frame position and yaw *(after WP-14b)* | The 200 mm wall tag is found in at least 90% of frames at 3 m, at 10° and 40°, on every phone (the spec names no angle: this reading is adopted, and the 60° cells are recorded, not judged). Below that on any phone: **fail** |
-| 3 | Probe. Lay the probe mark P first: F is the floor point under the tag's centre (a plumb line), Q is 3.000 m from F along the foot of the wall, and P is where a tape from F reading 5.000 m crosses a tape from Q reading 5.831 m (the square root of 34), on the tag's side of the wall. Define the frame from the 200 mm wall tag with the build's marker step *(after WP-14b)*, from about 2 m, 40° to the side, sweeping sideways: its origin is F and its +Z the tag's outward normal. Then walk to about 3 m from the tag on the normal, hold the phone looking steeply down about 2 m from P, and tap the middle of P once, as in Procedure 2. Five sessions, closing the tab between them | The probe's `line.px`, `line.pz`, `line.rng` and `line.pitch` in each session (a `line.pitch` above −45 means the phone was not looking steeply down: say so), and the spread of the five (the repeatability) | Each is within 10 cm of P's true place, 0 m across and 5.000 m out along the normal (the spec's 10 cm at a 5 m probe: with five sessions the p95 is the largest). P is laid to within 2 cm sideways and 0.5 cm out with each tape read to 5 mm, and that comes out of the 10 cm. Otherwise **fail** |
-| 4 | Time and heat. Run 5 minutes at 10 Hz on the oldest iPhone and the oldest Android, pointed at the tag, then 5 minutes with no tag | The stage times (grey conversion, quad search, refinement, decode, pose) *(after WP-14b)*, and the median and the 95th percentile of their sum for a frame; the battery percentage at the start and the end; the temperature at the start and the end (Android: the `temperature` line of `adb shell dumpsys battery`, in tenths of a degree Celsius; iPhone: none to read, so cool, warm or hot by hand, and whether it warns); whether the HUD stalls | The 95th percentile of the detector's time is at most 100 ms a frame, the budget at 10 Hz (adopted; the 95th percentile because a frame over budget delays the next). Heat and battery: record only |
-| 5 | Lag. With the tag in view, sweep the phone past it at about 30° a second and let the build fit the reprojection error against a lag of 0, 1 and 2 frames | The rms error in pixels at each lag, per phone *(after WP-14b)* | One lag is lowest on all three phones and its rms is at most 0.8 px (the adopted reprojection gate). The lag that wins becomes the build's default, whatever the default is today |
-| 6 | Focal factor and projection. Put the phone's camera exactly 2.000 m from the tag's centre by tape, facing the tag squarely | Detected range ÷ 2.000 per phone, and `P[0]`, `P[5]`, `P[8]`, `P[9]`, `cols`, `rows`, the canvas size and `contain` or `cover` *(after WP-14b)*; and, in the build today, `fit`, `canvas`, `frame`, `fovYDeg`, `projectionAspect` and `crop` of the `[8thwall][aspect]` line | The factor is between 0.98 and 1.02 (adopted: 2% of focal length is 6 cm at 3 m): outside it, write the factor down per model, because a per-model correction is needed. `P[8]` and `P[9]` read 0 and `P[5]` ÷ `P[0]` is within 0.5% of `cols` ÷ `rows` (the check the tag step makes before it runs, adopted): a model that fails it is one the tag step has to refuse |
-| 7 | Unit from the print. On each phone in responsive scale (arm R0 of Procedure 3), with the 100% print, move the phone at least 0.3 m while it looks at the tag, then read the session units per metre the build gets from the print *(after WP-14b)* | That figure, and Procedure 3's for the same phone and start height (`line.sepM` ÷ 3.000) | Within 3% of each other (the spec's 3%, adopted). Outside it the print scale, the focal length or the tracking is wrong: the print sets no unit until that is explained |
-| 8 | Prints at 95% and 105%. Print the sheet at 95% and at 105%, measure each, and give the build the sheet's nominal size and not the measured one (the point is what an unmeasured print does). Repeat step 6's 2.000 m tape check with each print. Where a runtime's unit is the metre (an 8th Wall phone in absolute scale, once Procedure 3's arm A has passed on it), also run the tag step with the 100% print and then each of these | Detected range ÷ 2.000 for each print, and the scale ratio the build reports for each print *(after WP-14b)* | The 100% print reads within 2% and the other two read about 1.05 (95%) and 0.95 (105%): the detector cannot see a print-scale error. On the metric runtime both mis-scaled prints are flagged as off by more than 3% and the 100% print is not. This ratio, the scale bar and the rule are the only checks |
-| 9 | Negative images. Walk 10 minutes through three rooms, as in step 4 of Procedure 6, with no tag anywhere in view and the phone armed with `?debug=remote,probe,tagneg`. Repeat until the counters reach the total | Candidate quads, decode attempts and detections *(after WP-14b)*. No image leaves the phone | Zero detections in at least 3,000,000 candidate quads: with none in *n* the rate is under 3 ÷ *n* at 95%, so 3 million is the least that shows under 1e-6. One detection moves the total to 4.75 million and two to 6.3 million (the 95% limit for that count). Three million is about 100,000 negative images: 17 walks of ten minutes at 10 Hz, 6,000 frames each, and any other walk in this file can be run armed with `tagneg` and counts. A third detection **fails** the in-house family whatever the total: that is a cap this page adopts so that the run ends, not part of the 95% arithmetic (three detections would need 7.8 million quads to show under 1e-6, about 44 walks) |
+| A1 to A4 | 200 mm, wall | P1, P2, P3, P5 | range |
+| A5, A6 | 200 mm, wall | P3a, P3b | angle (A3 is the 40° one) |
+| A7, A8 | 160 mm, wall | P3, P5 | size |
+| A9, A10 | 230 mm, wall | P3, P5 | size |
+| A11 to A13 | 200 mm, **horizontal** (id 6), on a table 0.75 m high (`tagheight=0.75`) | 1, 2 and 3 m from the table's edge, on the floor | a flat tag seen from a standing phone is seen at 60° to 80° (`vang`): the finding is how far out it reads at all (beyond 70° the reader uses no frame, and `hint` says `steep-view`) |
 
-A fail in step 2, 3 or 9 switches the shipping detector to the AprilTag build. Steps 4 to 6 set
-constants (the frame rate, the lag, the focal factor per model) and do not pass or fail the
-detector. Steps 7 and 8 say whether a wrong unit or a mis-scaled print is caught. Decide the tag
-family here too, before any sheet is issued. Not here: the checks of a WebXR camera image (the size of
-`view.camera` against the projection, whether a second camera stream coexists with ARCore) and of
-`BarcodeDetector` in a Capacitor WebView belong with the two things the spec leaves out of the first
-version, WebXR camera access and in-app QR decoding.
+From the two lines of a run: `hit` over `fr` (the detection rate over both), `side`, `vang`, `rng` against the tape range,
+`amb`, `rms`, `fuseSpreadM`, `fuseHeadDeg` and `fuseRotDeg`, `ph` and `hint`. Write the tape range and the sheet beside them. A run starts at its own
+session (the line of a session that ended is the last of its run), so the `ph` and `hint` of a run are that run's.
 
-#### Results — Procedure 8
+#### Results — Procedure 8, Part A
 
-Copy one row per cell for step 2 and one row per phone for the other steps. For a wall cell, Range
-is *r* and Angle is *a* off the tag's normal. For a floor cell, Range is the distance *d* along the
-floor and Angle is the one the 1.4 m height gives, atan(*d* ÷ 1.4): 36° at 1 m, 55° at 2 m, 65° at
-3 m and 74° at 5 m.
+| Phone | Run | Tape range (m) | Detection rate | `side` | `vang` | `rng` | `amb` | `rms` | `fuseSpreadM` | `fuseHeadDeg` | `fuseRotDeg` | `hint` |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| | A1 | | | | | | | | | | | |
+| | A2 | | | | | | | | | | | |
 
-| Phone | Runtime | Step | Tag (mm) | Range (m) | Angle (°) | Wall or floor | What you saw | Pass or fail |
-|---|---|---|---|---|---|---|---|---|
-| | | | | | | | | |
+(Copy the row for each run on each phone.)
+
+**Decision.** From the plan, adopted and not measured: the in-house detector ships if the **detection rate at P3 is 90% or
+more on every one of the three phones**. Below that on any phone, the contingency (a self-built AprilTag behind the same
+`TagDetector` seam) is back on the table: send the table and ask. The rest are things to record: the tag side the detection
+rate falls off at (24 px is the identity limit, 40 px the pose limit; at a focal length of 720 px a 200 mm tag is 40 px across at 3.6 m face-on, and at
+3.2 m seen 40° to the side, because the side that turns away shortens), and `rng` against the tape, which Part E reads as a factor.
+The base case P3 (3 m, 40°) is 42 px across at a focal length of 720 px, and 40 px at 679 px: on a phone whose focal length is under about 680 px
+(`fx` in Part E) P3 is below the pose limit, and `hint` says `move-closer`. Read `side` before judging the scatter there.
+
+#### Part B — what reading costs, on the oldest phones
+
+From any run's lines, on the oldest iPhone and the oldest Android phone: the medians of `tCopy`, `tRound`, `tDet`, `tWorker`,
+`tPose`, `tLuma`, `tPyr`, `tQuad`, `tRefine` and `tDecode`, with `mode` (and `fb` if it is not `null`), `roi`, and `drop`. These
+are the numbers `DEFAULT_TAG_MAX_HZ` (8) and the search window (`src/ar/fiducial/tag-runner.ts`) are to be set from. The plan sets no limit,
+so none is judged here: record them and ask.
+
+**The five-minute run.** On each of those two phones, from full charge or the same battery level, with the page open for the run
+and `tagrate=10`: hold the phone at P2 and move it slowly about, the tag in view, for **300 s**. Write the battery level and
+whether the phone is warm before and after, and from the lines the median `tDet`, `tRound` and `drop` over the first 60 lines against the last
+60. A `tDet` that climbs over the five minutes is the phone slowing itself down; a `drop` over a fifth of `fr` is a phone that cannot take 10 a second.
+
+#### Part C — pose scatter against range
+
+From Part A, `fuseSpreadM`, `fuseHeadDeg` and `fuseRotDeg` against the tape range, per phone, for the 200 mm sheet at 40°, and the same for the 160 and
+230 mm sheets at P3 and P5. `fuseHeadDeg` is the one the 1° gate judges (the heading is the only angle the frame takes from the tag); `fuseRotDeg` includes the
+tilt, which the frame does not use (in synthetic frames, with 0.3 px of corner noise on a 20 cm tag at 2 to 3 m, the whole orientation scatters about
+1.5 times the heading for a wall tag and 2.5 to 5 times for a flat one; that is a simulation, and these columns are what measures it). They are the scatter of the tag's own pose in one session, the input to the plan's question about
+the frame the tag defines at a probe 5 m away, which this kit cannot answer (see the end).
+
+#### Part D — the lag between pixels and pose
+
+Which of the engine's poses goes with the pixels of a frame is a hypothesis (`pose-history.ts`: the pixels of a frame trail the pose
+by one frame), and `lagBest` is the instrument that fits it. It can fit only while the camera's *speed changes*: a phone held
+still fits every lag alike, and so does one swept at a steady speed along a steady arc about the tag (a lag only shifts such a
+path in time). So **swing the phone past the tag and back, over and over**, about once in two seconds, from P2, the tag staying in view, for 30 s, on
+each phone. `lagTurn` says how far it turned (the fit's own error columns, `lagRms0` to `lagRms2`, say whether it speeded up and slowed down: they
+differ between the lags only then).
+
+Take the lines with `lagTurn` of at least 15° (adopted). **The one-frame lag stands** when `lagBest` is 1 in at least 80% of them on
+every phone, and `lagRms1` is at least 0.1 px under the other two in most. If `lagBest` is 0 or 2 in most lines, change
+`DEFAULT_PIXEL_LAG_FRAMES` in `src/ar/fiducial/pose-history.ts`: it is one constant, and the tests fit the lag in a world built with each lag. If the two
+runtimes disagree there is no per-runtime value: send the table. `taglag` sets the lag a run's session is paired at, so that a run can be
+repeated at the other lags and `fuseRotDeg` and `fuseRms` compared.
+
+#### Part E — the camera model
+
+For each phone from the `[tagcam]` line: `p0`, `p5`, `p8`, `p9`, `cols`, `rows`, `cw`, `ch` and `fit`. The app takes the focal lengths
+as `fx` = `p0` × `cols` / 2 and `fy` = `p5` × `rows` / 2 (pixels), and the principal point as (1 − `p8`) × `cols` / 2 and
+(1 + `p9`) × `rows` / 2. Check that `fx` and `fy` agree within 2% (the session refuses a frame when they do not, with the hint
+`bad-intrinsics`), that `p8` and `p9` are near 0, that `cw` / `ch` match `cols` / `rows`, and that `fit` is `contain`.
+
+**The focal factor.** Put the phone's back camera exactly **2.000 m** from the sheet along its normal (tape, from the sheet's surface
+to the camera lens, the phone square to the sheet), hold still for 10 s, and take the median `rng` over those lines. The ratio
+`rng` / 2.000 is how far the focal length the app derives is from the camera's: the range is proportional to it. Record it
+per phone. **Between 0.97 and 1.03** (adopted) the intrinsics are the camera's; outside it, ask before trusting any range or scale taken from a tag on that phone.
+
+#### Part F — the unit from the print
+
+The runtime's unit is a metre only if it says so (Procedure 3 is the tape test that checks), and the printed size is a second
+ruler: `upm` is what it implies. Arm `?debug=remote,probe,tag&tagsize=200` and do one run of Procedure 3 (arm R0) at the 1.3 m start height; after its
+single floor tap, swing the phone past the 200 mm sheet for 10 s at P2. In that one session compare **`upm`** (the last line, with `upmBase` at
+least 0.3) with the tape's units, `sepM` / 3.000 from the probe line. **They agree** when within 3% (adopted). Then the **mis-scaled prints**: print
+the 200 mm sheet again at 95% and at 105% (the printer's scale setting, and measure the bars), and in one session read
+the exact print and then each of those, all told `tagsize=200`: the ratio of each `upm` to the exact print's is the print's own scale (the kit
+takes a smaller print for a farther one, so the metres it measures come out longer and a smaller print reads as fewer units to the metre), **about 0.95 for the 95% print and 1.05 for the
+105% one**. A ratio more than 0.02 from those means the print's size cannot be read back from the frames on that phone, and a mis-scaled print would not be caught there.
+
+#### Part G — false accepts
+
+The reader's identity is a dictionary of 128 codes whose arithmetic (`families.ts`: 128 codes × 4 turns × 37 grids within one bit, over 2^36) says about
+2.8 false accepts in 10 million quads that reach the matcher, one bit read loosely. That is a calculation. This part counts. **Walk a long way with no marker in view**: no
+sheet, no QR code and no printed tag in the room or on a screen, through the places a Place's tag would not be, with `?debug=remote,tagneg`, for
+as long as you can. Put the sheets away first. Then again with `&tagid=4`, the way a Place's registered tag is read (exact, that id only).
+The last `[tagneg]` line of each is the run: `frames`, `cand` and `det`.
+
+With no detections the 95% upper bound on the false-accept rate per quad is 3 / `cand` (the rule of three). **The plan's gate is a bound at or under 1 in
+a million per candidate quad**, adopted, not measured: that needs `cand` of at least 3,000,000 with `det` 0, which is about 100,000 frames at the
+plan's estimate of 30 quads a frame (your own lines show the real one: `cand` over `frames`). **One `det` is a failure to send**, with where it was. Count the places you walked and say so: the quads of one wall
+in consecutive frames are not independent draws, so 3 / `cand` is an optimistic bound and "none in this many quads, in these rooms" is the claim.
+
+#### Not measured here
+
+The plan also asks for the **repeatability of the tag-defined frame over five sessions at a probe 5 m away** and the fused error there
+(the plan's contingency line: more than 10 cm at the 95th percentile after the gates). They need the frame the tag defines, built by the flow stage that asks the
+person to scan the marker, which is a later package. Nothing here measures them, and nothing in the app says they were.
+
+When that stage lands, the run is this. Lay the probe mark P first: F is the floor point under the tag's centre (a plumb line), Q is
+3.000 m from F along the foot of the wall, and P is where a tape from F reading 5.000 m crosses a tape from Q reading 5.831 m (the
+square root of 34), on the tag's side of the wall. Define the frame from the 200 mm wall tag with the marker step, from about 2 m,
+40° to the side, sweeping sideways: its origin is F and its +Z the tag's outward normal. Then walk to about 3 m from the tag on the
+normal, hold the phone looking steeply down about 2 m from P, and tap the middle of P once, as in Procedure 2. Five sessions, closing
+the tab between them. Write down the probe line's `px` and `pz` (the tap across and out in the frame), `rng` and `pitch` in each
+session, as Procedure 2 reads them (a `pitch` above −45 means the phone was not looking steeply down: say so), and the spread of the five. Each is to be within 10 cm of P's true place, 0 m
+across and 5.000 m out along the normal (adopted: the plan's 10 cm at a 5 m probe; with five sessions the p95 is the largest). P is
+laid to within 2 cm sideways and 0.5 cm out with each tape read to 5 mm, and that comes out of the 10 cm.
 
 ### Devices
 

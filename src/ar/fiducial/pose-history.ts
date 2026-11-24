@@ -8,20 +8,36 @@
  * in 33 ms and turns a few tenths of a degree, which is the size of the error this package is trying
  * to measure.
  *
- * Which frame the pixels of a camera-pixel delivery belong to is a hypothesis this module does not settle: the pixels
- * delivered with a frame may be the image of the previous frame while the pose the runtime reports is the current
- * one. A device run fits the lag (none, one or two frames; DX8 in docs/testing/DEVICE_TESTING.md), and the pairing
- * then asks for the pose at the timestamp the fitted lag names: push every frame's pose here with its timestamp and
- * ask for the pose at that earlier frame's timestamp. The WebXR companion `getUserMedia` stream has no frame
- * timestamp that is comparable with the XR clock at all, so it cannot be synchronised this way; see the WP-14a report.
+ * ## The pairing is a hypothesis, and `lagFrames` is how it is stated
  *
- * Interpolation is linear for position and spherical for rotation (shortest arc). It never
- * extrapolates, and it refuses to interpolate across a hole in the data.
+ * What a runtime documents about the camera image it hands over is its size, its format and where it
+ * is delivered; the 8th Wall `CameraPixelArray` page (https://8thwall.org/docs/api/engine/camerapixelarray/pipelinemodule)
+ * says nothing about which frame the pixels show, relative to the pose delivered in the same tick. So how far the
+ * pixels trail the pose is a number to be FITTED on a phone, not a fact to be read: `lagFrames` is how many frames
+ * the pixels are assumed to be older than the newest pose, 0 meaning the pose of the same frame, and
+ * {@link DEFAULT_PIXEL_LAG_FRAMES} is only the starting guess. Device experiment DX8 swings a phone past a fixed tag
+ * and back and fits 0, 1 and 2 by how well the tag's session pose explains the frames (`fitPixelLag` in `tag-debug.ts`, shown
+ * by `?debug=tag`; it needs the camera's speed to change, since a steady sweep fits every lag alike); what it finds
+ * replaces the default. Push every frame's pose here with its timestamp, and ask
+ * {@link PoseHistory.pairedSample} for the pose to go with the pixels delivered with the newest.
+ *
+ * The WebXR companion `getUserMedia` stream has no frame timestamp that is comparable with the XR clock at all, so
+ * it cannot be synchronised this way; see the WP-14a report.
+ *
+ * Interpolation (`at`) is linear for position and spherical for rotation (shortest arc). It never
+ * extrapolates, and it refuses to interpolate across a hole in the data. `pairedSample` does not interpolate:
+ * it names a whole frame.
  *
  * Browser-safe (ADR 0002), no dependency.
  */
 import type { Pose } from '../provider.ts'
 
+/**
+ * How many frames the pixels are assumed to be older than the newest pose, to begin with. A hypothesis, adopted, not
+ * measured (ADR 0005 rule 5), and the one thing in this folder that a real frame can contradict without any test
+ * here noticing: DX8 fits 0, 1 and 2 and replaces it. The header says why it is a hypothesis.
+ */
+export const DEFAULT_PIXEL_LAG_FRAMES = 1
 /** Largest gap between two samples that may be interpolated across, milliseconds. Adopted, not measured: a few frames at 30 fps. */
 export const DEFAULT_MAX_GAP_MS = 100
 /** How far outside the stored range a request is answered with the nearest sample, milliseconds. Adopted, not measured: under one frame at 30 fps. */
@@ -30,6 +46,17 @@ export const DEFAULT_EDGE_TOLERANCE_MS = 20
 interface Sample {
   t: number
   pose: Pose
+}
+
+export interface PoseHistoryOptions {
+  /** See {@link DEFAULT_PIXEL_LAG_FRAMES}. A whole number from 0 to one less than the capacity. */
+  lagFrames?: number
+}
+
+/** A recorded pose and the time it was recorded for. */
+export interface PoseSample {
+  pose: Pose
+  timestampMs: number
 }
 
 function slerp(a: Pose['rotation'], b: Pose['rotation'], u: number): Pose['rotation'] {
@@ -67,10 +94,15 @@ function slerp(a: Pose['rotation'], b: Pose['rotation'], u: number): Pose['rotat
 export class PoseHistory {
   private readonly samples: Sample[] = []
   private readonly capacity: number
+  /** Frames the pixels are assumed to trail the newest pose. See {@link DEFAULT_PIXEL_LAG_FRAMES}. */
+  readonly lagFrames: number
 
-  constructor(capacity = 64) {
+  constructor(capacity = 64, options: PoseHistoryOptions = {}) {
     if (!Number.isInteger(capacity) || capacity < 2) throw new RangeError('a pose history needs room for at least two samples')
+    const lag = options.lagFrames ?? DEFAULT_PIXEL_LAG_FRAMES
+    if (!Number.isInteger(lag) || lag < 0 || lag >= capacity) throw new RangeError(`lagFrames ${lag} is not a whole number from 0 to ${capacity - 1}`)
     this.capacity = capacity
+    this.lagFrames = lag
   }
 
   get size(): number {
@@ -130,6 +162,38 @@ export class PoseHistory {
       },
       rotation: slerp(a.pose.rotation, b.pose.rotation, u),
     }
+  }
+
+  /**
+   * The pose to pair with the pixels delivered with the NEWEST sample: the one recorded `lagFrames` frames before it
+   * (0 is the newest itself). `lagFrames` defaults to the history's own. Null while the history is not that deep, so a
+   * pairing is never made from a pose that is not the one asked for. A whole frame, never an interpolation.
+   */
+  pairedSample(lagFrames: number = this.lagFrames): PoseSample | null {
+    if (!Number.isInteger(lagFrames) || lagFrames < 0) return null
+    const sample = this.samples[this.samples.length - 1 - lagFrames]
+    return sample ? { pose: this.copy(sample.pose), timestampMs: sample.t } : null
+  }
+
+  /** The newest `count` samples, newest first (fewer when the history is shorter). */
+  newest(count: number): PoseSample[] {
+    const out: PoseSample[] = []
+    for (let i = this.samples.length - 1; i >= 0 && out.length < count; i--) out.push({ pose: this.copy(this.samples[i]!.pose), timestampMs: this.samples[i]!.t })
+    return out
+  }
+
+  /**
+   * How fast the camera turned between the newest two samples, degrees per second: what bounds motion blur, and so
+   * a pose-grade frame. Null with fewer than two samples. A rate over one frame, not over an exposure.
+   */
+  angularSpeedDegPerS(): number | null {
+    const n = this.samples.length
+    if (n < 2) return null
+    const a = this.samples[n - 2]!
+    const b = this.samples[n - 1]!
+    const dot = Math.abs(a.pose.rotation.x * b.pose.rotation.x + a.pose.rotation.y * b.pose.rotation.y + a.pose.rotation.z * b.pose.rotation.z + a.pose.rotation.w * b.pose.rotation.w)
+    const angleDeg = (2 * Math.acos(Math.min(1, dot)) * 180) / Math.PI
+    return angleDeg / ((b.t - a.t) / 1000)
   }
 
   private copy(p: Pose): Pose {
