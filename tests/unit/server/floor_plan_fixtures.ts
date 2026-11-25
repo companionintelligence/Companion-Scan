@@ -145,6 +145,11 @@ export interface CapturedRoomOptions {
   write?: { cloud?: boolean; poses?: boolean; keyframes?: boolean }
   /** Keyframe records with no AR pose, as a photo or video ingest writes them. */
   noArPoses?: boolean
+  /**
+   * The `scaleMode` each keyframe record carries, as the scanner stamps it (src/capture/keyframes.ts): one value for every
+   * frame, or one per frame by index. Undefined leaves the key off, as on a capture from before the stamp.
+   */
+  scaleMode?: unknown | ((index: number) => unknown)
 }
 
 /**
@@ -174,6 +179,7 @@ export async function writeCapturedRoom(dir: string, opts: CapturedRoomOptions =
     const pitch = -0.15 - 0.05 * Math.cos(5 * k)
     const q = quatMul([0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)], [Math.sin(pitch / 2), 0, 0, Math.cos(pitch / 2)])
     const file = `kf-${String(k).padStart(5, '0')}.jpg`
+    const scaleMode = typeof opts.scaleMode === 'function' ? (opts.scaleMode as (index: number) => unknown)(k) : opts.scaleMode
     poseLines.push(JSON.stringify({
       index: k,
       file,
@@ -183,6 +189,7 @@ export async function writeCapturedRoom(dir: string, opts: CapturedRoomOptions =
           rotation: { x: q[0], y: q[1], z: q[2], w: q[3] },
         },
       }),
+      ...(scaleMode === undefined ? {} : { scaleMode }),
     }))
     // The same camera in LingBot's frame (OpenGL axes), then as LingBot writes it: OpenCV world-to-camera.
     const rLb = mul3(frame.rotation, quatMatrix(q))

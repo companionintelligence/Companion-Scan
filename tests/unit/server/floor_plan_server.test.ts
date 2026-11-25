@@ -7,12 +7,16 @@
  *     (its cloud in a tilted LingBot frame, its keyframes' AR poses) gets its plan: the job's artifact, the three files
  *     served with their types, the drawing under a policy that runs nothing, the manifest with no server path in it,
  *     and all three taken when the scan is deleted. The scan records no scale kind, so the plan is in session units.
+ *   - The plan's unit, with a stand-in worker: a scan with no calibration whose keyframes WebXR or the native plugin
+ *     posed (their `scaleMode` stamp) is in metres, and an 8th Wall one, a calibrated one that recorded no unit, or an
+ *     uncalibrated one splat-align has since sized from measured distances, is in session units as before.
  */
 import { assert, assertEquals, assertFalse, assertStringIncludes } from './assert.ts'
 
+import { withReplacedCalibration } from '../../../server/calibration_fields.ts'
 import { scanIdFor } from '../../../server/scan_id.ts'
 import type { WorldJob } from '../../../src/world/types.ts'
-import { floorPlanPython, ROOM, writeCapturedRoom } from './floor_plan_fixtures.ts'
+import { floorPlanPython, ROOM, TINY_PLY, writeCapturedRoom } from './floor_plan_fixtures.ts'
 import { filesUnder, type RunningServer, startServer } from './server_core_harness.ts'
 import * as fs from 'node:fs/promises'
 import { test } from 'node:test'
@@ -42,11 +46,18 @@ function glb(): Uint8Array<ArrayBuffer> {
   return bytes
 }
 
-async function storeScan(scansDir: string, sessionsDir: string, base: string, session: string): Promise<string> {
+/** Files a scan and its session. `meta` is laid into the scan's sidecar beside its `sessionId`. */
+async function storeScan(
+  scansDir: string,
+  sessionsDir: string,
+  base: string,
+  session: string,
+  meta: Record<string, unknown> = {},
+): Promise<string> {
   await fs.mkdir(`${sessionsDir}/${session}`, { recursive: true })
   await fs.writeFile(`${sessionsDir}/${session}/session.json`, JSON.stringify({ sessionId: session, glbFilename: `${base}.glb` }))
   await fs.writeFile(`${scansDir}/${base}.glb`, glb())
-  await fs.writeFile(`${scansDir}/${base}.json`, JSON.stringify({ sessionId: session }))
+  await fs.writeFile(`${scansDir}/${base}.json`, JSON.stringify({ sessionId: session, ...meta }))
   return `${sessionsDir}/${session}`
 }
 
@@ -236,6 +247,89 @@ test('a LingBot-Map run that succeeds queues a floor plan on the same interprete
           await server.stop()
         }
       })
+    }
+  } finally {
+    await fs.rm(tools, { recursive: true })
+  }
+})
+
+/** The flat keys the scanner writes for a scan it never calibrated (src/export/gltf.ts). */
+const UNCALIBRATED_SIDECAR = {
+  calibrationMethod: null,
+  calibrationStatus: 'uncalibrated',
+  scaleMode: null,
+  scaleKind: null,
+  calibration: null,
+}
+
+/** A two-point calibration from before units were recorded: a tier, and no unit anywhere in the sidecar. */
+const CALIBRATED_NO_UNIT_SIDECAR = {
+  calibrationMethod: 'two-point-ground',
+  calibrationStatus: 'provisional',
+  calibration: {
+    method: 'two-point-ground',
+    status: 'provisional',
+    sessionToProject: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    calibratedAt: '2026-11-24T00:00:00.000Z',
+  },
+}
+
+/**
+ * An uncalibrated scan's sidecar after splat-align sized it from measured distances: the job replaced the record with a
+ * known-distance one and left the flat summary saying none (withReplacedCalibration), so the manifest shows no tier.
+ */
+const SIZED_BY_SPLAT_ALIGN_SIDECAR = withReplacedCalibration(UNCALIBRATED_SIDECAR, {
+  method: 'known-distance',
+  sessionToProject: [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1],
+  calibratedAt: '2026-11-24T00:00:00.000Z',
+  status: 'provisional',
+  separationM: 3,
+  residualM: 0,
+  toleranceM: 0.05,
+  gravityAligned: false,
+})
+
+test('the floor-plan job draws an uncalibrated WebXR, ARCore or ARKit scan in metres, and an 8th Wall or calibrated one as before', { skip: process.platform === 'win32' }, async (t) => {
+  const tools = await makeTempDir({ prefix: 'floor-plan-units-' })
+  // Each scan's session holds a captured room whose keyframes carry `frames` as their scaleMode stamp.
+  const scans = [
+    { base: '1700000000010_webxr', session: 'sess-floorplan-webxr', meta: UNCALIBRATED_SIDECAR, frames: 'webxr-metric', units: 'm' },
+    { base: '1700000000011_native', session: 'sess-floorplan-native', meta: UNCALIBRATED_SIDECAR, frames: 'native-metric', units: 'm' },
+    { base: '1700000000012_eighthwall', session: 'sess-floorplan-eighthwall', meta: UNCALIBRATED_SIDECAR, frames: 'responsive-unconfigured', units: 'session' },
+    { base: '1700000000013_calibrated', session: 'sess-floorplan-calibrated', meta: CALIBRATED_NO_UNIT_SIDECAR, frames: 'webxr-metric', units: 'session' },
+    { base: '1700000000014_sized', session: 'sess-floorplan-sized', meta: SIZED_BY_SPLAT_ALIGN_SIDECAR, frames: 'webxr-metric', units: 'session' },
+  ]
+  try {
+    const stub = `${tools}/python`
+    await fs.writeFile(stub, interpreterStub(tools))
+    await fs.chmod(stub, 0o755)
+    const server = await startServer({ LINGBOT_MAP_PYTHON: stub, FLOORPLAN_AUTO: '0' }, async ({ scansDir, sessionsDir }) => {
+      for (const scan of scans) {
+        const session = await storeScan(scansDir, sessionsDir, scan.base, scan.session, scan.meta)
+        await fs.writeFile(`${session}/lingbot-map.point-cloud.ply`, TINY_PLY)
+        await writeCapturedRoom(session, { write: { cloud: false }, scaleMode: scan.frames })
+      }
+    })
+    const why = (what: string) => `${what}\n${server.log()}`
+    try {
+      for (const scan of scans) {
+        await t.test(`${scan.base}: keyframes stamped ${scan.frames} → ${scan.units}`, async () => {
+          const job = await queue(server, { type: 'floor-plan', scanId: scanIdFor(`${scan.base}.glb`) })
+          const done = await settled(server, job.jobId)
+          assertEquals(done.status, 'completed', why(`${scan.base}: ${done.error ?? done.result}`))
+          const artifact = done.artifacts?.find((a) => a.type === 'floor-plan')
+          assert(artifact, why(`no floor-plan artifact: ${JSON.stringify(done.artifacts)}`))
+          assertEquals((artifact.metadata as { units: string }).units, scan.units, 'the job artifact')
+          const manifest = await server.get(`/scans/${scan.base}.floor-plan.manifest.json`)
+          assertEquals(manifest.status, 200, why('manifest'))
+          const body = manifest.json<{ status: string; units: string; disclaimer?: string }>()
+          assertEquals(body.status, 'ok')
+          assertEquals(body.units, scan.units, 'the manifest the editor reads')
+          assertEquals(body.disclaimer, 'stand-in', 'the plan is the one the stand-in wrote')
+        })
+      }
+    } finally {
+      await server.stop()
     }
   } finally {
     await fs.rm(tools, { recursive: true })
