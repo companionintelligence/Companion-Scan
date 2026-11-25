@@ -578,7 +578,7 @@ export const META_SPATIAL_SDK_NOTICE = [
 
 /**
  * The licence of each library the Quest app's release build pins (meta/app/gradle.lockfile), by `group:artifact`,
- * as its POM declares it. Every name is spelled out, so a library none of them matches stops the notices, even one
+ * as its POM declares it, but for its BOMs, which questNotices leaves out. Every name is spelled out, so a library none of them matches stops the notices, even one
  * from a family listed here: check its licence (its POM, and the LICENSE in its AAR), then add it. The entries take
  * the shape of ANDROID_LICENCES, and androidLicenceTexts gives each its texts, except the Meta Spatial SDK's
  * (`metaSdk`), which get META_SPATIAL_SDK_NOTICE and then the agreement as the SDK's AARs carry it
@@ -607,12 +607,12 @@ export const QUEST_LICENCES = [
   { match: /^org\.jetbrains\.kotlin:kotlin-stdlib$/, licence: 'Apache-2.0', source: 'https://github.com/JetBrains/kotlin' },
   { match: /^org\.jetbrains\.kotlin:kotlin-stdlib-common$/, licence: 'Apache-2.0', source: 'https://kotlinlang.org/' },
   {
-    match: /^org\.jetbrains\.kotlinx:kotlinx-coroutines-(?:android|bom|core|core-jvm)$/,
+    match: /^org\.jetbrains\.kotlinx:kotlinx-coroutines-(?:android|core|core-jvm)$/,
     licence: 'Apache-2.0',
     source: 'https://github.com/Kotlin/kotlinx.coroutines',
   },
   {
-    match: /^org\.jetbrains\.kotlinx:kotlinx-serialization-(?:bom|core|core-jvm|json|json-jvm)$/,
+    match: /^org\.jetbrains\.kotlinx:kotlinx-serialization-(?:core|core-jvm|json|json-jvm)$/,
     licence: 'Apache-2.0',
     source: 'https://github.com/Kotlin/kotlinx.serialization',
   },
@@ -731,9 +731,9 @@ export function questVersion(gradle = readFileSync(join(ROOT, 'meta', 'app', 'bu
 }
 
 /**
- * Builds the Quest app's notices (meta/): every library its release build pins, BOMs included, sorted by name, with
- * the licence QUEST_LICENCES gives it, the Meta Spatial SDK's with its notice and agreement. Returns the notices, and
- * the SDK's notices.html, which goes beside them (writeQuestNotices).
+ * Builds the Quest app's notices (meta/): every library its release build pins, sorted by name, with the licence
+ * QUEST_LICENCES gives it, the Meta Spatial SDK's with its notice and agreement. A BOM is left out, as addAndroid
+ * leaves it out. Returns the notices, and the SDK's notices.html, which goes beside them (writeQuestNotices).
  * @param {object} [options]
  * @param {string} [options.lockfile] the lockfile's text: meta/app/gradle.lockfile's, unless the tests give another
  * @param {(libraries: Array<{ group: string, artifact: string, version: string }>) => { licence: string, noticesHtml: Buffer }} [options.readMetaSdk]
@@ -747,6 +747,8 @@ export function questNotices({ lockfile, readMetaSdk = metaSpatialSdkFiles } = {
     lockfile = readFileSync(QUEST_LOCKFILE, 'utf8')
   }
   const libraries = lockedLibraries(lockfile)
+    // A BOM only aligns the versions of other libraries; it puts nothing in the APK.
+    .filter((library) => !library.artifact.endsWith('-bom'))
     .map((library) => ({ ...library, name: `${library.group}:${library.artifact}` }))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   if (!libraries.length) throw new Error('meta/app/gradle.lockfile pins no library for releaseRuntimeClasspath')
