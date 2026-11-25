@@ -438,6 +438,30 @@ test('the Android app declares ARCore once, from the version the notices name', 
   for (const path of ['NOTICE.md', 'THIRD_PARTY.md']) assert.ok(read(path).includes(version), `${path} names ARCore ${version}`)
 })
 
+// ── The Quest app's libraries ────────────────────────────────────────────────
+
+test("THIRD_PARTY.md names the Quest app's Meta Spatial SDK, ONNX Runtime and OkHttp at the versions its release lock pins", () => {
+  const pinned = new Map([...read('meta/app/gradle.lockfile').matchAll(/^([\w.-]+:[\w.-]+):([^=\s]+)=releaseRuntimeClasspath$/gm)]
+    .map((m): [string, string] => [m[1]!, m[2]!]))
+  const rows = read('THIRD_PARTY.md').split('\n').filter((line) => line.startsWith('| '))
+  const libraries = [
+    ['Meta Spatial SDK', 'com.meta.spatial:meta-spatial-sdk'],
+    ['ONNX Runtime Android', 'com.microsoft.onnxruntime:onnxruntime-android'],
+    ['OkHttp', 'com.squareup.okhttp3:okhttp'],
+  ] as const
+  for (const [component, library] of libraries) {
+    const version = pinned.get(library)
+    assert.ok(version, `meta/app/gradle.lockfile pins ${library}`)
+    const row = rows.find((line) => line.startsWith(`| ${component} (`))
+    assert.ok(row, `THIRD_PARTY.md has a row for ${component}`)
+    assert.ok(row.includes(`(\`${library}\` ${version}`), `THIRD_PARTY.md names ${library} ${version}, the version the lockfile pins`)
+  }
+  const sdk = [...pinned].filter(([name]) => name.startsWith('com.meta.spatial:'))
+  assert.deepEqual([...new Set(sdk.map(([, version]) => version))], [pinned.get('com.meta.spatial:meta-spatial-sdk')], "the SDK's modules are pinned at one version, which its row gives")
+  const okio = pinned.get('com.squareup.okio:okio')
+  assert.ok(okio && rows.find((line) => line.startsWith('| OkHttp ('))!.includes(`with Okio ${okio}`), 'and the Okio that OkHttp brings, at its pinned version')
+})
+
 // ── PRIVACY.md and the privacy manifest ──────────────────────────────────────
 
 test('PRIVACY.md does not say the privacy manifest is unwritten while the iOS target ships a draft of it', () => {
