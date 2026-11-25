@@ -49,7 +49,7 @@ Read on 2026-11-24:
 |---|---|---|---|---|
 | 0001 | [The WebXR-only Android build](0001-webxr-only-android-build.md) | both | done in this wave's first changes; not run on a device | none |
 | 0002 | [First run on an Aura](0002-first-run-on-an-aura.md) | XREAL Aura | under way: installed 2026-11-24, WebView has no WebXR; checks 2, 6 and 7 open | 0001 |
-| 0003 | [A native capture runtime on Android XR](0003-native-android-xr-capture.md) | XREAL Aura | planned; waits on 0002 and the owner's go-ahead | 0002 |
+| 0003 | [A native capture runtime on Android XR](0003-native-android-xr-capture.md) | XREAL Aura | started 2026-11-24: its questions answered, and a probe (`android-xr/`) built, unit-tested and run on an Aura at rest (camera 0 opens, head pose tracks at 43 Hz); a worn run, the calibration and the ADR are open | 0002 |
 | 0004 | [First run on a PICO headset](0004-first-run-on-a-pico-headset.md) | PICO | planned; needs the owner's device | 0001 |
 | 0005 | [A native capture app for PICO](0005-native-pico-capture.md) | PICO | planned; waits on 0004 and the owner's go-ahead | 0004 |
 | 0006 | [The WebXR build's help line](0006-webxr-build-help-line.md) | both | done 2026-11-24; not yet seen on a device | 0001, found by 0002 |
@@ -80,7 +80,9 @@ Until that pass, the atlas named neither an Android XR nor a PICO target (gap fi
 1. Installing a build on either device: each install needs the owner's yes (0002, 0004). The owner gave it for
    the Aura's first install on 2026-11-24.
 2. Whether to go on to native runtimes (0003, 0005).
-   - On Android XR that means preview Jetpack XR libraries and Kotlin in the shell, or a separate app.
+   - On Android XR that means Jetpack XR libraries (stable 1.0.0 since this wave was planned) and Kotlin in the shell,
+     or a separate app. The go-ahead for 0003 was given on 2026-11-24, and 0003 recommends a separate app. That choice
+     is still the owner's, in 0003's ADR.
    - On PICO it means a separate app, since the PICO Spatial SDK needs `minSdk` 35 and Kotlin 2.
    - Either way, new permissions, and only if the cameras are open to apps.
 3. Whether the WebXR-only APK stays a target on a device whose WebView turns out to have no WebXR.

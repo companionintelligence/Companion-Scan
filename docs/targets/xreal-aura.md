@@ -108,6 +108,19 @@ Checks from the first-run list:
      - camera 11, a depth camera (DEPTH_OUTPUT).
    - The other four are SYSTEM_CAMERA devices. A system process held two of them open, probably for tracking.
    - The WebView's `enumerateDevices()` needs the camera permission, so it was not run.
+   - Camera 0's characteristics, read again on 2026-11-24 for ticket
+     [0003](../factory/17-xr-device-targets/0003-native-android-xr-capture.md):
+     - timestamps on the boot clock (`SENSOR_INFO_TIMESTAMP_SOURCE` REALTIME);
+     - no lens pose and no intrinsic calibration or distortion;
+     - a 2.4 mm focal length, and a 3.2 × 2.4 mm sensor against a 1920 × 1080 pixel array;
+     - LIMITED, with a hardware readout timestamp.
+     - So a keyframe's camera offset and intrinsics have to come from a calibration.
+   - **Opened by an app, 2026-11-24:** ticket 0003's probe ([`android-xr/`](../../android-xr/README.md)) opened camera
+     0 with the ordinary `CAMERA` permission, and got 30 Hz frames whose timestamps are their start of exposure.
+     - With `CAMERA` and `HEAD_TRACKING` both granted, ARCore for Jetpack XR tracked the glasses at 43 Hz in Home Space.
+     - With neither, nothing was TRACKING. A run with one granted and not the other has not been done yet.
+     - That was a run at rest; a worn run is still to do. Report:
+     [android-xr/reports/2026-11-24-xreal-aura-probe.txt](../../android-xr/reports/2026-11-24-xreal-aura-probe.txt).
 5. **The motion sensors.**
    - Two InvenSense ICM-45686 IMUs (named "main" and "minor") and a Memsic MMC5603 magnetometer.
    - An ambient light sensor, off-body detection, and a "temperature of glasses" sensor.
@@ -168,12 +181,15 @@ the date, back into [Status](#status) and into
 
 ## Known gaps
 
-- **No capture in the APK** unless Android XR's WebView has WebXR. A native capture path is
-  [ticket 0003](../factory/17-xr-device-targets/0003-native-android-xr-capture.md), and it waits on checks
-  1, 3 and 4. It would use Jetpack XR's device pose, behind `android.permission.HEAD_TRACKING`,
-  and the glasses' camera if apps can open it.
-- **Not run:** nothing has been installed on an Aura, and no XR emulator has run here. Linux is
-  not a listed host for the XR glasses emulator, which also needs a download of its own.
+- **No capture in the APK**, because Android XR's WebView has no WebXR (check 3). A native capture path is
+  [ticket 0003](../factory/17-xr-device-targets/0003-native-android-xr-capture.md), started on 2026-11-24. Its probe is
+  a separate app in [`android-xr/`](../../android-xr/README.md).
+  - It pairs camera 0's frames with Jetpack XR's device pose (behind `android.permission.HEAD_TRACKING`) on the boot
+    clock, and records a short session.
+  - It ran on an Aura at rest on 2026-11-24 (check 4 above).
+  - Still to do: a worn run, the camera's calibration, and the runtime.
+- **Not run:** no XR emulator has run here. Linux is not a listed host for the XR glasses emulator, which also needs a
+  download of its own. On an Aura itself, the WebXR-only APK and 0003's probe have been installed (Status).
 - **The portrait panel:** whether it suits the glasses' view is check 2, and the build's portrait
   lock stays until then.
 - **The build's own gaps** (the ARCore notice, the portrait lock, Google Play's implied features,

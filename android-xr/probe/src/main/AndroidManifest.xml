@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Camera 0, the glasses' world-facing camera, through Camera2. Google (February 2025) said Android XR apps read the
+         world-facing stream as camera_id 0 after the ordinary camera permission; not yet tried on an Aura. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- ARCore for Jetpack XR's device pose: "on immersive devices" it needs this runtime permission (Google's device-pose
+         page). Whether wired XR glasses count as immersive is not stated, so the probe asks for it and reports the answer. -->
+    <uses-permission android:name="android.permission.HEAD_TRACKING" />
+
+    <!-- Nothing leaves the device: the recording stays in the app's own folder until it is pulled over adb. Stated here so
+         that no library can add network access unnoticed. -->
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
+
+    <!-- None is required, so the probe also installs on a phone, where it reports what it cannot find. -->
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.software.xr.api.openxr" android:required="false" />
+
+    <application
+        android:allowBackup="false"
+        android:label="Scan XR probe"
+        android:supportsRtl="true">
+
+        <!-- Home Space, a panel beside other apps. A capture needs the device pose, which ARCore for Jetpack XR gives in
+             either space; Full Space would only matter for spatial UI. -->
+        <property
+            android:name="android.window.PROPERTY_XR_ACTIVITY_START_MODE"
+            android:value="XR_ACTIVITY_START_MODE_HOME_SPACE" />
+
+        <!-- A resized or moved panel must not restart the activity mid-run, which would close the camera and the session. -->
+        <activity
+            android:name=".ProbeActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density|uiMode|keyboard|keyboardHidden|navigation"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
