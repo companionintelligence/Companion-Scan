@@ -66,6 +66,8 @@ class ProbeStatsTest {
         assertEquals(10, s.updates)
         assertEquals(8, s.tracked)
         assertEquals(2, s.epochBumps)
+        assertEquals(linkedMapOf("STOPPED" to 2, "TRACKING" to 8), s.trackingStates)
+        assertEquals(listOf("STOPPED", "TRACKING"), s.trackingStates.keys.toList())
     }
 
     @Test

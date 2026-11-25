@@ -172,6 +172,13 @@ class ProbeActivity : ComponentActivity(), AuraCamera.Listener {
 
     private fun afterPermissions() {
         for (p in PERMISSIONS) report(p.substringAfterLast('.'), if (granted(p)) "granted" else "not granted")
+        // The recording starts with the run, so poses.csv and probe.json are written even when the camera never opens.
+        recorder = try {
+            ProbeRecorder(File(File(getExternalFilesDir(null), "recordings"), folderName()))
+        } catch (e: IOException) {
+            report("recording", "could not start: ${e.message}")
+            null
+        }
         lifecycleScope.launch {
             val s = XrPoseSampler(this@ProbeActivity, poses, epochs)
             sampler = s
@@ -229,20 +236,24 @@ class ProbeActivity : ComponentActivity(), AuraCamera.Listener {
         val poseSummary = ProbeStats.poses(poseRecords)
         val frameSummary = ProbeStats.frames(frameRecords)
         report("head pose updates", "${poseSummary.updates}, tracked ${poseSummary.tracked}, ${fmt(poseSummary.trackedRateHz)} Hz")
+        report("tracking states", poseSummary.trackingStates.entries.joinToString { "${it.key} ${it.value}" }.ifEmpty { "none" })
         report("pose age at handling (ms)", "median ${fmt(poseSummary.ageMsMedian)}, p95 ${fmt(poseSummary.ageMsP95)}, max ${fmt(poseSummary.ageMsMax)}")
         report("XR clock against boot clock", "drift ${fmt(poseSummary.clockDriftUs)} us (${fmt(poseSummary.clockDriftPpm)} ppm), worst ${fmt(poseSummary.clockResidualUsMax)} us")
         report("epoch bumps", "${poseSummary.epochBumps}")
         report("camera frames", "${frameSummary.frames}, ${fmt(frameSummary.rateHz)} Hz")
         report(
             "frame latency (ms)",
-            "min ${fmt(frameSummary.latencyMsMin)}, median ${fmt(frameSummary.latencyMsMedian)}, max ${fmt(frameSummary.latencyMsMax)}" +
-                if (frameSummary.cameraClockPlausible) "" else "  IMPLAUSIBLE: the camera clock may not be the boot clock",
+            when {
+                frameSummary.frames == 0 -> "no frames"
+                else -> "min ${fmt(frameSummary.latencyMsMin)}, median ${fmt(frameSummary.latencyMsMedian)}, max ${fmt(frameSummary.latencyMsMax)}" +
+                    if (frameSummary.cameraClockPlausible) "" else "  IMPLAUSIBLE: the camera clock may not be the boot clock"
+            },
         )
         val outcomes = keyframeOutcomes.values.groupingBy { if (RecordingFormat.KEYFRAME_FILE.matches(it)) "written" else it }.eachCount()
         report("keyframes", if (outcomes.isEmpty()) "none wanted" else outcomes.entries.joinToString { "${it.key} ${it.value}" })
         val r = recorder
         if (r == null) {
-            report("recording", "none: the camera did not open")
+            report("recording", "none: its folder could not be made")
         } else {
             val json = probeJson(poseSummary, frameSummary, r)
             try {
@@ -279,13 +290,7 @@ class ProbeActivity : ComponentActivity(), AuraCamera.Listener {
                 "${it.source}: fx ${fmt(it.intrinsics.fx)}, fy ${fmt(it.intrinsics.fy)}, cx ${fmt(it.intrinsics.cx)}, cy ${fmt(it.intrinsics.cy)}"
             } ?: "none: no keyframes will be written",
         )
-        if (stopped) return // opened after the run ended: finishRun has already looked for a recorder
-        recorder = try {
-            ProbeRecorder(File(File(getExternalFilesDir(null), "recordings"), folderName()))
-        } catch (e: IOException) {
-            report("recording", "could not start: ${e.message}")
-            null
-        }
+        // The recorder was made when the run started (afterPermissions); a camera that opens after the run ended records nothing.
         recording = recorder != null && !stopped
     }
 

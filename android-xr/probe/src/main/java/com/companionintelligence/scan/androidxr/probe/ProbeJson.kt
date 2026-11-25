@@ -105,6 +105,9 @@ object ProbeJson {
         put("clockDriftPpm", num(s.clockDriftPpm))
         put("clockResidualUsMax", num(s.clockResidualUsMax))
         put("epochBumps", s.epochBumps)
+        putJsonObject("trackingStates") {
+            for ((state, count) in s.trackingStates) put(state, count)
+        }
     }
 
     fun frameSummary(s: ProbeStats.FrameSummary): JsonObject = buildJsonObject {

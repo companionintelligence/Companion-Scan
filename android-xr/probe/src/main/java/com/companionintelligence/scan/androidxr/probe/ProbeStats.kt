@@ -26,6 +26,8 @@ object ProbeStats {
         /** The largest such difference at any update, in microseconds. */
         val clockResidualUsMax: Double?,
         val epochBumps: Int,
+        /** How many updates came in each of the library's tracking states, in the order first seen. */
+        val trackingStates: Map<String, Int>,
     )
 
     fun poses(records: List<PoseRecord>): PoseSummary {
@@ -67,6 +69,7 @@ object ProbeStats {
             epochBumps = records.count {
                 it.verdict == TrackingGate.Verdict.ACCEPTED_AFTER_LOSS || it.verdict == TrackingGate.Verdict.ACCEPTED_AFTER_JUMP
             },
+            trackingStates = records.groupingBy { it.tracking }.eachCount(),
         )
     }
 
