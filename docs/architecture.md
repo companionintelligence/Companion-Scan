@@ -402,7 +402,8 @@ The editor's Queue-Job dropdown exposes thirteen of them (`viewer.html` § `#job
 - `optimize-scan` is queued automatically on every upload (never manually — and filtered out of the Processing Queue panel; see [`product/UX_FLOW.md`](product/UX_FLOW.md) § Phase 3).
 - `memory-push` is queued by the editor's Publish step together with `export-world` (`GUIDED_WORKFLOWS.publish` in `src/viewer/viewer.ts`).
 - `colmap-poses` is queued when a tripod station capture is finalized; `splat-train` also runs COLMAP in-process when a session has no poses (`SPLAT_TRAIN_AUTO_POSES`).
-- `splat-align` is chained after a `colmap-poses` job whose capture carries measured distances, and `panoptic-lift` after a `splat-align` that succeeds while the session has a panoptic segments sidecar. Nothing chains `panoptic-lift` after `panoptic-scan`.
+- `splat-align` is chained after a `colmap-poses` job whose capture carries measured distances.
+- `panoptic-lift` is chained after a `panoptic-scan` that succeeds with at least one object segment (`panopticLiftFollowsScan` in `server/world/job_request.ts`, F-28). It is chained again after a `splat-align` that succeeds while the session has a panoptic segments sidecar, and then it lifts against the aligned frame.
 - `floor-plan` is chained after a `lingbot-map-reconstruct` that succeeds (`FLOORPLAN_AUTO=0` turns that off), and the Layers tab's Floor plan section queues it with **Generate floor plan**.
 - `keyframe-purge` is queued by the `KEYFRAME_RETENTION_DAYS` timer.
 - `align-scan` is reached only through `/process-scan`'s legacy `room-segment` action, which no client sends.
