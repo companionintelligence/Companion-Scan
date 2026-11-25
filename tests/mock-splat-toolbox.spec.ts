@@ -45,6 +45,18 @@ async function routeScansToApi(page: import('@playwright/test').Page): Promise<v
   })
 }
 
+/**
+ * The Splat tools section is a <details> that starts closed, so every control in it is hidden until it is opened.
+ * Open it the way a person does, by its summary, unless it is open already.
+ */
+async function openSplatTools(page: import('@playwright/test').Page): Promise<void> {
+  const section = page.locator('#splat-toolbox-section')
+  if (!(await section.evaluate((el) => (el as HTMLDetailsElement).open))) {
+    await section.locator(':scope > summary').click()
+  }
+  await expect(section).toHaveJSProperty('open', true)
+}
+
 test.describe('Splat Toolbox consolidated panel + detect overlay', () => {
   test.skip(!fixtureReady, 'Fixture missing — run: npm run test:splat:make-fixture')
   test.describe.configure({ mode: 'serial' })
@@ -60,6 +72,7 @@ test.describe('Splat Toolbox consolidated panel + detect overlay', () => {
     await page.click('.sidebar-tab[data-tab="layers"]')
 
     await expect(page.locator('#splat-toolbox-section')).toBeVisible()
+    await openSplatTools(page)
     await expect(page.locator('#btn-splat-train')).toBeVisible()
     await expect(page.locator('#btn-splat-detect')).toBeVisible()
     await expect(page.locator('#splat-detect-prompt')).toBeVisible()
@@ -198,6 +211,8 @@ test.describe('Splat Toolbox consolidated panel + detect overlay', () => {
     }, SCAN_BASE)
 
     expect(detected).toBeGreaterThan(0)
+    await openSplatTools(page)
+    await expect(page.locator('#splat-detect-status')).toBeVisible()
     await expect(page.locator('#splat-detect-status')).toContainText('objects detected')
     await page.locator('#splat-toolbox-section').scrollIntoViewIfNeeded()
     await page.screenshot({ path: join(SCREENSHOT_DIR, 'toolbox-detect.png'), fullPage: false })
@@ -241,7 +256,9 @@ test.describe('Web scanner walkthrough-video upload', () => {
     expect(contentType).toContain('multipart/form-data')
 
     await expect(page.locator('#upload-video-open')).toBeVisible({ timeout: 10_000 })
-    await expect(page.locator('#upload-video-open')).toHaveAttribute('href', '/viewer.html?world=default')
+    // The web scanner links the editor as /editor, which a Scan server and the public site rewrite to viewer.html. Only
+    // a native shell, which has no rewrite, links /viewer.html itself (editorPath in src/shared/api-base.ts).
+    await expect(page.locator('#upload-video-open')).toHaveAttribute('href', '/editor?world=default')
 
     // The AR start button must remain intact — upload never removes the start screen.
     await expect(page.locator('#start-ar-btn')).toBeVisible()
