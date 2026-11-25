@@ -95,6 +95,8 @@ interface Boot {
   webxr: () => Promise<unknown>
   desktopApp?: boolean
   xr8Load?: string
+  /** The runtime the build forces (VITE_AR_RUNTIME), which the block hands to showArHelp. */
+  buildRuntime?: string | null
 }
 
 async function runFallback(b: Boot) {
@@ -104,7 +106,7 @@ async function runFallback(b: Boot) {
   const block = stripTypeScriptTypes(`const block = async () => {\n${FALLBACK}\n}`)
   const run = new AsyncFunction(
     'xr8Available', 'createEighthWallProvider', 'createWebXRProvider', 'overlay', 'nativeChoice', 'forcedMode', 'xr8Load',
-    'desktopApp', 'showArHelp', 'console',
+    'desktopApp', 'showArHelp', 'console', 'buildRuntime',
     `let use8thWall = false
      let arRuntimeError = null
      let provider = null
@@ -118,6 +120,7 @@ async function runFallback(b: Boot) {
     { note: null }, null, b.xr8Load ?? (b.xr8Available ? 'ready' : 'absent'),
     b.desktopApp ?? false, (reason: string) => { help.push(reason) },
     { warn() {}, error() {} },
+    b.buildRuntime ?? null,
   )
   return { ...out, help, statuses }
 }
@@ -163,14 +166,15 @@ test('FN-019: the desktop app keeps its own start-screen line when the runtime c
 
 // ── The start screen's help line, per app ────────────────────────────────────────────────────────
 
-function showArHelp(reason: string, shell: string | null, userAgent = 'Mozilla/5.0') {
+function showArHelp(reason: string, shell: string | null, userAgent = 'Mozilla/5.0', buildRuntime: string | null = null) {
   const help = { textContent: '', innerHTML: '', hidden: true }
   const labels: Array<string | undefined> = []
   new Function(
-    'reason', 'setStartButtonState', 'navigator', 'location', 'document', 'showPermissionBanner', 'appShell',
-    stripTypeScriptTypes(`${topLevelFunction('showArHelp')}\nshowArHelp(reason)`),
+    'reason', 'buildRuntime', 'setStartButtonState', 'navigator', 'location', 'document', 'showPermissionBanner', 'appShell',
+    stripTypeScriptTypes(`${topLevelFunction('showArHelp')}\nshowArHelp(reason, buildRuntime)`),
   )(
     reason,
+    buildRuntime,
     (_state: string, label?: string) => { labels.push(label) },
     { userAgent },
     { origin: 'https://scanner.invalid' },
@@ -193,13 +197,27 @@ test('FN-009: a phone app is told about its own AR, not about a browser to switc
   assert.doesNotMatch(android.text, /Chrome/)
 })
 
+test("the Android app's WebXR-only build sends the reader to the browser, not to Google Play Services for AR", () => {
+  // As the XREAL Aura showed on 2026-11-24: that build never starts ARCore, and the puck's WebView has no WebXR.
+  const webxr = showArHelp('WebXR is not available here', 'android', ANDROID, 'webxr')
+  assert.deepEqual(webxr.labels, ['WebXR is not available here'], 'the headline stays the Start button label')
+  assert.equal(webxr.text, "To capture, open your Scan server's /webxr.html page in the browser.")
+  assert.doesNotMatch(webxr.text, /Play Services|ARCore/)
+  assert.ok(webxr.shown)
+  // The ARCore build, and the 8th Wall build, keep their line.
+  assert.equal(showArHelp('AR not available on this device', 'android', ANDROID, null).text, 'Live capture needs Google Play Services for AR on this phone.')
+  assert.equal(showArHelp('AR not available on this device', 'android', ANDROID, '8thwall').text, 'Live capture needs Google Play Services for AR on this phone.')
+  // The call site passes the build's runtime.
+  assert.ok(main.includes('if (!desktopApp) showArHelp(reason, buildRuntime)'), 'main() hands showArHelp the build runtime')
+})
+
 test('FN-009: a browser is still told by its user agent', () => {
   assert.match(showArHelp('AR not available on this device', null, IPHONE).text, /use the main scanner, or install <a href="https:\/\/apps\.apple\.com/)
   assert.equal(showArHelp('AR not available on this device', null, ANDROID).text, 'Live capture needs Chrome with Play Services for AR.')
 })
 
 test('FN-009: the app lines fit the start screen\'s budget for this line', () => {
-  for (const line of ['Live capture needs an iPhone or iPad that supports ARKit.', 'Live capture needs Google Play Services for AR on this phone.']) {
+  for (const line of ['Live capture needs an iPhone or iPad that supports ARKit.', 'Live capture needs Google Play Services for AR on this phone.', "To capture, open your Scan server's /webxr.html page in the browser."]) {
     assert.ok(line.split(/\s+/).length <= showArHelpWordsMax(), line)
   }
 })

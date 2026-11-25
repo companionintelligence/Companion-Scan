@@ -48,10 +48,11 @@ Read on 2026-11-24:
 | # | Ticket | Device | Status | Depends on |
 |---|---|---|---|---|
 | 0001 | [The WebXR-only Android build](0001-webxr-only-android-build.md) | both | done in this wave's first changes; not run on a device | none |
-| 0002 | [First run on an Aura](0002-first-run-on-an-aura.md) | XREAL Aura | planned; needs the owner's device | 0001 |
+| 0002 | [First run on an Aura](0002-first-run-on-an-aura.md) | XREAL Aura | under way: installed 2026-11-24, WebView has no WebXR; checks 2, 6 and 7 open | 0001 |
 | 0003 | [A native capture runtime on Android XR](0003-native-android-xr-capture.md) | XREAL Aura | planned; waits on 0002 and the owner's go-ahead | 0002 |
 | 0004 | [First run on a PICO headset](0004-first-run-on-a-pico-headset.md) | PICO | planned; needs the owner's device | 0001 |
 | 0005 | [A native capture app for PICO](0005-native-pico-capture.md) | PICO | planned; waits on 0004 and the owner's go-ahead | 0004 |
+| 0006 | [The WebXR build's help line](0006-webxr-build-help-line.md) | both | done 2026-11-24; not yet seen on a device | 0001, found by 0002 |
 
 ## Atlas
 
@@ -68,13 +69,16 @@ Until that pass, the atlas named neither an Android XR nor a PICO target (gap fi
 - The WebXR-only bundle and its debug APK build here, and Mobile Build has a job for the APK.
 - Unit tests and `npm run verify` run here. The built bundle runs in Chromium, which has no
   WebXR AR.
-- No Aura or PICO headset is connected to this machine. Neither maker's emulator lists Linux as a
-  host: Google's XR glasses emulator and the PICO Emulator run on Windows and macOS. Nothing in
-  this wave has run on a device or an emulator.
+- On 2026-11-24 an XREAL Aura was on USB to this machine for a while (0002). The WebXR-only APK was installed on it
+  and opened.
+- No PICO headset has been connected.
+- Neither maker's emulator lists Linux as a host: Google's XR glasses emulator and the PICO Emulator run on Windows
+  and macOS.
 
 ## Decisions for the owner
 
-1. Installing a build on either device: each install needs the owner's yes (0002, 0004).
+1. Installing a build on either device: each install needs the owner's yes (0002, 0004). The owner gave it for
+   the Aura's first install on 2026-11-24.
 2. Whether to go on to native runtimes (0003, 0005).
    - On Android XR that means preview Jetpack XR libraries and Kotlin in the shell, or a separate app.
    - On PICO it means a separate app, since the PICO Spatial SDK needs `minSdk` 35 and Kotlin 2.

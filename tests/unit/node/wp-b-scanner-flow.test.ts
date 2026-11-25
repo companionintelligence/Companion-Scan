@@ -51,8 +51,8 @@ test('before the capture the status is neutral, and "saved, not placed" appears 
 
 test('the AR-runtime failure reason reaches the start screen, not only the overlay beneath it', () => {
   const main = read('src/main.ts')
-  assert.match(main, /overlay\.setStatus\(reason\)[\s\S]*?showArHelp\(reason\)/, 'the reason is passed to the start screen')
-  assert.match(main, /function showArHelp\(reason: string\): void \{\n[\s\S]*?setStartButtonState\('unavailable', headline\)/, 'its headline becomes the Start button label')
+  assert.match(main, /overlay\.setStatus\(reason\)[\s\S]*?showArHelp\(reason(?:, buildRuntime)?\)/, 'the reason is passed to the start screen')
+  assert.match(main, /function showArHelp\(reason: string(?:, buildRuntime: string \| null = null)?\): void \{\n[\s\S]*?setStartButtonState\('unavailable', headline\)/, 'its headline becomes the Start button label')
 })
 
 test('a pending verdict leaves the permission banner as it is, and only a ready one takes back a banner it put up', () => {

@@ -314,7 +314,7 @@ test('source shape: one reason feeds the overlay, the start screen and the Start
   const written = between(main, 'const reason = forcedMode', "console.error('[main] No AR runtime available:'")
   assert.match(
     written,
-    /overlay\.setStatus\(reason\)[\s\S]*showArHelp\(reason\)[\s\S]*arRuntimeError = reason/,
+    /overlay\.setStatus\(reason\)[\s\S]*showArHelp\(reason(?:, buildRuntime)?\)[\s\S]*arRuntimeError = reason/,
     'the Start button and #ar-help (showArHelp), the overlay, and the permission banner (arRuntimeError) all read the one ladder',
   )
 })

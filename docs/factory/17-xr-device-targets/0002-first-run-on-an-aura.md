@@ -36,7 +36,23 @@ platform exposes, so ticket 0003 can be decided on facts rather than on the docu
 - Q: Which build goes on the device? — A: the Mobile Build `android-webxr` job's artifact,
   `scan-android-webxr-debug-apk`, or a local `npm run build:webxr` build. Builds signed with different keys replace each other only after an
   uninstall, which removes the app's scans.
-- Q: Does the owner have the Aura on a computer that can run `adb`? — OPEN
+- Q: Does the owner have the Aura on a computer that can run `adb`? — A: Yes. On 2026-11-24 the puck was on USB to
+  the build machine, and the owner asked for a build to be installed.
+
+## Progress
+
+**2026-11-24: the first install.**
+- The WebXR-only debug build (`60e9681`, a local `npm run build:webxr` build) installed and opened.
+- Checks recorded in [xreal-aura.md](../../targets/xreal-aura.md#status):
+  - check 1;
+  - check 3: the WebView has no WebXR;
+  - check 4, from `dumpsys`;
+  - check 5's sensor list.
+- Still open: check 2, check 5's head-against-puck test, checks 6 and 7, and check 4's `enumerateDevices()`. They need
+  someone wearing the glasses, the camera permission, or Chrome.
+- The defect it found, the ARCore build's help line in the WebXR build, went to
+  [0006](0006-webxr-build-help-line.md).
+- Not yet seen: the Start button's headline. The puck left adb first.
 
 ## Files impacted
 

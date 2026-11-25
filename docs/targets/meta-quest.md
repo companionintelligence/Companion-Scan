@@ -26,7 +26,8 @@ Plan: [wave 13](../factory/13-device-targets/README.md), tickets 0005 and 0006.
 - **Upload** goes through the existing routes only: `POST /sessions`, `POST /sessions/:id/keyframes` and `POST /sessions/:id/finalize`.
   - Keyframes are JPEGs, with `meta` in the web scanner's shape.
   - The pose is camera-to-world in OpenGL/Blender axes, which is what the splat dataset builder reads.
-  - The app sends about two keyframes a second, and only when the head has moved.
+  - The app sends at most one keyframe every 1.2 s, and only once the head has moved 0.30 m or turned 20° since
+    the last one (`KeyframeSelector`).
   - HTTPS only; plain http is refused.
 - **Sign-in**: when the server has sign-in on, the app opens the CI-Portal sign-in in the system
   browser with `shell=quest`, comes back on `com.companionintelligence.scan.quest://auth` with a
@@ -109,7 +110,13 @@ The Quest Browser checks for the web path stay in [web-webxr.md](web-webxr.md#te
 - Frames upload as pinhole. Distortion is saved only in the local recording.
 - The vision hook's only output is a text summary on the panel: nothing maps it onto
   `WorldDetection` or uploads it (wave 13 ticket 0009, the rest).
-- mq3drecon was not run here. Its reader takes the image size from the camera's active array, so the recording fits only if that is 1280×960.
+- mq3drecon was not run here, and only part of it can read the recording (read at mq3drecon `97d15f7` on
+  2026-11-24).
+  - Its reader takes the image size from the camera's active array, so the recording fits only if that is 1280×960.
+  - Its `export-colmap`, `reconstruct`, `foundation-stereo-depth` and `visualize-cameras` commands also read the right
+    camera, which the recording lacks.
+  - `reconstruct` also reads depth, which the recording lacks too.
+  - Only `yuv-to-rgb` and its Python API take a left-only recording.
 - Licences:
   - The Meta Spatial SDK is under the Meta Platform Technologies SDK License Agreement, which must be reviewed before the app is distributed.
   - ONNX Runtime is MIT.

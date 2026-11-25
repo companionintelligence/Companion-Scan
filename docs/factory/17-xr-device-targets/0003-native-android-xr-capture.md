@@ -50,9 +50,18 @@ own tracking. The frames would come from the glasses' camera, if apps may open i
 
 ## Open questions & answers
 
-- Q: Can an app open the glasses' camera, and which permission does it need? — OPEN (0002, check 4)
+- Q: Can an app open the glasses' camera, and which permission does it need? — In part (0002, 2026-11-24).
+  - Camera2 lists three cameras that are open to apps:
+    - `auracamerahal/0`, back-facing: YUV, PRIV and JPEG up to 1920×1080;
+    - `avatar/1`, front-facing;
+    - camera 11, a depth camera.
+  - The other four cameras are SYSTEM_CAMERA devices.
+  - Opening camera 0, and the permission that takes, has not been tried. OPEN.
 - Q: Which Android version and API level does the puck run? Can the shell's `minSdk 24` and
-  `compileSdk 36` stay? — OPEN (0002, check 1)
+  `compileSdk 36` stay? — A (0002, 2026-11-24): Android 14, API 34.
+  - `minSdk 24` and `compileSdk 36` can stay.
+  - The puck also reports `android.software.xr.api.openxr` (65538), `android.software.xr.api.spatial` (4) and
+    `android.hardware.xr.input.hand_tracking`.
 - Q: Do the Jetpack XR libraries go into every Android build, or only into a build for Android XR
   behind a switch? The phone builds, and the WebXR-only build that PICO shares, would carry preview
   libraries they never use, and the release lock would grow. — OPEN

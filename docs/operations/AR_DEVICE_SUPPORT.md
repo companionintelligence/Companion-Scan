@@ -16,10 +16,30 @@ from documents and not from a device: see [Runtime anchors](#runtime-anchors-whe
 | XREAL Beam Pro (Android 14, Chrome 151) | **VERIFIED dead** — no ARCore | **VERIFIED working, intermittently** — ~2 starts in 8 |
 | Galaxy Tab S8 Ultra | Session start seen once (2026-08-23): an `immersive-ar` session with the HUD over it, on a tablet that never moved ([DEVICE_TESTING.md § Results — B2](../testing/DEVICE_TESTING.md#results--b2)). Tracking, capture and the calibration decal UNVERIFIED | Camera permission prompt never raised (one report; the camera status lines come from `src/ar/eighthwall.ts`) |
 | iPhone / Safari | UNVERIFIED | UNVERIFIED — the platform 8th Wall exists for, never measured here |
+| XREAL Aura (Android XR Puck, Android 14, WebView 157) | **VERIFIED absent in the app's WebView** (2026-11-24): `navigator.xr` is undefined. Chrome's `/webxr.html` not tried | Not in the build that ran: the WebXR-only APK leaves the engine out |
 
-The apps are not in this table because none has run on a device: the native `ScanAR` runtime in
-the iOS and Android apps, and the native Quest app. Their pages say what has been built and
-tested without one ([targets/](../targets/README.md)).
+The apps have not run a session on any device: the native `ScanAR` runtime in the iOS and Android
+apps, and the native Quest app. Their pages say what has been built and tested without one
+([targets/](../targets/README.md)).
+- The Aura row comes from the WebXR-only Android app ([android-webxr.md](../targets/android-webxr.md)).
+- It opened on the device, but its WebView has no WebXR to start a session with.
+
+## XREAL Aura
+
+### The app's WebView has no WebXR
+
+On 2026-11-24 the WebXR-only debug build (`60e9681`) was installed on an Android XR Puck over adb.
+- **What was read:** the debug WebView, through the DevTools protocol. The values were read back on the
+  device, not from `scans/client-logs.jsonl`.
+- **The WebView:** `com.google.android.webview` 157.0.8103.52.
+- **WebXR:** `navigator.xr` is undefined, so `isSessionSupported` cannot even be asked.
+- **The native plugin:** `ScanAR.capabilities()` reports no engine ("This device does not support ARCore.").
+
+So the APK is the editor, the viewer and the Places map there, not a scanner. Chrome on the puck, at the
+Scan server's `/webxr.html`, is the capture path still to try.
+- The device's other facts, and the checks still open, are on
+  [xreal-aura.md](../targets/xreal-aura.md#status).
+- They include a 1920×1080 back camera and a depth camera that Camera2 shows to apps.
 
 ## XREAL Beam Pro
 

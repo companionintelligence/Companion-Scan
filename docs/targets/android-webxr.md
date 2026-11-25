@@ -31,9 +31,12 @@ Plan: [wave 17](../factory/17-xr-device-targets/README.md).
   - ARCore's disclosure stays, because the library is in the APK.
 - **No runtime switch.** The button that switches between WebXR and 8th Wall is hidden: this
   bundle has no 8th Wall.
-- **Where WebXR is missing.** In a WebView without WebXR the start screen reads "WebXR is not
-  available here" and the app does not capture. It is then the editor, the viewer, the Places
-  map, the Scan server setting and sign-in.
+- **Where WebXR is missing.** In a WebView without WebXR, the start screen's headline reads "WebXR is not
+  available here", and the app does not capture.
+  - The line under it says: "To capture, open your Scan server's /webxr.html page in the browser."
+  - The app is then the editor, the viewer, the Places map, the Scan server setting and sign-in.
+  - Before [0006](../factory/17-xr-device-targets/0006-webxr-build-help-line.md), that line asked for
+    Google Play Services for AR. The first install on an Aura showed it.
 - **Everything else is the default shell:** the `applicationId` `com.companionintelligence.scan`,
   the sign-in return, the permissions, the Scan server setting, and the portrait lock.
 - **No device's own libraries, permissions or manifest entries.** Native runtimes for Android XR
@@ -41,7 +44,11 @@ Plan: [wave 17](../factory/17-xr-device-targets/README.md).
 
 ## Status
 
-- **Builds here, not run on any device** (2026-11-24). On `main` at `1deaad7`, this change's tree:
+- **Installed on one XREAL Aura, where it opens but cannot capture** (2026-11-24, from `60e9681`).
+  - The puck's WebView has no WebXR.
+  - The details are on [xreal-aura.md](xreal-aura.md#status).
+  - It has not run on a PICO headset.
+- **Builds here** (2026-11-24). On `main` at `1deaad7`, this change's tree:
   - built a bundle of 63.8 MB with no engine files;
   - built a debug APK of about 25 MB, with no engine files in its assets.
   - `aapt2 dump badging` shows the default build's package, version and permissions.
@@ -103,7 +110,9 @@ key needs the installed app removed first, which removes the scans it keeps on t
 
 ## Known gaps
 
-- **Not run** on any device or XR emulator.
+- **Not captured on any device.**
+  - On the one Aura it was installed on, the WebView had no WebXR.
+  - It has not run on a PICO headset or an XR emulator.
 - **The ARCore notice shows** in Legal notices, though this build never starts ARCore, because the
   library is in the APK. Taking it out means the Android project must differ per build.
 - **The portrait lock** stays, as in every Android build. Changing it for this build alone needs a
