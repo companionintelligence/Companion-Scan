@@ -20,7 +20,7 @@
 		5E0A1C2D3E4F5A6B7C8D9E02 /* ScanBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E0A1C2D3E4F5A6B7C8D9E04 /* ScanBridgeViewController.swift */; };
 		5E0A1C2D3E4F5A6B7C8D9E05 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 5E0A1C2D3E4F5A6B7C8D9E06 /* PrivacyInfo.xcprivacy */; };
 		5E0A1C2D3E4F5A6B7C8D9E07 /* GeoViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E0A1C2D3E4F5A6B7C8D9E08 /* GeoViewController.swift */; };
-		5E0A1C2D3E4F5A6B7C8D9E09 /* ARCL in Frameworks */ = {isa = PBXBuildFile; productRef = 5E0A1C2D3E4F5A6B7C8D9E0A /* ARCL */; };
+		5E0A1C2D3E4F5A6B7C8D9E11 /* GeoMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E0A1C2D3E4F5A6B7C8D9E12 /* GeoMath.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,6 +38,7 @@
 		5E0A1C2D3E4F5A6B7C8D9E04 /* ScanBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanBridgeViewController.swift; sourceTree = "<group>"; };
 		5E0A1C2D3E4F5A6B7C8D9E06 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		5E0A1C2D3E4F5A6B7C8D9E08 /* GeoViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoViewController.swift; sourceTree = "<group>"; };
+		5E0A1C2D3E4F5A6B7C8D9E12 /* GeoMath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoMath.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
@@ -47,7 +48,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */,
-				5E0A1C2D3E4F5A6B7C8D9E09 /* ARCL in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,6 +78,7 @@
 				5E0A1C2D3E4F5A6B7C8D9E03 /* ScanARPlugin.swift */,
 				5E0A1C2D3E4F5A6B7C8D9E04 /* ScanBridgeViewController.swift */,
 				5E0A1C2D3E4F5A6B7C8D9E08 /* GeoViewController.swift */,
+				5E0A1C2D3E4F5A6B7C8D9E12 /* GeoMath.swift */,
 				5E0A1C2D3E4F5A6B7C8D9E06 /* PrivacyInfo.xcprivacy */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
@@ -109,7 +110,6 @@
 			name = App;
 			packageProductDependencies = (
 				4D22ABE82AF431CB00220026 /* CapApp-SPM */,
-				5E0A1C2D3E4F5A6B7C8D9E0A /* ARCL */,
 			);
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
@@ -142,7 +142,6 @@
 			mainGroup = 504EC2FB1FED79650016851F;
 			packageReferences = (
 				D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */,
-				5E0A1C2D3E4F5A6B7C8D9E0B /* XCRemoteSwiftPackageReference "ARKit-CoreLocation" */,
 			);
 			productRefGroup = 504EC3051FED79650016851F /* Products */;
 			projectDirPath = "";
@@ -180,6 +179,7 @@
 				5E0A1C2D3E4F5A6B7C8D9E01 /* ScanARPlugin.swift in Sources */,
 				5E0A1C2D3E4F5A6B7C8D9E02 /* ScanBridgeViewController.swift in Sources */,
 				5E0A1C2D3E4F5A6B7C8D9E07 /* GeoViewController.swift in Sources */,
+				5E0A1C2D3E4F5A6B7C8D9E11 /* GeoMath.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -388,27 +388,11 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		5E0A1C2D3E4F5A6B7C8D9E0B /* XCRemoteSwiftPackageReference "ARKit-CoreLocation" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/AndrewHartAR/ARKit-CoreLocation";
-			requirement = {
-				kind = revision;
-				revision = c74634de4313183e281b323941a5d51fcd165533;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
 /* Begin XCSwiftPackageProductDependency section */
 		4D22ABE82AF431CB00220026 /* CapApp-SPM */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */;
 			productName = "CapApp-SPM";
-		};
-		5E0A1C2D3E4F5A6B7C8D9E0A /* ARCL */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 5E0A1C2D3E4F5A6B7C8D9E0B /* XCRemoteSwiftPackageReference "ARKit-CoreLocation" */;
-			productName = ARCL;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
