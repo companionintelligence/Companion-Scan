@@ -1,0 +1,6 @@
+plugins {
+    // The versions meta/ builds with, so one Gradle cache serves both projects.
+    id("com.android.application") version "8.13.0" apply false
+    id("org.jetbrains.kotlin.android") version "2.1.20" apply false
+    id("org.jetbrains.kotlin.jvm") version "2.1.20" apply false
+}

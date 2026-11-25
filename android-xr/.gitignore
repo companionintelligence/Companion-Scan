@@ -1,0 +1,9 @@
+build/
+.gradle/
+.kotlin/
+local.properties
+probe/build/
+quest-shared/build/
+*.apk
+# A probe recording pulled off a device holds pictures of a room: it never goes into the repository.
+recordings/

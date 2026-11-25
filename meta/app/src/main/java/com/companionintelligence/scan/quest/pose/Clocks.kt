@@ -66,6 +66,14 @@ enum class PoseTimeSource {
 
     /** The time the pose was read. Biased early if the SDK hands out a display-time-predicted pose. */
     READ_TIME,
+
+    /**
+     * Android XR only (the probe in android-xr/, which compiles this file): the time mark of the ARCore for Jetpack XR
+     * update the pose came from, moved onto realtime by the mark's age. The library asks its OpenXR runtime for the device
+     * at that time; whether the runtime returns the pose at that time or the last one it had is not documented. The Quest
+     * app never stamps a pose this way.
+     */
+    XR_UPDATE_TIME,
 }
 
 data class PoseStamp(val realtimeNs: Long, val source: PoseTimeSource, val xrTimeNs: Long?)

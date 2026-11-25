@@ -408,6 +408,8 @@ class ImmersiveActivity : AppSystemActivity(), ControlPanel.Actions {
             PoseTimeSource.PREDICTED_DISPLAY_TIME ->
                 "stamped with the predicted display time (lead %.0f ms), ${poses.size()} in buffer".format(Locale.ROOT, displayLeadMs)
             PoseTimeSource.READ_TIME -> "stamped with the read time (no usable frame timing), ${poses.size()} in buffer"
+            // Android XR's stamp (pose/Clocks.kt); samplePose never makes one.
+            PoseTimeSource.XR_UPDATE_TIME -> "stamped with an XR update's time, ${poses.size()} in buffer"
         }
         val captureText = buildString {
             append(if (c.capturing) "running" else "stopped")
