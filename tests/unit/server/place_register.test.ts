@@ -535,6 +535,34 @@ test('queuePlaceRegisterForScan: a second calibrated scan joining a Place queues
   assertEquals(queuePlaceRegisterForScan(uncalibrated, 'u', create), null)
 })
 
+test('queuePlaceRegisterForScan: the scan that arrived first queues nothing, even when a later one is already in the Place', () => {
+  const create = (target: WorldProject, type: 'place-register', scanId: string, payload: Record<string, unknown>): WorldJob => {
+    const existing = findDuplicateWorldJob(target.jobs, type, scanId)
+    if (existing) return existing
+    const made: WorldJob = { ...job(scanId, { status: 'queued', progress: 0, payload }) }
+    target.jobs.unshift(made)
+    target.jobs = trimWorldJobHistory(target.jobs)
+    return made
+  }
+
+  // Two uploads into one Place. The later upload's hook can run while the earlier one's is still pending, so the earlier
+  // hook sees both scans. It must still queue nothing, and the later scan queues against the earlier one.
+  const earlier = scan('a', { filename: '1000_a.glb', capturedAt: '2026-11-10T00:00:00.000Z' })
+  const later = scan('b', { filename: '2000_b.glb', capturedAt: '2026-11-12T00:00:00.000Z' })
+  const both = world([earlier, later])
+  assertEquals(queuePlaceRegisterForScan(both, 'a', create), null, 'the first upload queues nothing, even with the second in the Place')
+  assertEquals(both.jobs.length, 0)
+  const queued = queuePlaceRegisterForScan(both, 'b', create)
+  assert(queued)
+  assertEquals(queued.scanId, 'b')
+  assertEquals(queued.payload, { source: 'joined-place', referenceScanIds: ['a'] })
+
+  // The order is the uploads' order, not the order the scans are listed in.
+  const listedReversed = world([later, earlier])
+  assertEquals(queuePlaceRegisterForScan(listedReversed, 'a', create), null)
+  assertEquals(queuePlaceRegisterForScan(listedReversed, 'b', create)?.payload, { source: 'joined-place', referenceScanIds: ['a'] })
+})
+
 test('place-register: the pump runs these jobs one at a time, and a stuck one is requeued like any other', async () => {
   const { reference, second, glbs } = await twoScans()
   const third = scan('e', { capturedAt: '2026-11-13T09:00:00.000Z', localToWorld: misplacementMatrix({ yawDeg: -2, dx: -0.2, dz: 0.3 }) })

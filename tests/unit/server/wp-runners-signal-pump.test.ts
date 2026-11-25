@@ -51,7 +51,9 @@ test('F-27: past the pump\'s deadline a LingBot-Map job\'s child is killed, and 
     await fs.writeFile(python, `#!/bin/sh\necho $$ > "${pidFile}"\nexec sleep 30\n`)
     await fs.chmod(python, 0o755)
 
-    const server = await startServer({ WORLD_JOB_DEADLINE_MS: '300', LINGBOT_MAP_PYTHON: python }, async (dirs) => {
+    // 3 s, not 300 ms: under load a shell can take longer than 300 ms to write its pid before the deadline kills the job,
+    // and the test then fails on the missing file rather than on the kill it is about.
+    const server = await startServer({ WORLD_JOB_DEADLINE_MS: '3000', LINGBOT_MAP_PYTHON: python }, async (dirs) => {
       await fs.mkdir(`${dirs.sessionsDir}/${SESSION}`, { recursive: true })
       await fs.writeFile(`${dirs.sessionsDir}/${SESSION}/session.json`, JSON.stringify({ sessionId: SESSION }))
       await fs.writeFile(`${dirs.sessionsDir}/${SESSION}/keyframes.jsonl`, JSON.stringify({ index: 0, file: 'kf-00000.jpg' }) + '\n')

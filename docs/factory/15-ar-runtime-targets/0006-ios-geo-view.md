@@ -5,6 +5,8 @@
 > **Design:** This ticket is the spec. The decision is [0003](0003-ios-renderer.md).
 > **Dependencies:** [0003](0003-ios-renderer.md)
 
+> **Superseded in part by ADR 0017.** The geo view is now ARKit geo tracking, with a GPS and compass fallback, drawn in RealityKit. ARKit-CoreLocation is removed. The scanner and the rest of this spec still hold.
+
 ## Goal
 
 An iOS geo view on ARKit-CoreLocation with SceneKit. It is opened by the viewer ([0005](0005-locar-viewer.md)) in the iOS shell, shows one label per Place at its pin, and is compiled by CI, because the build host has no Xcode.

@@ -117,10 +117,10 @@ public class ScanARPlugin: CAPPlugin, CAPBridgedPlugin, ARSessionDelegate {
 
     // MARK: - Geo view
 
-    /// Opens the geo view: ARKit-CoreLocation's SceneLocationView on SceneKit, full screen, with one label per Place
-    /// at its pin (GeoViewController.swift). A viewer, not a capture path (ADR 0014). It runs its own ARKit session,
-    /// so it is refused while this plugin's scan session runs: ARKit runs one session at a time. The scanner's view,
-    /// configuration and saved world maps are never touched.
+    /// Opens the geo view (GeoViewController.swift): one label per Place at its pin, placed by ARKit geo tracking where
+    /// it covers the phone and by GPS and compass elsewhere. A viewer, not a capture path (ADR 0014). It runs its own
+    /// ARKit session, so it is refused while this plugin's scan session runs: ARKit runs one session at a time. The
+    /// scanner's view, configuration and saved world maps are never touched.
     @objc func openGeoView(_ call: CAPPluginCall) {
         guard ARWorldTrackingConfiguration.isSupported else {
             call.reject("ARKit world tracking is not available on this device.")

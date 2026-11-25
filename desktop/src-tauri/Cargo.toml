@@ -23,3 +23,10 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# Proc-macro dylibs (serde_derive, darling_macro, zerofrom-derive, phf_macros, ...) are compiled with the
+# build-override profile, which inherits `strip = true` above. On macOS with the Xcode 27 linker a stripped
+# proc-macro dylib fails to load ("mis-aligned LINKEDIT string pool"), so a release build stops at its first
+# derive macro. Keep the proc-macro dylibs unstripped; the app binary itself is still stripped.
+[profile.release.build-override]
+strip = false
