@@ -7,8 +7,9 @@
  * (`webxr-metric`), and ARCore or ARKit behind the native plugin (`native-metric`). Every 8th Wall mode, a mix, a stamp
  * that is missing or not a mode, and every calibrated scan are drawn as they were.
  *
- * `keyframesScaleKind` and `floorPlanScaleKind` on records, `isUncalibratedScan` on the manifest field, then `runFloorPlan`
- * through its `_spawn` seam on a synthetic captured room: the `--units` the worker is given and the manifest's `units`.
+ * `keyframesScaleKind` and `floorPlanScaleKind` on records, `isUncalibratedScan` on sidecars (the scanner's, an older one, and
+ * one whose record splat-align replaced with a known-distance one), then `runFloorPlan` through its `_spawn` seam on a
+ * synthetic captured room: the `--units` the worker is given and the manifest's `units`.
  */
 import { assert, assertEquals } from './assert.ts'
 
@@ -19,6 +20,7 @@ import {
   keyframesScaleKind,
   runFloorPlan,
 } from '../../../server/floor_plan.ts'
+import { calibrationFromMeta, withReplacedCalibration } from '../../../server/calibration_fields.ts'
 import type { KeyframeRecord } from '../../../server/splat/splat_train_dataset.ts'
 import type { ScaleKind, ScaleMode } from '../../../src/world/scale-mode.ts'
 import { TINY_PLY, writeCapturedRoom } from './floor_plan_fixtures.ts'
@@ -97,12 +99,39 @@ test('only posed keyframes are read, and a capture with none says nothing', () =
 
 // ── The calibration first ───────────────────────────────────────────────────
 
-test('a scan names no calibration only when its sidecar names no tier', () => {
-  assertEquals(isUncalibratedScan({}), true)
-  assertEquals(isUncalibratedScan({ calibrationMethod: undefined }), true)
-  for (const method of ['two-point-ground', 'ground-tap-compass', 'known-distance'] as const) {
-    assertEquals(isUncalibratedScan({ calibrationMethod: method }), false, method)
+/** The flat keys the scanner writes for a scan it never calibrated (src/export/gltf.ts). */
+const UNCALIBRATED_SIDECAR = { sessionId: 'sess-a', calibrationMethod: null, calibrationStatus: 'uncalibrated', scaleMode: null, scaleKind: null, calibration: null }
+
+/** A `'known-distance'` record, the shape server/capture/known_distance.ts derives and splat-align persists. */
+const KNOWN_DISTANCE_RECORD = {
+  method: 'known-distance',
+  sessionToProject: [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1],
+  calibratedAt: '2026-11-24T00:00:00.000Z',
+  status: 'provisional',
+  separationM: 3,
+  residualM: 0,
+  toleranceM: 0.05,
+  gravityAligned: false,
+}
+
+test('a scan has no calibration only when its sidecar names no tier and holds no record', () => {
+  assertEquals(isUncalibratedScan(UNCALIBRATED_SIDECAR), true, 'what the scanner writes for a scan it never calibrated')
+  assertEquals(isUncalibratedScan({ sessionId: 'sess-a' }), true, 'an older sidecar, with neither key')
+  for (const method of ['two-point-ground', 'ground-tap-compass', 'known-distance']) {
+    assertEquals(isUncalibratedScan({ ...UNCALIBRATED_SIDECAR, calibrationMethod: method, calibration: { method } }), false, method)
+    assertEquals(isUncalibratedScan({ ...UNCALIBRATED_SIDECAR, calibrationMethod: method }), false, `${method}, summary only`)
   }
+  assertEquals(isUncalibratedScan({ ...UNCALIBRATED_SIDECAR, calibrationMethod: 'a-tier-from-later' }), false, 'a tier this does not know')
+})
+
+test('an uncalibrated scan that splat-align sized from measured distances counts as calibrated', () => {
+  // The job replaces the record and leaves the flat summary saying "none" (withReplacedCalibration).
+  const sized = withReplacedCalibration(UNCALIBRATED_SIDECAR, KNOWN_DISTANCE_RECORD)
+  assertEquals(sized['calibrationMethod'], null, 'the summary still names no tier')
+  assertEquals(calibrationFromMeta(sized).calibrationMethod, undefined, 'and the manifest shows none')
+  assertEquals(isUncalibratedScan(sized), false, 'the record is what says it has one')
+  // So its plan is not taken from the keyframes, WebXR's included: it stays in session units, as it was.
+  assertEquals(floorPlanScaleKind({ scaleKind: undefined, uncalibrated: isUncalibratedScan(sized) }, stamped('webxr-metric')), undefined)
 })
 
 test('a calibration is never overridden: its unit, or none when it recorded none', () => {

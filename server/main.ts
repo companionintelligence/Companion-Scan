@@ -4775,6 +4775,16 @@ async function _runFloorPlanJob(slug: string, jobId: string, signal?: AbortSigna
     const manifestName = `${base}.floor-plan.manifest.json`
     // A request may tune the shortest wall kept; anything but a finite number at or above 0 leaves the driver's default.
     const minWall = payload?.['minWallM']
+    // Whether the scan has a calibration is asked of its sidecar, which splat-align's job reads the same way: the manifest
+    // shows the flat summary only, and that job replaces the record under it (isUncalibratedScan). A sidecar that is missing
+    // or is not a JSON object says nothing, so the scan is not taken to have no calibration.
+    let sidecar: Record<string, unknown> | null = null
+    try {
+      const parsed: unknown = JSON.parse(await fs.readFile(scanMetaPath(scan.filename), 'utf8'))
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) sidecar = parsed as Record<string, unknown>
+    } catch {
+      sidecar = null
+    }
     const result = await runFloorPlan({
       sessionDir: sessionPath,
       outputJsonPath: `${SCANS_DIR}/${base}.floor-plan.json`,
@@ -4784,7 +4794,7 @@ async function _runFloorPlanJob(slug: string, jobId: string, signal?: AbortSigna
       provenance: { sessionId, scanId: scan.scanId },
       // The calibration's unit, and for a scan with none, the one the runtime that posed its keyframes stamped on them.
       scaleKind: scaleKindOfScan(scan),
-      uncalibrated: isUncalibratedScan(scan),
+      uncalibrated: sidecar !== null && isUncalibratedScan(sidecar),
       signal,
     })
 

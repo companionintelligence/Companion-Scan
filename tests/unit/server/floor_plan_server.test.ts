@@ -8,11 +8,12 @@
  *     served with their types, the drawing under a policy that runs nothing, the manifest with no server path in it,
  *     and all three taken when the scan is deleted. The scan records no scale kind, so the plan is in session units.
  *   - The plan's unit, with a stand-in worker: a scan with no calibration whose keyframes WebXR or the native plugin
- *     posed (their `scaleMode` stamp) is in metres, and an 8th Wall one, or a calibrated one that recorded no unit, is in
- *     session units as before.
+ *     posed (their `scaleMode` stamp) is in metres, and an 8th Wall one, a calibrated one that recorded no unit, or an
+ *     uncalibrated one splat-align has since sized from measured distances, is in session units as before.
  */
 import { assert, assertEquals, assertFalse, assertStringIncludes } from './assert.ts'
 
+import { withReplacedCalibration } from '../../../server/calibration_fields.ts'
 import { scanIdFor } from '../../../server/scan_id.ts'
 import type { WorldJob } from '../../../src/world/types.ts'
 import { floorPlanPython, ROOM, TINY_PLY, writeCapturedRoom } from './floor_plan_fixtures.ts'
@@ -273,6 +274,21 @@ const CALIBRATED_NO_UNIT_SIDECAR = {
   },
 }
 
+/**
+ * An uncalibrated scan's sidecar after splat-align sized it from measured distances: the job replaced the record with a
+ * known-distance one and left the flat summary saying none (withReplacedCalibration), so the manifest shows no tier.
+ */
+const SIZED_BY_SPLAT_ALIGN_SIDECAR = withReplacedCalibration(UNCALIBRATED_SIDECAR, {
+  method: 'known-distance',
+  sessionToProject: [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1],
+  calibratedAt: '2026-11-24T00:00:00.000Z',
+  status: 'provisional',
+  separationM: 3,
+  residualM: 0,
+  toleranceM: 0.05,
+  gravityAligned: false,
+})
+
 test('the floor-plan job draws an uncalibrated WebXR, ARCore or ARKit scan in metres, and an 8th Wall or calibrated one as before', { skip: process.platform === 'win32' }, async (t) => {
   const tools = await makeTempDir({ prefix: 'floor-plan-units-' })
   // Each scan's session holds a captured room whose keyframes carry `frames` as their scaleMode stamp.
@@ -281,6 +297,7 @@ test('the floor-plan job draws an uncalibrated WebXR, ARCore or ARKit scan in me
     { base: '1700000000011_native', session: 'sess-floorplan-native', meta: UNCALIBRATED_SIDECAR, frames: 'native-metric', units: 'm' },
     { base: '1700000000012_eighthwall', session: 'sess-floorplan-eighthwall', meta: UNCALIBRATED_SIDECAR, frames: 'responsive-unconfigured', units: 'session' },
     { base: '1700000000013_calibrated', session: 'sess-floorplan-calibrated', meta: CALIBRATED_NO_UNIT_SIDECAR, frames: 'webxr-metric', units: 'session' },
+    { base: '1700000000014_sized', session: 'sess-floorplan-sized', meta: SIZED_BY_SPLAT_ALIGN_SIDECAR, frames: 'webxr-metric', units: 'session' },
   ]
   try {
     const stub = `${tools}/python`

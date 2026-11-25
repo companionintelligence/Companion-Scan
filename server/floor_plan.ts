@@ -113,11 +113,18 @@ export function scaleKindOfScan(scan: Pick<ScanManifest, 'scaleKind' | 'scaleMod
 }
 
 /**
- * Whether a scan carries no calibration: its sidecar names no calibration tier (`calibrationMethod`). The scanner writes
- * the tier beside the calibration's status and unit, so a scan that has one is never read as one that has none.
+ * Whether a scan carries no calibration, from its sidecar (`<base>.json`): it names no tier in the flat summary
+ * (`calibrationMethod`) and holds no `calibration` record. The scanner writes `null` in both for a scan it never calibrated
+ * (src/export/gltf.ts), and an older sidecar has neither key.
+ *
+ * The record is read as well as the summary because the `splat-align` job replaces the record and leaves the summary as it
+ * was (`withReplacedCalibration`, server/calibration_fields.ts). An uncalibrated scan it sized from measured distances
+ * has a `'known-distance'` record under a summary that still says none. The `ScanManifest` does not show that record, so
+ * the sidecar is the place to ask. Anything there that is not `null` counts as a calibration: a value this does not
+ * recognise is not taken to mean there is none.
  */
-export function isUncalibratedScan(scan: Pick<ScanManifest, 'calibrationMethod'>): boolean {
-  return scan.calibrationMethod === undefined
+export function isUncalibratedScan(sidecar: Record<string, unknown>): boolean {
+  return sidecar['calibrationMethod'] == null && sidecar['calibration'] == null
 }
 
 /**
@@ -150,10 +157,10 @@ export function keyframesScaleKind(records: KeyframeRecord[]): 'metric' | undefi
 
 /**
  * The unit a scan's plan is drawn in, as a `ScaleKind`. The calibration's (`scaleKind`, from `scaleKindOfScan`) whenever the
- * scan has one: a calibration is never overridden, and a calibration that recorded no unit (the `'known-distance'` tier, a
- * record from before units were recorded) leaves the plan in session units, as it always has. Only for a scan with no
- * calibration (`uncalibrated`, from `isUncalibratedScan`) is the unit taken from the runtime that posed the keyframes
- * (`keyframesScaleKind`).
+ * scan has one: a calibration is never overridden, and a calibration that recorded no unit (a `'known-distance'` record,
+ * which `stampScale` never stamps, or a record from before units were recorded) leaves the plan in session units, as it
+ * always has. Only for a scan with no calibration (`uncalibrated`, from `isUncalibratedScan`) is the unit taken from the
+ * runtime that posed the keyframes (`keyframesScaleKind`).
  */
 export function floorPlanScaleKind(
   scan: { scaleKind?: ScaleKind; uncalibrated?: boolean },

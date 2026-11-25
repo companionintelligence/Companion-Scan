@@ -387,7 +387,9 @@ so it is the room seen from above and not its mirror image.
 > 8th Wall mode (`absolute-ready` too, which a calibration would record as
 > `estimated-metric`), a mix, or a frame with no stamp, as on every capture
 > made before the scanner stamped them. A calibrated scan keeps its
-> calibration's unit, or `"session"` when the calibration recorded none.
+> calibration's unit, or `"session"` when the calibration recorded none. So
+> does a scan that splat-align has sized from measured distances: its sidecar
+> then holds a `known-distance` record, which counts as a calibration here.
 >
 > A capture with no AR poses (a photo or video ingest) has nothing to fit to,
 > so its floor plan is a `skipped` job that says why, rather than a plan drawn
