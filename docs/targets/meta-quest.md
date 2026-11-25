@@ -70,6 +70,13 @@ Plan: [wave 13](../factory/13-device-targets/README.md), tickets 0005 and 0006.
 - `splat/`: the splat viewer.
 - `vision/`: the ONNX Runtime hook.
 - `meta/app/src/main/AndroidManifest.xml`: permissions and features.
+- Seven pure-Kotlin files are compiled into the Android XR probe as well, from here:
+  - `pose/` (all five);
+  - `capture/KeyframeSelector.kt` and `capture/YuvFrame.kt`;
+  - `upload/KeyframeMeta.kt`.
+
+  They are named in `android-xr/quest-shared/build.gradle.kts`. A change to one must keep both builds passing (wave 17
+  ticket 0003).
 
 ## Build
 
