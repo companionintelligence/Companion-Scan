@@ -102,7 +102,11 @@ probe ran with on this Aura. With them it created a session, configured device t
 2. Start it from the launcher, or by adb, which runs at once:
    `adb shell am start -n com.companionintelligence.scan.androidxr.probe/.ProbeActivity --ez autostart true`.
    - Extras: `--ei seconds 30`, `--es size 1280x720`, `--ei keyframe_ms 1000`.
-   - The first run asks for the camera and head-tracking permissions. The wearer answers.
+   - The first launch asks for the camera and head-tracking permissions, and waits until someone answers. The probe
+     never answers for them. So either the owner, wearing the glasses, answers both prompts once, or the owner says yes,
+     in words, to granting them over adb:
+     `adb shell pm grant com.companionintelligence.scan.androidxr.probe android.permission.CAMERA` (and the same for
+     `android.permission.HEAD_TRACKING`). After that, a run at rest needs nobody to answer anything.
 3. Read the report: `adb logcat -d -s ScanXrProbe -v raw`.
 4. Pull the recording: `adb pull /sdcard/Android/data/com.companionintelligence.scan.androidxr.probe/files/recordings/`.
 

@@ -41,6 +41,16 @@ Scan server's `/webxr.html`, is the capture path still to try.
   [xreal-aura.md](../targets/xreal-aura.md#status).
 - They include a 1920×1080 back camera and a depth camera that Camera2 shows to apps.
 
+### Camera 0, for a native capture
+
+Read on 2026-11-24 with `dumpsys media.camera`, camera lines only, for wave 17 ticket
+[0003](../factory/17-xr-device-targets/0003-native-android-xr-capture.md). Nothing was installed or launched.
+- Its timestamps are on the boot clock (`SENSOR_INFO_TIMESTAMP_SOURCE` REALTIME).
+- It reports no lens pose and no intrinsic calibration or distortion. Its focal length is 2.4 mm, and its sensor is
+  3.2 × 2.4 mm against a 1920 × 1080 pixel array.
+- So a native capture's camera offset and intrinsics have to come from a calibration.
+- Opening it is untried. The probe in `android-xr/` is the test, and it has not run on the device.
+
 ## XREAL Beam Pro
 
 ### The WebXR path is dead, and permanently

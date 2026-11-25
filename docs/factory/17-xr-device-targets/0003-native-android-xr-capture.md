@@ -38,7 +38,8 @@ own tracking. The frames would come from the glasses' camera, if apps may open i
   - Plane tracking and hit tests need `android.permission.SCENE_UNDERSTANDING_COARSE`. A capture needs neither.
   - The libraries are no longer previews only. Google Maven lists stable `1.0.0` releases of `androidx.xr.runtime:runtime`,
     `androidx.xr.arcore:arcore` and `androidx.xr.scenecore:scenecore`. `1.1.0-alpha02` and `1.1.0-alpha03` are the
-    previews. Every 1.0.0 artifact declares `minSdk 24`.
+    previews. Every 1.0.0 artifact the probe pulls in from those three groups (twelve, read from their AARs) declares
+    `minSdk 24`.
   - XREAL's getting-started page names `androidx.xr:xr-compose:1.0.0` with `minSdk 35`. That coordinate matches none on
     Google's pages. An app with `minSdk 35` would not install on the Aura, which runs API 34.
 
@@ -147,6 +148,9 @@ Maven, read on 2026-11-24.
    - A recording in the shape of a Scan session.
    - JVM tests for every pure part. No device run.
 2. **Run it on the Aura**, with the owner's yes for the install, and with nobody wearing the glasses unless the owner is.
+   - The first launch asks for `CAMERA` and `HEAD_TRACKING` in the system dialog, and waits there until someone
+     answers. The probe never answers for them. Either the owner launches it once wearing the glasses and answers both
+     prompts, or the owner says yes, in words, to granting both over adb (`pm grant`). After that a run needs no prompt.
    1. At rest: does camera 0 open with `CAMERA` alone (or what does `openCamera` say)? Then the frame rate and latency,
       the pose rate and age, whether the two clocks keep one rate, whether frames pair with poses, and the render
       viewpoints.
@@ -188,7 +192,8 @@ This branch:
 - `android-xr/`: the probe and `quest-shared/` (new);
 - `meta/app/src/main/java/com/companionintelligence/scan/quest/pose/Clocks.kt` (`PoseTimeSource.XR_UPDATE_TIME`) and
   `ImmersiveActivity.kt` (its branch in the panel text);
-- this ticket, the wave README and `docs/targets/xreal-aura.md`.
+- this ticket, the wave README, `docs/targets/xreal-aura.md`, `docs/targets/meta-quest.md` (the files it now shares)
+  and `docs/operations/AR_DEVICE_SUPPORT.md` (camera 0's reading).
 
 Later, with the design:
 
@@ -240,6 +245,10 @@ npm run test:android-lockfile && npm run test:notices
   a recording, and never trust a reported calibration without a plausibility check (`CameraFacts.isPlausible`).
 - **Risk:** the pose lags its stamp by an unknown amount. — **Mitigation:** measure it from a worn recording (step 3)
   before the runtime trusts the pairing.
+- **Risk:** nothing outside this machine builds `android-xr/` yet. No workflow and no `npm run verify` step runs its
+  tests, so a change to a shared file in `meta/`, or to the line of `server/wp-a-keyframes.ts` its tests read, can break
+  it unseen. — **Mitigation:** run its tests with meta/'s after such a change, until a workflow job (started by hand, as
+  every workflow here is) builds it.
 
 ## Subtasks
 

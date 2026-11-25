@@ -12,7 +12,8 @@ android {
     defaultConfig {
         applicationId = "com.companionintelligence.scan.androidxr.probe"
         // The XREAL Aura's Compute Puck runs Android 14 (API 34). XREAL's getting-started page asks for minSdk 35, which
-        // would not install there. Every Jetpack XR 1.0.0 artifact declares minSdk 24.
+        // would not install there. Every Jetpack XR 1.0.0 artifact this pulls in (arcore, runtime, scenecore and their
+        // parts) declares minSdk 24.
         minSdk = 34
         targetSdk = 36
         versionCode = 1
