@@ -44,7 +44,7 @@ jobs:
           git ls-files --error-unmatch app/gradle.lockfile > /dev/null
           ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --write-locks --no-daemon
           if ! git diff --exit-code -- app/gradle.lockfile; then
-            echo "::error::meta/app/gradle.lockfile is out of date: the Quest app's release build fails when it is wrong, and its third-party notices are made from it. The diff above is what Gradle changed. Run ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --write-locks in meta/, and commit app/gradle.lockfile. A library it adds also needs an entry in QUEST_LICENCES in scripts/native/third-party-notices.mjs."
+            echo "::error::meta/app/gradle.lockfile is out of date: the Quest app's release build fails when it is wrong, and its third-party notices are made from it. The diff above is what Gradle changed. Run ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --write-locks in meta/, and commit app/gradle.lockfile. A library it adds also needs an entry in QUEST_LICENCES in scripts/native/third-party-notices.mjs (a BOM needs none)."
             exit 1
           fi
       # Among them CoordinateConversionsTest, which holds the app's pose maths to the poseToMatrix
