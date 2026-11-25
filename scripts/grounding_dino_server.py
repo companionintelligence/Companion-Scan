@@ -17,8 +17,12 @@ reference project calls, so frames stay on the tailnet instead of going to a clo
   -> {"status": "ok", "ready": true, "state": "ready", "model": ..., "device": ..., "error": null}
 
 The request, and the first three fields of the reply, are what the ZeroShot detector in the Unity
-avatar prototype sends and reads (Assets/Scripts/ZeroShot/ZeroShotDetector.cs), so it can point
-its endpointUrl here. It sends no Authorization header: leave GDINO_TOKEN unset for it.
+avatar prototype sends and reads: Assets/Scripts/ZeroShot/ZeroShotDetector.cs on the pr/scaffold2
+branch of companionintelligence/CI-Spatial-Agent-Unity. Point its ZeroShotBackendConfig's
+endpointUrl here. With GDINO_TOKEN set, also turn on its useBearerAuth and put the token in
+apiKey. The prototype's own development server can forward to this one too
+(ZERO_SHOT_BACKEND=forward with GROUNDING_DINO_URL), but it sends no token, so only while
+GDINO_TOKEN is unset.
 `bbox` is [x, y, w, h] in pixels of the frame as sent, with the origin at the top left.
 `threshold` is the cut-off for a box's score. An optional `text_threshold` (default 0.25) is the
 cut-off for the words that name a box. In `prompt`, phrases are separated by commas, full stops,

@@ -145,10 +145,13 @@ the tailnet. It is not an `INFERENCE_MODE` engine: the scanner's own `/infer` is
 - **Contract.** `POST /detect` takes `{"prompt", "threshold", "max_detections",
   "image_base64"}` and answers `{"frame_width", "frame_height", "detections": [{"label",
   "confidence", "bbox": [x, y, w, h]}]}` in pixels of the frame as sent, plus `model`, `device`
-  and `inference_ms`. It is what the ZeroShot detector in the Unity avatar prototype
-  (`ZeroShotDetector.cs`) sends and reads, so that client can point its `endpointUrl` here. It
-  sends no `Authorization` header, so leave `GDINO_TOKEN` unset for it. `GET /health` reports
-  whether the model has loaded, and why not.
+  and `inference_ms`. `GET /health` reports whether the model has loaded, and why not.
+- **Clients.** The ZeroShot detector in the Unity avatar prototype sends and reads this contract
+  ([`ZeroShotDetector.cs`](https://github.com/companionintelligence/CI-Spatial-Agent-Unity/blob/3a8b2b607bb1578d0793a6f1c646cd7f4f9f6ef1/Assets/Scripts/ZeroShot/ZeroShotDetector.cs),
+  branch `pr/scaffold2`). Point its `ZeroShotBackendConfig`'s `endpointUrl` here. With
+  `GDINO_TOKEN` set, also turn on its `useBearerAuth` and put the token in `apiKey`. The
+  prototype's own development server can forward to this service (`ZERO_SHOT_BACKEND=forward`
+  with `GROUNDING_DINO_URL`), but it sends no token.
 - **Environment.** `GDINO_HOST` (default `127.0.0.1`), `GDINO_PORT` (default `8010`),
   `GDINO_MODEL`, `GDINO_DEVICE`, `GDINO_TOKEN` (a bearer token, if set), and
   `GDINO_CERT_FILE` / `GDINO_KEY_FILE` for HTTPS. Set them in `~/.config/cscan/env`.
