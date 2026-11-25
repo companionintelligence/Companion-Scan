@@ -76,8 +76,45 @@ Three gaps on glasses, inferred from the code and not yet measured:
 
 ## Status
 
-**Not run on an Aura** (2026-11-24). The build's own status, what was built and what was checked
-without a device, is on [android-webxr.md](android-webxr.md#status).
+**Installed on an Aura once, and it does not capture there** (2026-11-24, ticket
+[0002](../factory/17-xr-device-targets/0002-first-run-on-an-aura.md)). The build's own status is on
+[android-webxr.md](android-webxr.md#status).
+
+The WebXR-only debug build from `60e9681` went onto an Android XR Puck over USB, at the owner's word:
+- `adb install` worked, with no Play Protect prompt, and the app opened in 815 ms.
+- The puck already had Companion Compass's XR build.
+- The values below were read on the device over adb, and from the debug WebView through the DevTools protocol.
+- Nothing was tapped or granted on the device.
+
+Checks from the first-run list:
+
+1. **The platform.**
+   - Android 14 (API 34), model `Android_XR_Puck`, build `UXP4.261012.001.O5`.
+   - Its XR features are `android.software.xr.api.openxr` (65538), `android.software.xr.api.spatial` (4) and
+     `android.hardware.xr.input.hand_tracking`.
+   - It also has a front camera, an accelerometer and a gyroscope, and Vulkan level 1: 70 features in all.
+2. **The panel:** not done.
+3. **WebXR in the WebView: there is none.**
+   - The WebView is `com.google.android.webview` 157.0.8103.52, and `navigator.xr` is undefined.
+   - `ScanAR.capabilities()` answers `engine: "none"`, `supported: false`, "This device does not support ARCore."
+   - The window is 640×1024 CSS pixels at a device pixel ratio of 1.33.
+   - The help line then asked for Google Play Services for AR: ticket
+     [0006](../factory/17-xr-device-targets/0006-webxr-build-help-line.md) points it at `/webxr.html`.
+   - The Start button's headline was not read before the puck left adb.
+4. **The cameras** (`dumpsys media.camera`): seven devices.
+   - Three are open to apps:
+     - `auracamerahal/0`, back-facing: YUV, PRIV and JPEG at 1920×1080, 1440×1080, 1280×720, 640×480 and 320×240;
+     - `avatar/1`, front-facing, apparently Android XR's synthetic avatar camera;
+     - camera 11, a depth camera (DEPTH_OUTPUT).
+   - The other four are SYSTEM_CAMERA devices. A system process held two of them open, probably for tracking.
+   - The WebView's `enumerateDevices()` needs the camera permission, so it was not run.
+5. **The motion sensors.**
+   - Two InvenSense ICM-45686 IMUs (named "main" and "minor") and a Memsic MMC5603 magnetometer.
+   - An ambient light sensor, off-body detection, and a "temperature of glasses" sensor.
+   - Rotation vector, gravity and linear acceleration.
+   - Which of them move with the head needs someone wearing the glasses.
+6. **Chrome at `/webxr.html`:** not done.
+7. **Location:** not done.
 
 ## Run
 
