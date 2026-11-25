@@ -1,6 +1,14 @@
 {
-  "originHash" : "b3a8bfefa9c6d2aad5d437af748f50efa9bd82d5d01a67a350e8dad3cbb5655e",
+  "originHash" : "ad752a4f4a8fe969783906ad9692bc4012c4935e96275e392f5bbc14636f6e19",
   "pins" : [
+    {
+      "identity" : "arkit-corelocation",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/AndrewHartAR/ARKit-CoreLocation",
+      "state" : {
+        "revision" : "c74634de4313183e281b323941a5d51fcd165533"
+      }
+    },
     {
       "identity" : "capacitor-swift-pm",
       "kind" : "remoteSourceControl",
