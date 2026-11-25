@@ -116,9 +116,10 @@ Checks from the first-run list:
      - LIMITED, with a hardware readout timestamp.
      - So a keyframe's camera offset and intrinsics have to come from a calibration.
    - **Opened by an app, 2026-11-24:** ticket 0003's probe ([`android-xr/`](../../android-xr/README.md)) opened camera
-     0 with `CAMERA` alone, and got 30 Hz frames whose timestamps are their start of exposure. With `HEAD_TRACKING`
-     granted, ARCore for Jetpack XR tracked the glasses at 43 Hz in Home Space. Without it, nothing was TRACKING. That was
-     a run at rest; a worn run is still to do. Report:
+     0 with the ordinary `CAMERA` permission, and got 30 Hz frames whose timestamps are their start of exposure.
+     - With `CAMERA` and `HEAD_TRACKING` both granted, ARCore for Jetpack XR tracked the glasses at 43 Hz in Home Space.
+     - With neither, nothing was TRACKING. A run with one granted and not the other has not been done yet.
+     - That was a run at rest; a worn run is still to do. Report:
      [android-xr/reports/2026-11-24-xreal-aura-probe.txt](../../android-xr/reports/2026-11-24-xreal-aura-probe.txt).
 5. **The motion sensors.**
    - Two InvenSense ICM-45686 IMUs (named "main" and "minor") and a Memsic MMC5603 magnetometer.
@@ -187,8 +188,8 @@ the date, back into [Status](#status) and into
     clock, and records a short session.
   - It ran on an Aura at rest on 2026-11-24 (check 4 above).
   - Still to do: a worn run, the camera's calibration, and the runtime.
-- **Not run:** nothing has been installed on an Aura, and no XR emulator has run here. Linux is
-  not a listed host for the XR glasses emulator, which also needs a download of its own.
+- **Not run:** no XR emulator has run here. Linux is not a listed host for the XR glasses emulator, which also needs a
+  download of its own. On an Aura itself, the WebXR-only APK and 0003's probe have been installed (Status).
 - **The portrait panel:** whether it suits the glasses' view is check 2, and the build's portrait
   lock stays until then.
 - **The build's own gaps** (the ARCore notice, the portrait lock, Google Play's implied features,

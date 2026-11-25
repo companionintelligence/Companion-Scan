@@ -58,7 +58,9 @@ Sources are listed at the end ([Sources](#sources)). "The library's code" means 
 Maven, read on 2026-11-24.
 
 - Q: Can an app open the glasses' camera, and which permission does it need? — A (2026-11-24, on the device): **yes,
-  with `android.permission.CAMERA` alone.**
+  with the ordinary `android.permission.CAMERA`, and no XR-specific camera permission.**
+  - `HEAD_TRACKING` was granted in that run too. A run with `CAMERA` granted and `HEAD_TRACKING` revoked would show
+    whether `CAMERA` alone is enough (plan, step 2).
   - The probe opened camera 0 through Camera2, as YUV_420_888 at 1920 × 1080, and got 434 frames in 15 s, at 30 Hz.
     The run's report and figures are in [android-xr/reports/](../../../android-xr/reports/2026-11-24-xreal-aura-probe.txt).
   - Each frame's timestamp is its start of exposure. On every frame the readout began exactly one exposure later.
@@ -113,8 +115,12 @@ Maven, read on 2026-11-24.
 - Q: How does an app get the glasses' head pose, and on which clock? — A (2026-11-24, from the documentation and the
   library's code, then measured on the device):
   - **Measured.** These come from two 15 s runs at rest:
-    - **`HEAD_TRACKING` is needed on the Aura.** Without it, `configure` still answered `SessionConfigureSuccess`, but
-      none of 632 updates was TRACKING. With it, all 646 were.
+    - **The permissions decide whether it tracks.**
+      - With neither `CAMERA` nor `HEAD_TRACKING` granted (run 1), `configure` still answered `SessionConfigureSuccess`,
+        but none of 632 updates was TRACKING.
+      - With both (run 2), all 646 were.
+      - Google documents `HEAD_TRACKING` as the permission device pose needs. A run with `CAMERA` alone would isolate it
+        (plan, step 2).
     - Updates came 21 to 32 ms apart (43 Hz), and each was 21 to 32 ms old when the app got it.
     - The XR clock and the boot clock kept one rate: they drifted apart by 11 µs and 43 µs over 15 s (0.8 and 2.9 ppm).
     - At rest the pose held within 2.7 mm and 0.34°.
@@ -122,7 +128,7 @@ Maven, read on 2026-11-24.
     `session.configure(Config(deviceTracking = DeviceTrackingMode.SPATIAL))`.
     - The device state is `ArDevice.getInstance(session).state`, or each update's `CoreState.perceptionState`
       `.arDeviceState`.
-    - It needs `HEAD_TRACKING`, as above.
+    - Google documents `HEAD_TRACKING` for it. With no permission granted, nothing tracked on the Aura (above).
     - Its frame is right-handed, +Y up, looking down −Z (`Vector3.Forward` is (0, 0, −1)): the keyframe convention
       already.
     - Updates come about every 20 ms plus their own work: `OpenXrRuntime.update` waits a fixed 20 ms.
@@ -171,6 +177,8 @@ Maven, read on 2026-11-24.
       frame rate and latency, the pose rate and age, whether the two clocks keep one rate, whether frames pair with
       poses, and the render viewpoints. All answered above.
    2. Worn, turning slowly round a room: a recording to calibrate. Not done.
+   3. One permission at a time: `CAMERA` granted and `HEAD_TRACKING` revoked (`pm revoke`, with the owner's yes), to
+      show which permission turns tracking on, and whether the camera needs only its own. Not done.
 3. **Calibrate** from the worn recording:
    - the intrinsics (structure from motion with one shared camera, or a checkerboard);
    - the camera's offset from the device pose (hand–eye);

@@ -8,8 +8,9 @@ nothing, and it has no network access.
 
 **Status:** it builds here and its JVM unit tests pass. **It ran on an Aura at rest on 2026-11-24**, installed at the
 owner's word ([report](reports/2026-11-24-xreal-aura-probe.txt)):
-- camera 0 opened with `CAMERA`, at 30 Hz;
-- the head pose tracked at 43 Hz with `HEAD_TRACKING` (and not at all without it);
+- with `CAMERA` and `HEAD_TRACKING` both granted, camera 0 opened at 30 Hz and the head pose tracked at 43 Hz;
+- with neither granted, the session still configured but nothing tracked. A run with one and not the other is still to
+  do;
 - every frame was paired with a pose on the boot clock;
 - 28 keyframes were recorded in the server's shape.
 
