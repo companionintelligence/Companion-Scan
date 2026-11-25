@@ -1,0 +1,85 @@
+# Scan XR probe on an XREAL Aura, 2026-11-24
+
+Two runs of the probe's debug build, installed at the owner's word, on an Android XR Puck (Android 14, API 34). Each
+block below is the probe's own report from logcat (tag ScanXrProbe), unedited; the last section is read from run 2's
+recording.
+
+- Run 1 (20:45, the build of be7b479): the system's permission prompt was closed by a Back key that another session's
+  Chrome test sent, so neither permission was granted (the prompt's result: no button clicked, nothing denied).
+- Run 2 (20:50, the build of the commit that adds this file, which only also writes poses.csv and probe.json when the
+  camera does not open and counts the tracking states): CAMERA and HEAD_TRACKING granted with pm grant at the owner's
+  word. The glasses were at rest, nobody wearing them (the off-body sensor read off from 20:45:13 on).
+
+## Run 1
+
+probe: Scan XR probe 0.1.0
+device: XREAL Android XR Puck, Android 14 (API 34), build UXP4.261012.001.O5
+options: 15 s, 1920x1080 requested, a keyframe every 500 ms
+permissions asked for: CAMERA, HEAD_TRACKING
+CAMERA: not granted
+HEAD_TRACKING: not granted
+Session.create: SessionCreateSuccess
+configure: device tracking: SessionConfigureSuccess
+camera: not opened: CAMERA not granted
+run ended: 15 s are up
+head pose updates: 632, tracked 0, n/a Hz
+pose age at handling (ms): median 24.08, p95 25.66, max 29.85
+XR clock against boot clock: drift 11.48 us (0.77 ppm), worst 277.19 us
+epoch bumps: 0
+camera frames: 0, n/a Hz
+frame latency (ms): min n/a, median n/a, max n/a  IMPLAUSIBLE: the camera clock may not be the boot clock
+keyframes: none wanted
+recording: none: the camera did not open
+done: launch the probe again for another run
+
+## Run 2
+
+probe: Scan XR probe 0.1.0
+device: XREAL Android XR Puck, Android 14 (API 34), build UXP4.261012.001.O5
+options: 15 s, 1920x1080 requested, a keyframe every 500 ms
+CAMERA: granted
+HEAD_TRACKING: granted
+Session.create: SessionCreateSuccess
+configure: device tracking: SessionConfigureSuccess
+camera 0: BACK, colour, YUV 1920x1080 1440x1080 1280x720 640x480 320x240
+camera 1: FRONT, colour, YUV 1280x720 960x720 640x480 320x240
+camera 11: BACK, depth, YUV none
+camera opened: 0, BACK, LIMITED, 1920x1080 YUV_420_888
+camera clock: REALTIME (boot clock, used as is)
+readout timestamp: HARDWARE
+lens pose: not reported: the keyframe pose is the device pose
+intrinsics: estimate from the focal length and physical size (LENS_INTRINSIC_CALIBRATION not reported): fx 1440.00, fy 1440.00, cx 960.00, cy 540.00
+camera: Camera 0 streaming 1920x1080
+run ended: 15 s are up
+head pose updates: 646, tracked 646, 43.00 Hz
+tracking states: TRACKING 646
+pose age at handling (ms): median 23.43, p95 25.35, max 32.19
+XR clock against boot clock: drift 43.39 us (2.89 ppm), worst 201.59 us
+epoch bumps: 0
+camera frames: 434, 30.00 Hz
+frame latency (ms): min 90.16, median 105.41, max 139.49
+keyframes: written 28
+recording: /storage/emulated/0/Android/data/com.companionintelligence.scan.androidxr.probe/files/recordings/20261125-045033 (28 keyframes, 1793 kB)
+done: launch the probe again for another run
+
+## From run 2's recording
+
+Read from its probe.json, poses.csv, frames.csv and keyframes.jsonl. The JPEGs were not looked at: they show a room.
+The recording stays on the device, in the app's own folder.
+
+- Render viewpoints (the displays), relative to the device pose: left (-0.0315, 0, 0) m, right (+0.0315, 0, 0) m, no
+  rotation, so the device pose sits midway between the eyes. Field of view per eye about 29.5° left and right, 18.3°
+  up and 18.1° down. There is no mono viewpoint (the device renders in stereo).
+- Head pose: 646 updates, all TRACKING, 21.2 to 32.0 ms apart (median 23.2 ms, 43 Hz). The mark's age when handled:
+  21.2 to 32.2 ms (median 23.4). The bracket round the age read: median 29 us, at most 223 us.
+- At rest the pose stayed within 2.7, 1.0 and 1.4 mm (x, y, z) and 0.34° of its first value. Its largest step between
+  updates: 0.21 mm. Epoch bumps: none.
+- Camera 0: 434 frames, 26.7 to 40.0 ms apart (median 33.33 ms, 30 Hz). Exposure 10.0 to 16.7 ms (median 16.7).
+  Rolling shutter skew 13.7 ms on every frame. The readout started one exposure after the frame's timestamp on every
+  frame, so the timestamp is the start of exposure, as Camera2 defines it. The middle of a frame's exposure, at its
+  middle row, is therefore about 15 ms after its timestamp.
+- A frame reached the app 90 to 139 ms after its timestamp (median 105), on the boot clock: consistent with REALTIME.
+- Every one of the 434 frames had tracked poses either side within 29 ms, so each has a pose in frames.csv.
+- 28 keyframes, every 500 ms: 1920 x 1080 JPEGs whose sizes match their keyframes.jsonl lines. Each line has the keys
+  index, timestamp, capturedAt, pose, epoch, intrinsics, file, bytes and receivedAt. The intrinsics are the estimate
+  (fx = fy = 1440, cx 960, cy 540: 67.4° by 41.1°).

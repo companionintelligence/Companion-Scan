@@ -49,7 +49,11 @@ Read on 2026-11-24 with `dumpsys media.camera`, camera lines only, for wave 17 t
 - It reports no lens pose and no intrinsic calibration or distortion. Its focal length is 2.4 mm, and its sensor is
   3.2 × 2.4 mm against a 1920 × 1080 pixel array.
 - So a native capture's camera offset and intrinsics have to come from a calibration.
-- Opening it is untried. The probe in `android-xr/` is the test, and it has not run on the device.
+- **Verified on the device, 2026-11-24:** the probe in `android-xr/` opened it with `CAMERA` alone.
+  - It got 30 Hz frames at 1920 × 1080, each paired on the boot clock with the head pose from ARCore for Jetpack XR.
+  - The head pose came at 43 Hz, and only with `HEAD_TRACKING` granted.
+  - This was a run at rest, nobody wearing the glasses. Report:
+    [android-xr/reports/2026-11-24-xreal-aura-probe.txt](../../android-xr/reports/2026-11-24-xreal-aura-probe.txt).
 
 ## XREAL Beam Pro
 

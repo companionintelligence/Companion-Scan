@@ -6,8 +6,14 @@ capture session. It is the spike for wave 17 ticket
 [0003](../docs/factory/17-xr-device-targets/0003-native-android-xr-capture.md), not the capture runtime: it uploads
 nothing, and it has no network access.
 
-**Status:** it builds here and its JVM unit tests pass. **It has not run on an Aura.** Installing it needs the owner's
-yes.
+**Status:** it builds here and its JVM unit tests pass. **It ran on an Aura at rest on 2026-11-24**, installed at the
+owner's word ([report](reports/2026-11-24-xreal-aura-probe.txt)):
+- camera 0 opened with `CAMERA`, at 30 Hz;
+- the head pose tracked at 43 Hz with `HEAD_TRACKING` (and not at all without it);
+- every frame was paired with a pose on the boot clock;
+- 28 keyframes were recorded in the server's shape.
+
+A worn run is still to do. Each install needs the owner's yes.
 
 ## What it does
 

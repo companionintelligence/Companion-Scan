@@ -57,8 +57,14 @@ own tracking. The frames would come from the glasses' camera, if apps may open i
 Sources are listed at the end ([Sources](#sources)). "The library's code" means the 1.0.0 sources jars on Google
 Maven, read on 2026-11-24.
 
-- Q: Can an app open the glasses' camera, and which permission does it need? — In part. Opening it is still OPEN, and
-  the probe is the test.
+- Q: Can an app open the glasses' camera, and which permission does it need? — A (2026-11-24, on the device): **yes,
+  with `android.permission.CAMERA` alone.**
+  - The probe opened camera 0 through Camera2, as YUV_420_888 at 1920 × 1080, and got 434 frames in 15 s, at 30 Hz.
+    The run's report and figures are in [android-xr/reports/](../../../android-xr/reports/2026-11-24-xreal-aura-probe.txt).
+  - Each frame's timestamp is its start of exposure. On every frame the readout began exactly one exposure later.
+  - Exposure was 10 to 16.7 ms, and the rolling shutter skew 13.7 ms.
+  - A frame reached the app 90 to 139 ms after its timestamp.
+  - What was known before the run:
   - Camera2 lists three cameras open to apps (0002): `auracamerahal/0`, back-facing; `avatar/1`, front-facing; and
     camera 11, a depth camera. The other four are SYSTEM_CAMERA devices.
   - Google told the press in February 2025 that an Android XR app reads the world-facing stream as `camera_id` 0, and
@@ -77,7 +83,7 @@ Maven, read on 2026-11-24.
     - `SENSOR_READOUT_TIMESTAMP` = HARDWARE. Its results carry the exposure time and the rolling shutter skew.
     - The depth camera's calibration looks like placeholders: fx = fy = 2.4 with the principal point at (0, 0), and a
       lens pose of zero translation and a half turn about Y, relative to the primary camera.
-  - The permission is `android.permission.CAMERA`. The probe asks for it and logs `openCamera`'s exact answer.
+  - The permission is `android.permission.CAMERA`. The probe asked for it, and with it granted `openCamera` succeeded.
 - Q: Which Android version and API level does the puck run? Can the shell's `minSdk 24` and
   `compileSdk 36` stay? — A (0002, 2026-11-24): Android 14, API 34.
   - `minSdk 24` and `compileSdk 36` can stay.
@@ -102,9 +108,16 @@ Maven, read on 2026-11-24.
   - Observed on 2026-11-24: a Jetpack XR 1.0.0 probe from another project, started in Home Space on this Aura, got
     `SessionCreateSuccess`, then `SessionConfigureSuccess` for device tracking, then `TRACKING` and 136 head-pose updates
     in 3 s (about 45 Hz). Its permissions had been granted.
-  - The Scan probe declares `XR_ACTIVITY_START_MODE_HOME_SPACE` and measures this again.
+  - The Scan probe declares `XR_ACTIVITY_START_MODE_HOME_SPACE`. On 2026-11-24 it tracked there itself: 646 updates in
+    15 s, all of them TRACKING, at 43 Hz.
 - Q: How does an app get the glasses' head pose, and on which clock? — A (2026-11-24, from the documentation and the
-  library's code; not yet measured):
+  library's code, then measured on the device):
+  - **Measured.** These come from two 15 s runs at rest:
+    - **`HEAD_TRACKING` is needed on the Aura.** Without it, `configure` still answered `SessionConfigureSuccess`, but
+      none of 632 updates was TRACKING. With it, all 646 were.
+    - Updates came 21 to 32 ms apart (43 Hz), and each was 21 to 32 ms old when the app got it.
+    - The XR clock and the boot clock kept one rate: they drifted apart by 11 µs and 43 µs over 15 s (0.8 and 2.9 ppm).
+    - At rest the pose held within 2.7 mm and 0.34°.
   - **The pose.** ARCore for Jetpack XR: `Session.create(context, lifecycleOwner)`, then
     `session.configure(Config(deviceTracking = DeviceTrackingMode.SPATIAL))`.
     - The device state is `ArDevice.getInstance(session).state`, or each update's `CoreState.perceptionState`
@@ -130,7 +143,10 @@ Maven, read on 2026-11-24.
   them come from? — A (2026-11-24): **not from the platform, as far as anything read shows. It needs a calibration.**
   - Camera 0 reports no lens pose (above).
   - The only offsets Jetpack XR gives are the render viewpoints': `RenderViewpoint.State.localPose`, "a local offset
-    from the device's central tracking point". Those are the displays, not the camera. The probe records them.
+    from the device's central tracking point". Those are the displays, not the camera.
+    - On the Aura they are (∓0.0315, 0, 0) m with no rotation (2026-11-24), so the device pose sits midway between the
+      eyes, 63 mm apart.
+    - Each eye's field of view is about 59° by 36.5°.
   - No Google or XREAL page gives the camera's place on the glasses. The device pose's origin is "the center of the
     device" (the library's `DeviceState`).
   - So the offset comes from a recording: structure-from-motion camera poses set against the device poses, a hand–eye
@@ -151,10 +167,10 @@ Maven, read on 2026-11-24.
    - The first launch asks for `CAMERA` and `HEAD_TRACKING` in the system dialog, and waits there until someone
      answers. The probe never answers for them. Either the owner launches it once wearing the glasses and answers both
      prompts, or the owner says yes, in words, to granting both over adb (`pm grant`). After that a run needs no prompt.
-   1. At rest: does camera 0 open with `CAMERA` alone (or what does `openCamera` say)? Then the frame rate and latency,
-      the pose rate and age, whether the two clocks keep one rate, whether frames pair with poses, and the render
-      viewpoints.
-   2. Worn, turning slowly round a room: a recording to calibrate.
+   1. **Done 2026-11-24.** At rest: does camera 0 open with `CAMERA` alone (or what does `openCamera` say)? Then the
+      frame rate and latency, the pose rate and age, whether the two clocks keep one rate, whether frames pair with
+      poses, and the render viewpoints. All answered above.
+   2. Worn, turning slowly round a room: a recording to calibrate. Not done.
 3. **Calibrate** from the worn recording:
    - the intrinsics (structure from motion with one shared camera, or a checkerboard);
    - the camera's offset from the device pose (hand–eye);
@@ -181,15 +197,29 @@ Maven, read on 2026-11-24.
   - Each tested part was broken once on purpose, and its test failed every time (20 changes).
 - The Quest app gained one value, `PoseTimeSource.XR_UPDATE_TIME`, the probe's stamp, and one branch for it. Its 108
   JVM tests still pass, and its debug APK still builds.
-- The Aura was read once with `dumpsys media.camera`, for camera 0's characteristics (above). Nothing was installed or
-  launched on it.
-- Not done: everything on a device, the calibration and the ADR.
+- The Aura was read once with `dumpsys media.camera`, for camera 0's characteristics (above), before anything was
+  installed.
+
+**2026-11-24, evening: the probe ran twice on the Aura**, installed at the owner's word. The report and the figures
+read from the recording are in [android-xr/reports/2026-11-24-xreal-aura-probe.txt](../../../android-xr/reports/2026-11-24-xreal-aura-probe.txt).
+
+- **Run 1** had no permissions. Its permission prompt was closed by a Back key sent by another session's test.
+  - The session still configured, but no update was TRACKING, and the camera was not opened.
+  - That build kept no files when the camera did not open. The next commit fixes it.
+- **Run 2** had `CAMERA` and `HEAD_TRACKING`, granted with `pm grant` at the owner's word. The glasses were at rest, and
+  nobody was wearing them.
+  - Camera 0 opened, and the head pose tracked: the answers above.
+  - The recording has 28 keyframes, 1920 × 1080, in the server's shape. Every one of its 434 frames has a pose either
+    side within 29 ms.
+  - The recording stays on the device, in the app's own folder. The copy pulled to read its CSV and JSON files was
+    deleted, and its pictures were not looked at.
+- Not done: the worn run, the calibration and the ADR.
 
 ## Files impacted
 
 This branch:
 
-- `android-xr/`: the probe and `quest-shared/` (new);
+- `android-xr/`: the probe, `quest-shared/` and `reports/` (new);
 - `meta/app/src/main/java/com/companionintelligence/scan/quest/pose/Clocks.kt` (`PoseTimeSource.XR_UPDATE_TIME`) and
   `ImmersiveActivity.kt` (its branch in the panel text);
 - this ticket, the wave README, `docs/targets/xreal-aura.md`, `docs/targets/meta-quest.md` (the files it now shares)
@@ -237,8 +267,8 @@ npm run test:android-lockfile && npm run test:notices
 
 ## Risks / potential issues
 
-- **Risk:** the camera is closed to apps, so there are poses and no frames. — **Mitigation:**
-  the probe's first run settles it. A pose-only capture is not a scan, and the ticket may end at the ADR.
+- ~~**Risk:** the camera is closed to apps, so there are poses and no frames.~~ — Retired on 2026-11-24: camera 0
+  opened for the probe with `CAMERA`.
 - **Risk:** the APIs change. — **Mitigation:** pin versions (1.0.0, stable), lock them, and re-read Google's pages when
   the runtime starts.
 - **Risk:** the HAL's own calibration is missing (camera 0) or placeholder (camera 11). — **Mitigation:** calibrate from
@@ -253,7 +283,7 @@ npm run test:android-lockfile && npm run test:notices
 ## Subtasks
 
 1. [x] Answer the open questions, and build the probe (this branch).
-2. [ ] Run the probe on an Aura, with the owner's yes for the install.
+2. [ ] Run the probe on an Aura, with the owner's yes for the install. At rest: done 2026-11-24. Worn: not yet.
 3. [ ] Calibrate from a worn recording: intrinsics, the camera's offset, the time offset.
 4. [ ] Write the ADR.
 5. [ ] Add the libraries behind the switch or app the ADR chooses, with their lock lines and notices.

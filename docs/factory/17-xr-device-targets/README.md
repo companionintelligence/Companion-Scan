@@ -49,7 +49,7 @@ Read on 2026-11-24:
 |---|---|---|---|---|
 | 0001 | [The WebXR-only Android build](0001-webxr-only-android-build.md) | both | done in this wave's first changes; not run on a device | none |
 | 0002 | [First run on an Aura](0002-first-run-on-an-aura.md) | XREAL Aura | under way: installed 2026-11-24, WebView has no WebXR; checks 2, 6 and 7 open | 0001 |
-| 0003 | [A native capture runtime on Android XR](0003-native-android-xr-capture.md) | XREAL Aura | started 2026-11-24: its questions answered, and a probe (`android-xr/`) built and unit-tested; not run on a device | 0002 |
+| 0003 | [A native capture runtime on Android XR](0003-native-android-xr-capture.md) | XREAL Aura | started 2026-11-24: its questions answered, and a probe (`android-xr/`) built, unit-tested and run on an Aura at rest (camera 0 opens, head pose tracks at 43 Hz); a worn run, the calibration and the ADR are open | 0002 |
 | 0004 | [First run on a PICO headset](0004-first-run-on-a-pico-headset.md) | PICO | planned; needs the owner's device | 0001 |
 | 0005 | [A native capture app for PICO](0005-native-pico-capture.md) | PICO | planned; waits on 0004 and the owner's go-ahead | 0004 |
 | 0006 | [The WebXR build's help line](0006-webxr-build-help-line.md) | both | done 2026-11-24; not yet seen on a device | 0001, found by 0002 |
