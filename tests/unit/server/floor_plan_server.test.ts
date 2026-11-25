@@ -7,8 +7,9 @@
  *     (its cloud in a tilted LingBot frame, its keyframes' AR poses) gets its plan: the job's artifact, the three files
  *     served with their types, the drawing under a policy that runs nothing, the manifest with no server path in it,
  *     and all three taken when the scan is deleted. The scan records no scale kind, so the plan is in session units.
- *   - The plan's unit, with a stand-in worker: a scan with no calibration whose keyframes WebXR or the native plugin
- *     posed (their `scaleMode` stamp) is in metres, and an 8th Wall one, a calibrated one that recorded no unit, or an
+ *   - The plan's unit, with a stand-in worker, for a scan with no calibration (from its keyframes' `scaleMode` stamps):
+ *     in metres when WebXR or the native plugin posed them, and in approximate metres when 8th Wall did in absolute
+ *     scale with its estimate in. An 8th Wall one in responsive scale, a calibrated one that recorded no unit, or an
  *     uncalibrated one splat-align has since sized from measured distances, is in session units as before.
  */
 import { assert, assertEquals, assertFalse, assertStringIncludes } from './assert.ts'
@@ -289,13 +290,14 @@ const SIZED_BY_SPLAT_ALIGN_SIDECAR = withReplacedCalibration(UNCALIBRATED_SIDECA
   gravityAligned: false,
 })
 
-test('the floor-plan job draws an uncalibrated WebXR, ARCore or ARKit scan in metres, and an 8th Wall or calibrated one as before', { skip: process.platform === 'win32' }, async (t) => {
+test('the floor-plan job draws an uncalibrated scan in its runtime\'s unit, and a responsive 8th Wall or calibrated one as before', { skip: process.platform === 'win32' }, async (t) => {
   const tools = await makeTempDir({ prefix: 'floor-plan-units-' })
   // Each scan's session holds a captured room whose keyframes carry `frames` as their scaleMode stamp.
   const scans = [
     { base: '1700000000010_webxr', session: 'sess-floorplan-webxr', meta: UNCALIBRATED_SIDECAR, frames: 'webxr-metric', units: 'm' },
     { base: '1700000000011_native', session: 'sess-floorplan-native', meta: UNCALIBRATED_SIDECAR, frames: 'native-metric', units: 'm' },
     { base: '1700000000012_eighthwall', session: 'sess-floorplan-eighthwall', meta: UNCALIBRATED_SIDECAR, frames: 'responsive-unconfigured', units: 'session' },
+    { base: '1700000000015_absolute', session: 'sess-floorplan-absolute', meta: UNCALIBRATED_SIDECAR, frames: 'absolute-ready', units: 'm-estimated' },
     { base: '1700000000013_calibrated', session: 'sess-floorplan-calibrated', meta: CALIBRATED_NO_UNIT_SIDECAR, frames: 'webxr-metric', units: 'session' },
     { base: '1700000000014_sized', session: 'sess-floorplan-sized', meta: SIZED_BY_SPLAT_ALIGN_SIDECAR, frames: 'webxr-metric', units: 'session' },
   ]

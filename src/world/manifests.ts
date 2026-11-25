@@ -260,12 +260,12 @@ export interface FloorPlanManifest extends PipelineManifestBase {
 }
 
 /**
- * What a floor plan's numbers are in. `'m'`: metres, the AR runtime's contract (ScaleKind `'metric'`), as the scan's
- * calibration recorded it or, for a scan with no calibration, as every posed keyframe's runtime stamped it.
- * `'m-estimated'`: approximate metres, the runtime's own estimate (`'estimated-metric'`, from a calibration only).
- * `'session'`: the AR session's units, not known to be metres (`'arbitrary'`, or a scan that recorded no kind and
- * whose keyframes do not all say a metric runtime posed them). `'cloud'`: the point cloud's own units, for a plan
- * drawn without the fit.
+ * What a floor plan's numbers are in, from what one unit of the scan's AR session is worth: as the scan's calibration
+ * recorded it or, for a scan with no calibration, as the weakest of its posed keyframes' runtime stamps says.
+ * `'m'`: metres, the AR runtime's contract (ScaleKind `'metric'`). `'m-estimated'`: approximate metres, the runtime's
+ * own estimate (`'estimated-metric'`). `'session'`: the AR session's units, not known to be metres (`'arbitrary'`, or
+ * a scan whose calibration and keyframes record no kind). `'cloud'`: the point cloud's own units, for a plan drawn
+ * without the fit.
  */
 export type FloorPlanUnits = 'm' | 'm-estimated' | 'session' | 'cloud'
 
