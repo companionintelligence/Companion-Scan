@@ -93,6 +93,10 @@ not locked. After changing a dependency, run this in `meta/` and commit the lock
 ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --write-locks
 ```
 
+The **Quest Build** workflow, when someone starts it, runs the same command and fails if the lockfile
+changes. No workflow builds the release APK, so that step is the check that sees a lockfile that no
+longer matches the build before a release is built by hand.
+
 After the app's build, and `npm ci` in the repo root, this command makes the notices that a release
 attaches beside the APK:
 

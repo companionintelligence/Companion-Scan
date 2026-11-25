@@ -5,7 +5,8 @@
  * reads the repo, a temporary folder or stand-ins, except the whole generation at the end, which reads the AARs from
  * the Gradle cache that the Quest app's build fills, and is skipped where they are not.
  *
- * What this cannot see: the transitive libraries, which only Gradle resolves. In meta/,
+ * What this cannot see: the transitive libraries, which only Gradle resolves. The Quest Build workflow's step
+ * 'Check the release dependency lock against Gradle' confirms the lock when someone dispatches it: in meta/,
  * `./gradlew :app:dependencies --configuration releaseRuntimeClasspath --write-locks` must leave
  * app/gradle.lockfile unchanged.
  *
