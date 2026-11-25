@@ -1,9 +1,10 @@
 name: Quest Build
 
-# The Quest app (meta/): its JVM unit tests, and a debug APK for headset QA, kept for 14 days and
-# signed with the runner's own debug key. It publishes nothing. The app has not run on a headset
-# (docs/targets/meta-quest.md). No server address, key or secret is built in: the person types their
-# own Scan server's address on the app's panel.
+# The Quest app (meta/): its release build's dependency lock checked against Gradle, its JVM unit
+# tests, and a debug APK for headset QA, kept for 14 days and signed with the runner's own debug key.
+# It publishes nothing. The app has not run on a headset (docs/targets/meta-quest.md). No server
+# address, key or secret is built in: the person types their own Scan server's address on the app's
+# panel.
 #
 # Run by hand, as every workflow here is: server-ci.yml keeps its push and pull request triggers gated.
 on:
@@ -18,7 +19,7 @@ concurrency:
 
 jobs:
   quest:
-    name: Quest app (unit tests and debug APK)
+    name: Quest app (lock check, unit tests and debug APK)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -31,6 +32,21 @@ jobs:
           java-version: '21'
       - name: Android SDK packages (the runner's own SDK)
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" > /dev/null
+      # The debug build below is not locked, but the release build is (app/build.gradle.kts), so only
+      # a Gradle run can show that app/gradle.lockfile is right. --write-locks has Gradle resolve the
+      # release classpath afresh and rewrite the file: any change it makes is drift. No workflow builds
+      # the Quest release APK, so this is the one place drift shows before a release is built by hand.
+      - name: Check the release dependency lock against Gradle
+        working-directory: meta
+        run: |
+          # Paths here are relative to meta/. One that matched nothing would let the git diff below
+          # pass whatever Gradle wrote.
+          git ls-files --error-unmatch app/gradle.lockfile > /dev/null
+          ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --write-locks --no-daemon
+          if ! git diff --exit-code -- app/gradle.lockfile; then
+            echo "::error::meta/app/gradle.lockfile is out of date: the Quest app's release build fails when it is wrong, and its third-party notices are made from it. The diff above is what Gradle changed. Run ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --write-locks in meta/, and commit app/gradle.lockfile. A library it adds also needs an entry in QUEST_LICENCES in scripts/native/third-party-notices.mjs."
+            exit 1
+          fi
       # Among them CoordinateConversionsTest, which holds the app's pose maths to the poseToMatrix
       # fixture (app/src/test/resources); tests/unit/server/native_quest_pose_fixture.test.ts holds the
       # same file to the server's function, in npm run test:server.

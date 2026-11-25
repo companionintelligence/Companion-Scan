@@ -212,3 +212,45 @@ test('every native and subsystem test suite has a workflow job, and every such w
     assert.equal(checkouts.length, (wf.match(/- uses: actions\/checkout@/g) ?? []).length, `${file}: no checkout keeps its token`)
   }
 })
+
+/** A workflow step, from its `- name:` line up to the next step, the comment above the next step, or the next job. */
+function stepNamed(workflow: string, name: string): string {
+  const start = workflow.indexOf(`\n      - name: ${name}\n`)
+  assert.ok(start >= 0, `a step named "${name}"`)
+  const rest = workflow.slice(start + 1)
+  const end = rest.slice(1).search(/^ {6}[-#]|^ {2}\S/m)
+  return end < 0 ? rest : rest.slice(0, end + 1)
+}
+
+test("the Android and Quest workflows check each release build's dependency lock against Gradle, since only the release builds are locked", () => {
+  const lockSteps = [
+    { file: '.github/workflows/mobile-build.yml', dir: 'mobile/android', table: 'ANDROID_LICENCES', before: 'Build debug APK' },
+    { file: '.github/workflows/quest-build.yml', dir: 'meta', table: 'QUEST_LICENCES', before: 'Unit tests' },
+  ]
+  for (const { file, dir, table, before } of lockSteps) {
+    const wf = read(file).replace(/\r\n/g, '\n')
+    const step = stepNamed(wf, 'Check the release dependency lock against Gradle')
+    assert.ok(step.includes(`\n        working-directory: ${dir}\n        run: |\n`), `${file}: run in ${dir}`)
+    // In this order: the lockfile is tracked, so the diff cannot pass on a path that matches nothing; Gradle rewrites it
+    // from what it resolves; any change is drift.
+    const at = [
+      'git ls-files --error-unmatch app/gradle.lockfile > /dev/null\n',
+      './gradlew :app:dependencies --configuration releaseRuntimeClasspath --write-locks --no-daemon\n',
+      'if ! git diff --exit-code -- app/gradle.lockfile; then\n',
+    ].map((command) => step.indexOf(`\n          ${command}`))
+    assert.ok(at.every((position, i) => position > 0 && (i === 0 || position > at[i - 1]!)), `${file}: the three commands, in order`)
+    const failure = step.match(/\n {12}echo "::error::([^"\n]+)"\n {12}exit 1\n {10}fi\n/)
+    assert.ok(failure, `${file}: drift stops the job with one ::error:: line`)
+    const message = failure[1]!
+    assert.ok(message.startsWith(`${dir}/app/gradle.lockfile is out of date`), `${file}: the message names the lockfile`)
+    assert.ok(message.includes(`./gradlew :app:dependencies --configuration releaseRuntimeClasspath --write-locks in ${dir}`), `${file}: and how to regenerate it`)
+    assert.ok(message.includes(`${table} in scripts/native/third-party-notices.mjs`), `${file}: and the licence table a new library needs an entry in`)
+    assert.ok(read('scripts/native/third-party-notices.mjs').includes(`export const ${table} = [`), `${table} is the table the notices read`)
+    assert.ok(wf.indexOf('\n      - name: Check the release dependency lock against Gradle\n') < wf.indexOf(`\n      - name: ${before}\n`), `${file}: before ${before}`)
+  }
+  const quest = read('.github/workflows/quest-build.yml').replace(/\r\n/g, '\n')
+  assert.ok(quest.indexOf('\n      - name: Android SDK packages') < quest.indexOf('\n      - name: Check the release dependency lock against Gradle\n'),
+    'the Quest step runs once the SDK packages its Gradle build needs are in')
+  assert.doesNotMatch(stepNamed(quest, 'Check the release dependency lock against Gradle'), /Native Release/,
+    'no workflow builds the Quest release APK, so the message does not say one does')
+})
