@@ -25,11 +25,11 @@
  * straight line (a hallway) still fixes; the scale and offset come from their centres. The worker gets that similarity
  * as `--transform`, with `--up-axis y` (an AR session's frame is Y-up) and `--units`, from the scan's `scaleKind`:
  * metres for a metric runtime, approximate metres for an estimated one, the session's own units otherwise. A calibration
- * is what stamps `scaleKind` on a scan, so a scan with no calibration has none; its plan is in metres when every keyframe
- * with an AR pose says it was posed by a runtime that is metric by contract (`keyframesScaleKind`), and in the session's
- * own units otherwise (`floorPlanScaleKind`). A scan with no AR poses (a photo or video ingest), or poses the cloud does
- * not fit, is a skip that says so: nothing else sets the plan's scale or which way is up, and a plan drawn on a guess is
- * wrong without saying so.
+ * is what stamps `scaleKind` on a scan, so a scan with no calibration has none. Its keyframes say instead which unit each
+ * pose was in, and the weakest of them decides (`keyframesScaleKind`, `floorPlanScaleKind`): metres when WebXR, ARCore or
+ * ARKit posed every one, approximate metres when 8th Wall did in absolute scale with its estimate in, and the session's own
+ * units for anything less. A scan with no AR poses (a photo or video ingest), or poses the cloud does not fit, is a skip
+ * that says so: nothing else sets the plan's scale or which way is up, and a plan drawn on a guess is wrong without saying so.
  *
  * Worker contract (scripts/floor_plan_worker.py):
  *   floor_plan_worker.py --ply <cloud> --out-json <p> --out-svg <p> [--min-wall-m 0.5]
@@ -127,32 +127,36 @@ export function isUncalibratedScan(sidecar: Record<string, unknown>): boolean {
   return sidecar['calibrationMethod'] == null && sidecar['calibration'] == null
 }
 
+/** How much each kind claims, weakest first, so the weakest of a capture's frames can be found. */
+const KIND_STRENGTH: Record<ScaleKind, number> = { arbitrary: 0, 'estimated-metric': 1, metric: 2 }
+
 /**
- * What one unit of a capture's AR session is worth, from the runtime that posed its keyframes: `'metric'` when every
- * keyframe with an AR pose carries a scale mode (`scaleMode`, stamped per frame by src/capture/keyframes.ts) whose kind is
- * `'metric'`, which is WebXR's (`'webxr-metric'`) and ARCore's or ARKit's behind the native plugin (`'native-metric'`).
- * Undefined otherwise.
- *
- * Anything less is undefined, and so is the whole capture:
- *   - a posed frame with no mode: a capture from before the stamp, or from a client that sends none (the Quest app);
- *   - a stored value that is not a mode;
- *   - any 8th Wall mode. In responsive scale the unit is the engine's own, which is not metric. In absolute scale it is the
- *     engine's estimate (`'absolute-ready'`, kind `'estimated-metric'`). A calibrated scan in that mode is drawn in
- *     approximate metres; whether an uncalibrated one should be too is not decided here, so it stays in session units.
- *     That includes a session whose frames are partly metric: a native session handed over to 8th Wall partway.
- *   - no posed frame at all.
+ * What one unit of a capture's AR session is worth, from the runtime that posed its keyframes. It is the kind of the scale
+ * mode each keyframe with an AR pose carries (`scaleMode`, stamped per frame by src/capture/keyframes.ts), and the weakest
+ * of them when they differ:
+ *   - `'metric'` when a runtime whose unit is the metre by contract posed every frame: WebXR (`'webxr-metric'`), or ARCore
+ *     or ARKit behind the native plugin (`'native-metric'`);
+ *   - `'estimated-metric'` when the weakest frame is 8th Wall's in absolute scale with its estimate in (`'absolute-ready'`).
+ *     The plan is then drawn in approximate metres, as a calibrated scan in that mode is;
+ *   - `'arbitrary'` when any frame is in 8th Wall's own unit: responsive scale, absolute scale before the estimate is in,
+ *     or absolute scale the engine did not take. One such frame is enough, as one point measured before the estimate is
+ *     for a calibration (`stampScale`'s `since`): the unit a session started in need not be the one it ended in, and a
+ *     native session handed over to 8th Wall partway ends in the engine's.
+ * Undefined, no unit at all, for a posed frame with no mode (a capture from before the stamp, or from a client that sends
+ * none: the Quest app), a stored value that is not a mode, and a capture with no posed frame.
  *
  * Only the posed frames are read: a record with no AR pose gives the plan nothing to fit, so its unit says nothing of it.
  */
-export function keyframesScaleKind(records: KeyframeRecord[]): 'metric' | undefined {
-  let posed = 0
+export function keyframesScaleKind(records: KeyframeRecord[]): ScaleKind | undefined {
+  let weakest: ScaleKind | undefined
   for (const rec of records) {
     if (!recordHasPose(rec)) continue
     const mode = asScaleMode(rec.scaleMode)
-    if (mode === undefined || scaleKindOfMode(mode) !== 'metric') return undefined
-    posed++
+    if (mode === undefined) return undefined
+    const kind = scaleKindOfMode(mode)
+    if (weakest === undefined || KIND_STRENGTH[kind] < KIND_STRENGTH[weakest]) weakest = kind
   }
-  return posed > 0 ? 'metric' : undefined
+  return weakest
 }
 
 /**

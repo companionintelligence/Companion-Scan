@@ -380,16 +380,22 @@ so it is the room seen from above and not its mirror image.
 > either way: every file says so in its `disclaimer`.
 >
 > A calibration is what records `scaleKind` on a scan. A scan with no
-> calibration takes its unit from its keyframes instead: the scanner stamps
+> calibration takes its unit from its keyframes instead. The scanner stamps
 > each one with its runtime's scale mode (`scaleMode` in `keyframes.jsonl`),
-> and when every keyframe with an AR pose says `webxr-metric` or
-> `native-metric`, the plan is in `"m"`. Anything else stays `"session"`: any
-> 8th Wall mode (`absolute-ready` too, which a calibration would record as
-> `estimated-metric`), a mix, or a frame with no stamp, as on every capture
-> made before the scanner stamped them. A calibrated scan keeps its
-> calibration's unit, or `"session"` when the calibration recorded none. So
-> does a scan that splat-align has sized from measured distances: its sidecar
-> then holds a `known-distance` record, which counts as a calibration here.
+> and the weakest of the keyframes with an AR pose decides:
+>
+> - `webxr-metric` or `native-metric` on every one gives `"m"`.
+> - 8th Wall's `absolute-ready` gives `"m-estimated"`, as a calibration in
+>   that mode would.
+> - Any other 8th Wall mode on even one frame gives `"session"`: responsive
+>   scale, or absolute scale before the estimate is in.
+> - So does a frame with no stamp, as on every capture made before the
+>   scanner stamped them.
+>
+> A calibrated scan keeps its calibration's unit, or `"session"` when the
+> calibration recorded none. So does a scan that splat-align has sized from
+> measured distances: its sidecar then holds a `known-distance` record, which
+> counts as a calibration here.
 >
 > A capture with no AR poses (a photo or video ingest) has nothing to fit to,
 > so its floor plan is a `skipped` job that says why, rather than a plan drawn

@@ -3,9 +3,11 @@
  *
  * A calibration is what records a scan's `scaleKind`, so a scan with none was drawn in session units whatever its runtime.
  * The scanner now stamps every keyframe with its runtime's scale mode (src/capture/keyframes.ts), and the plan of a scan
- * with no calibration is in metres when every posed keyframe says a runtime that is metric by contract posed it: WebXR
- * (`webxr-metric`), and ARCore or ARKit behind the native plugin (`native-metric`). Every 8th Wall mode, a mix, a stamp
- * that is missing or not a mode, and every calibrated scan are drawn as they were.
+ * with no calibration takes the weakest of its posed keyframes. It is in metres when a runtime that is metric by contract
+ * posed every one: WebXR (`webxr-metric`), and ARCore or ARKit behind the native plugin (`native-metric`). It is in
+ * approximate metres when the weakest is 8th Wall in absolute scale with its estimate in (`absolute-ready`). It is in
+ * session units when any frame is in 8th Wall's own unit. A stamp that is missing or not a mode, and every calibrated
+ * scan, are drawn as they were.
  *
  * `keyframesScaleKind` and `floorPlanScaleKind` on records, `isUncalibratedScan` on sidecars (the scanner's, an older one, and
  * one whose record splat-align replaced with a known-distance one), then `runFloorPlan` through its `_spawn` seam on a
@@ -37,13 +39,16 @@ const METRIC_RUNTIMES: Array<{ runtime: string; mode: ScaleMode }> = [
   { runtime: 'ARCore or ARKit, behind the native plugin', mode: 'native-metric' },
 ]
 
-/** Every mode the 8th Wall provider can stamp (src/ar/engine-config.ts). None of them is metric by contract. */
-const EIGHTH_WALL_MODES: ScaleMode[] = [
+/**
+ * The modes the 8th Wall provider stamps when its unit is the engine's own (src/ar/engine-config.ts): responsive scale,
+ * and absolute scale before the estimate is in or when the engine did not take it. The fifth, `absolute-ready`, is the
+ * engine's estimate of metres.
+ */
+const EIGHTH_WALL_OWN_UNIT_MODES: ScaleMode[] = [
   'responsive-unconfigured',
   'responsive-originY:1.4',
   'absolute-notapplied',
   'absolute-notready',
-  'absolute-ready',
 ]
 
 /** A posed keyframe record, as keyframes.jsonl holds it, with `scaleMode` as given (left off when undefined). */
@@ -69,18 +74,27 @@ test('keyframes stamped by WebXR, or by ARCore or ARKit behind the native plugin
   assertEquals(keyframesScaleKind([...stamped('native-metric'), posed(8, 'webxr-metric')]), 'metric')
 })
 
-test('keyframes stamped by 8th Wall say nothing, in every scale mode, absolute-ready included', () => {
-  for (const mode of EIGHTH_WALL_MODES) {
-    assertEquals(keyframesScaleKind(stamped(mode)), undefined, mode)
+test('keyframes stamped by 8th Wall say estimated metres in absolute scale with its estimate in, and its own unit otherwise', () => {
+  assertEquals(keyframesScaleKind(stamped('absolute-ready')), 'estimated-metric')
+  for (const mode of EIGHTH_WALL_OWN_UNIT_MODES) {
+    assertEquals(keyframesScaleKind(stamped(mode)), 'arbitrary', mode)
   }
 })
 
-test('one keyframe that is not from a metric runtime makes the whole capture say nothing', () => {
+test('the weakest keyframe decides the whole capture', () => {
   // A native session handed over to 8th Wall partway: its later frames are in the engine's own unit.
-  assertEquals(keyframesScaleKind([...stamped('native-metric'), posed(8, 'responsive-unconfigured')]), undefined)
+  assertEquals(keyframesScaleKind([...stamped('native-metric'), posed(8, 'responsive-unconfigured')]), 'arbitrary')
+  // An absolute-scale session whose estimate came in partway: the frames before it were in another unit.
+  assertEquals(keyframesScaleKind([posed(0, 'absolute-notready'), ...stamped('absolute-ready')]), 'arbitrary')
+  // Metres from one runtime and the engine's estimate from another: estimated, not metric.
+  assertEquals(keyframesScaleKind([...stamped('webxr-metric'), posed(8, 'absolute-ready')]), 'estimated-metric')
+})
+
+test('one keyframe with no stamp makes the whole capture say nothing', () => {
   // A frame from before the stamp, or from a client that sends none.
   assertEquals(keyframesScaleKind([...stamped('webxr-metric'), posed(8)]), undefined)
   assertEquals(keyframesScaleKind([posed(0), ...stamped('webxr-metric')]), undefined, 'wherever the frame is')
+  assertEquals(keyframesScaleKind([...stamped('absolute-ready'), posed(8, 'not-a-mode')]), undefined, 'or a stamp that is not a mode')
 })
 
 test('a stamp that is not a mode is no stamp', () => {
@@ -155,9 +169,12 @@ test('a scan with no calibration takes its unit from the runtime that posed its 
     assertEquals(kind, 'metric', runtime)
     assertEquals(floorPlanUnitsFor(kind), 'm', runtime)
   }
-  for (const mode of EIGHTH_WALL_MODES) {
+  const estimated = floorPlanScaleKind({ uncalibrated: true }, stamped('absolute-ready'))
+  assertEquals(estimated, 'estimated-metric', '8th Wall in absolute scale, its estimate in')
+  assertEquals(floorPlanUnitsFor(estimated), 'm-estimated')
+  for (const mode of EIGHTH_WALL_OWN_UNIT_MODES) {
     const kind = floorPlanScaleKind({ uncalibrated: true }, stamped(mode))
-    assertEquals(kind, undefined, mode)
+    assertEquals(kind, 'arbitrary', mode)
     assertEquals(floorPlanUnitsFor(kind), 'session', mode)
   }
   assertEquals(floorPlanUnitsFor(floorPlanScaleKind({ uncalibrated: true }, stamped(undefined))), 'session', 'a capture from before the stamp')
@@ -209,13 +226,23 @@ test('runFloorPlan draws an uncalibrated WebXR, ARCore or ARKit capture in metre
   }
 })
 
-test('runFloorPlan keeps an uncalibrated 8th Wall capture, and one from before the stamp, in session units', async () => {
-  for (const mode of [...EIGHTH_WALL_MODES, undefined]) {
+test('runFloorPlan draws an uncalibrated 8th Wall capture in absolute scale, its estimate in, in approximate metres', async () => {
+  const run = await runWith('absolute-ready', { scaleKind: undefined, uncalibrated: true })
+  assertEquals(run.status, 'ok')
+  assertEquals(run.argUnits, 'm-estimated', 'the worker labels in approximate metres')
+  assertEquals(run.manifestUnits, 'm-estimated', 'the manifest the editor reads says approximate metres')
+})
+
+test('runFloorPlan keeps an uncalibrated 8th Wall capture in the engine\'s own unit, and one from before the stamp, in session units', async () => {
+  for (const mode of [...EIGHTH_WALL_OWN_UNIT_MODES, undefined]) {
     const run = await runWith(mode, { scaleKind: undefined, uncalibrated: true })
     assertEquals(run.status, 'ok', String(mode))
     assertEquals(run.argUnits, 'session', String(mode))
     assertEquals(run.manifestUnits, 'session', String(mode))
   }
+  // A session whose absolute-scale estimate came in partway.
+  const settling = await runWith((k: number) => (k === 0 ? 'absolute-notready' : 'absolute-ready'), { uncalibrated: true })
+  assertEquals(settling.manifestUnits, 'session', 'one frame from before the estimate')
 })
 
 test('runFloorPlan keeps a calibrated scan in its calibration\'s unit, whatever its keyframes say', async () => {
@@ -223,6 +250,7 @@ test('runFloorPlan keeps a calibrated scan in its calibration\'s unit, whatever 
     { scan: { scaleKind: 'arbitrary', uncalibrated: false }, frames: 'webxr-metric', units: 'session' },
     { scan: { scaleKind: 'estimated-metric', uncalibrated: false }, frames: 'webxr-metric', units: 'm-estimated' },
     { scan: { scaleKind: 'metric', uncalibrated: false }, frames: 'responsive-unconfigured', units: 'm' },
+    { scan: { scaleKind: 'arbitrary', uncalibrated: false }, frames: 'absolute-ready', units: 'session' },
     // Calibrated, with no unit recorded (the known-distance tier, or a record from before units were).
     { scan: { uncalibrated: false }, frames: 'webxr-metric', units: 'session' },
     { scan: {}, frames: 'native-metric', units: 'session' },
