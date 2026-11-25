@@ -1028,7 +1028,7 @@ async function main() {
         // The reason goes on the start screen too, where the reader is looking. The
         // overlay above sits under it. See showArHelp(). The desktop app's start screen already
         // says why it cannot capture (FN-019), which is more use to its reader than this.
-        if (!desktopApp) showArHelp(reason)
+        if (!desktopApp) showArHelp(reason, buildRuntime)
         // Arms the section-0 gate to report this instead of dead-ending — see
         // arRuntimeError. Must be set BEFORE the return, because the tap that
         // needs it may still be sitting behind the open Place picker.
@@ -3202,8 +3202,12 @@ function setStartButtonState(state: 'ready' | 'unavailable', label?: string): vo
  * label, as the verdict path does it. When it has a next step (an engine that did
  * not load: reload the page), the step replaces the device advice, because "open
  * this in Safari" is the wrong remedy there.
+ *
+ * `buildRuntime` is the runtime the build forces (buildForcedRuntime of VITE_AR_RUNTIME). The Android app's WebXR-only
+ * build never uses ARCore, so its advice is the browser, not Google Play Services for AR. That build was first
+ * installed on an XREAL Aura on 2026-11-24, whose WebView has no WebXR, and told it to get Play Services.
  */
-function showArHelp(reason: string): void {
+function showArHelp(reason: string, buildRuntime: string | null = null): void {
   const [headline, ...steps] = reason.split('\n')
   setStartButtonState('unavailable', headline)
   const nextStep = steps.map((line) => line.replace(/^•\s*/, '')).join(' ')
@@ -3219,7 +3223,9 @@ function showArHelp(reason: string): void {
     : app === 'ios'
       ? 'Live capture needs an iPhone or iPad that supports ARKit.'
       : app === 'android'
-        ? 'Live capture needs Google Play Services for AR on this phone.'
+        ? buildRuntime === 'webxr'
+          ? "To capture, open your Scan server's /webxr.html page in the browser."
+          : 'Live capture needs Google Play Services for AR on this phone.'
         : isIOS
           ? 'To capture live in Safari, use the main scanner, or install HelloXR.'
           : /Android/i.test(ua)
