@@ -219,7 +219,7 @@ import { runSplatFinish } from './splat/splat_finish.ts'
 import { runSenseNovaVision, senseNovaTask } from './sensenova_vision.ts'
 import { runPanopticScan } from './panoptic/panoptic_scan.ts'
 import { runPanopticLift } from './panoptic/panoptic_lift.ts'
-import { runFloorPlan, scaleKindOfScan } from './floor_plan.ts'
+import { isUncalibratedScan, runFloorPlan, scaleKindOfScan } from './floor_plan.ts'
 import {
   configFromEnv as portalAuthConfig,
   isPersonClipFetch,
@@ -4782,7 +4782,9 @@ async function _runFloorPlanJob(slug: string, jobId: string, signal?: AbortSigna
       manifestPath: `${SCANS_DIR}/${manifestName}`,
       minWallM: typeof minWall === 'number' && Number.isFinite(minWall) && minWall >= 0 ? minWall : undefined,
       provenance: { sessionId, scanId: scan.scanId },
+      // The calibration's unit, and for a scan with none, the one the runtime that posed its keyframes stamped on them.
       scaleKind: scaleKindOfScan(scan),
+      uncalibrated: isUncalibratedScan(scan),
       signal,
     })
 

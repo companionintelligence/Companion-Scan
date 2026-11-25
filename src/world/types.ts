@@ -1175,8 +1175,10 @@ export interface ScanManifest {
   calibrationMethod?: ScanCalibration['method']
   calibrationStatus?: ScanCalibration['status']
   /**
-   * The unit this scan's AR session ran in; see `ScanCalibration['scaleMode']`. Absent when the sidecar
-   * names none: a scan uploaded before units were recorded, or one the scanner never calibrated.
+   * The unit this scan's AR session ran in, as its calibration recorded it; see `ScanCalibration['scaleMode']`.
+   * Absent when the sidecar names none: a scan uploaded before units were recorded, or one the scanner never
+   * calibrated. The keyframes of such a scan may still name their runtime's unit (each one's `scaleMode`); the
+   * floor plan reads that for a scan with no calibration (server/floor_plan.ts), and these fields do not.
    */
   scaleMode?: ScaleMode
   scaleKind?: ScaleKind

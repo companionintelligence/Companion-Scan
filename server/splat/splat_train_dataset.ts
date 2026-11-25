@@ -62,6 +62,12 @@ export interface KeyframeRecord {
     cx?: number
     cy?: number
   } | null
+  /**
+   * The unit the pose is in, as the scale mode of the runtime that posed it (src/world/scale-mode.ts), which the scanner
+   * stamps on each frame (src/capture/keyframes.ts). Whatever the client sent: read it through `asScaleMode`. Absent on a
+   * frame from before the stamp, and from a client that sends none (a photo or video ingest, the Quest app).
+   */
+  scaleMode?: unknown
 }
 
 export interface NerfstudioFrame {

@@ -16,7 +16,9 @@
  *
  * Nothing in the stored data used to say which of these a scan was in. These types are what
  * `src/ar/engine-config.ts` stamps onto a calibration, `src/export/gltf.ts` writes into the upload
- * sidecar, and `server/calibration_fields.ts` reads back onto the `ScanManifest`.
+ * sidecar, and `server/calibration_fields.ts` reads back onto the `ScanManifest`. A scan with no
+ * calibration gets none of that, so `src/capture/keyframes.ts` also stamps the mode on every keyframe,
+ * and `server/floor_plan.ts` reads it there for such a scan.
  *
  * Kept in `src/world` with no Node references (ADR 0002): the scanner, the Node tests and the
  * server all import it.

@@ -379,6 +379,16 @@ so it is the room seen from above and not its mirror image.
 > drawing's labels say "m" only for the first two. Derived, not survey-grade,
 > either way: every file says so in its `disclaimer`.
 >
+> A calibration is what records `scaleKind` on a scan. A scan with no
+> calibration takes its unit from its keyframes instead: the scanner stamps
+> each one with its runtime's scale mode (`scaleMode` in `keyframes.jsonl`),
+> and when every keyframe with an AR pose says `webxr-metric` or
+> `native-metric`, the plan is in `"m"`. Anything else stays `"session"`: any
+> 8th Wall mode (`absolute-ready` too, which a calibration would record as
+> `estimated-metric`), a mix, or a frame with no stamp, as on every capture
+> made before the scanner stamped them. A calibrated scan keeps its
+> calibration's unit, or `"session"` when the calibration recorded none.
+>
 > A capture with no AR poses (a photo or video ingest) has nothing to fit to,
 > so its floor plan is a `skipped` job that says why, rather than a plan drawn
 > on a guess. So is one whose poses the cloud does not fit: fewer than four
@@ -451,9 +461,11 @@ splat-detect's does. `GET /capabilities` lists the stage as `floor-plan`, on
 the `lingbot-map-python` row.
 
 **Limits:** one outline per scan; a capture with no AR poses gets no plan; the
-units are metres only when the capture's AR runtime measured in metres; the
-north arrow is a placeholder; the fit and the plan have run on synthetic
-captures only, not on a real LingBot-Map cloud.
+units are metres only when the capture's AR runtime measured in metres, as
+its calibration or, with none, its keyframes record it; an uncalibrated
+capture from before the keyframe stamp, or from the Quest app, which sends
+none, stays in session units; the north arrow is a placeholder; the fit and
+the plan have run on synthetic captures only, not on a real LingBot-Map cloud.
 
 ---
 

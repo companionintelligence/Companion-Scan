@@ -24,9 +24,12 @@
  * file name as splat-align pairs them. The rotation comes from the cameras' orientations, which a capture walked in a
  * straight line (a hallway) still fixes; the scale and offset come from their centres. The worker gets that similarity
  * as `--transform`, with `--up-axis y` (an AR session's frame is Y-up) and `--units`, from the scan's `scaleKind`:
- * metres for a metric runtime, approximate metres for an estimated one, the session's own units otherwise. A scan
- * with no AR poses (a photo or video ingest), or poses the cloud does not fit, is a skip that says so: nothing else
- * sets the plan's scale or which way is up, and a plan drawn on a guess is wrong without saying so.
+ * metres for a metric runtime, approximate metres for an estimated one, the session's own units otherwise. A calibration
+ * is what stamps `scaleKind` on a scan, so a scan with no calibration has none; its plan is in metres when every keyframe
+ * with an AR pose says it was posed by a runtime that is metric by contract (`keyframesScaleKind`), and in the session's
+ * own units otherwise (`floorPlanScaleKind`). A scan with no AR poses (a photo or video ingest), or poses the cloud does
+ * not fit, is a skip that says so: nothing else sets the plan's scale or which way is up, and a plan drawn on a guess is
+ * wrong without saying so.
  *
  * Worker contract (scripts/floor_plan_worker.py):
  *   floor_plan_worker.py --ply <cloud> --out-json <p> --out-svg <p> [--min-wall-m 0.5]
@@ -37,7 +40,7 @@ import * as fs from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
 import type { FloorPlanAlignment, FloorPlanManifest, FloorPlanUnits, ScanManifest } from '../src/world/types.ts'
-import { type ScaleKind, scaleKindOfMode } from '../src/world/scale-mode.ts'
+import { asScaleMode, type ScaleKind, scaleKindOfMode } from '../src/world/scale-mode.ts'
 import { displayPathOf, locateTool, runnerToolLookup, toolSkip } from './exec_probe.ts'
 import { makeTempDir } from './fs_util.ts'
 import { REPO_ROOT } from './repo-root.ts'
@@ -101,9 +104,63 @@ const REFIT_REMEDIATION =
   'Run lingbot-map-reconstruct on this scan again. If it repeats, the AR tracking or the reconstruction is off for ' +
   'this capture: re-scan the room.'
 
-/** What one unit of a scan's AR session is worth: its recorded `scaleKind`, else the kind of its `scaleMode`. */
+/**
+ * What one unit of a scan's AR session is worth, as its calibration recorded it: its `scaleKind`, else the kind of its
+ * `scaleMode`. Both are stamped by a calibration (`stampScale`, src/ar/engine-config.ts), so a scan with none has neither.
+ */
 export function scaleKindOfScan(scan: Pick<ScanManifest, 'scaleKind' | 'scaleMode'>): ScaleKind | undefined {
   return scan.scaleKind ?? (scan.scaleMode !== undefined ? scaleKindOfMode(scan.scaleMode) : undefined)
+}
+
+/**
+ * Whether a scan carries no calibration: its sidecar names no calibration tier (`calibrationMethod`). The scanner writes
+ * the tier beside the calibration's status and unit, so a scan that has one is never read as one that has none.
+ */
+export function isUncalibratedScan(scan: Pick<ScanManifest, 'calibrationMethod'>): boolean {
+  return scan.calibrationMethod === undefined
+}
+
+/**
+ * What one unit of a capture's AR session is worth, from the runtime that posed its keyframes: `'metric'` when every
+ * keyframe with an AR pose carries a scale mode (`scaleMode`, stamped per frame by src/capture/keyframes.ts) whose kind is
+ * `'metric'`, which is WebXR's (`'webxr-metric'`) and ARCore's or ARKit's behind the native plugin (`'native-metric'`).
+ * Undefined otherwise.
+ *
+ * Anything less is undefined, and so is the whole capture:
+ *   - a posed frame with no mode: a capture from before the stamp, or from a client that sends none (the Quest app);
+ *   - a stored value that is not a mode;
+ *   - any 8th Wall mode. In responsive scale the unit is the engine's own, which is not metric. In absolute scale it is the
+ *     engine's estimate (`'absolute-ready'`, kind `'estimated-metric'`). A calibrated scan in that mode is drawn in
+ *     approximate metres; whether an uncalibrated one should be too is not decided here, so it stays in session units.
+ *     That includes a session whose frames are partly metric: a native session handed over to 8th Wall partway.
+ *   - no posed frame at all.
+ *
+ * Only the posed frames are read: a record with no AR pose gives the plan nothing to fit, so its unit says nothing of it.
+ */
+export function keyframesScaleKind(records: KeyframeRecord[]): 'metric' | undefined {
+  let posed = 0
+  for (const rec of records) {
+    if (!recordHasPose(rec)) continue
+    const mode = asScaleMode(rec.scaleMode)
+    if (mode === undefined || scaleKindOfMode(mode) !== 'metric') return undefined
+    posed++
+  }
+  return posed > 0 ? 'metric' : undefined
+}
+
+/**
+ * The unit a scan's plan is drawn in, as a `ScaleKind`. The calibration's (`scaleKind`, from `scaleKindOfScan`) whenever the
+ * scan has one: a calibration is never overridden, and a calibration that recorded no unit (the `'known-distance'` tier, a
+ * record from before units were recorded) leaves the plan in session units, as it always has. Only for a scan with no
+ * calibration (`uncalibrated`, from `isUncalibratedScan`) is the unit taken from the runtime that posed the keyframes
+ * (`keyframesScaleKind`).
+ */
+export function floorPlanScaleKind(
+  scan: { scaleKind?: ScaleKind; uncalibrated?: boolean },
+  records: KeyframeRecord[],
+): ScaleKind | undefined {
+  if (scan.scaleKind !== undefined || scan.uncalibrated !== true) return scan.scaleKind
+  return keyframesScaleKind(records)
 }
 
 /** The units the plan is drawn in, from what one unit of the scan's AR session is worth. */
@@ -253,10 +310,16 @@ export interface FloorPlanRunOptions {
   /** Shortest wall segment kept, in the cloud's units. Env FLOORPLAN_MIN_WALL_M, then 0.5. */
   minWallM?: number
   /**
-   * What one unit of the scan's AR session is worth: the scan's `scaleKind`, or `scaleKindOfMode` of its `scaleMode`.
-   * Absent for a scan from before either was recorded, which reads as the session's own units.
+   * What one unit of the scan's AR session is worth, as its calibration recorded it (`scaleKindOfScan`): the scan's
+   * `scaleKind`, or `scaleKindOfMode` of its `scaleMode`. Absent for a scan with no calibration, and for one whose
+   * calibration recorded no unit; either reads as the session's own units unless `uncalibrated` says otherwise.
    */
   scaleKind?: ScaleKind
+  /**
+   * True for a scan that carries no calibration (`isUncalibratedScan`). Then, and only then, the unit comes from the
+   * runtime that posed the keyframes when `scaleKind` is absent (`floorPlanScaleKind`). Absent or false: `scaleKind` alone.
+   */
+  uncalibrated?: boolean
   /** For testing: skip the real spawn and treat this as the worker run. */
   _spawn?: (bin: string, args: string[], env: Record<string, string>) => Promise<SpawnResult>
   /** Provenance forwarded into the manifest. */
@@ -367,7 +430,8 @@ export async function runFloorPlan(opts: FloorPlanRunOptions): Promise<FloorPlan
     }, 0, 'floor-plan skipped: lingbot-map verdict is degenerate')
   }
   // The capture's AR poses set the plan's scale and its up axis. None that fit is a skip, not a plan on a guess.
-  const fit = fitCloudToSession(await readLingbotPoses(opts.sessionDir!), await readKeyframes(opts.sessionDir!))
+  const records = await readKeyframes(opts.sessionDir!)
+  const fit = fitCloudToSession(await readLingbotPoses(opts.sessionDir!), records)
   if (!fit.ok) {
     return _finish(manifestPath, {
       ...baseManifest,
@@ -376,7 +440,8 @@ export async function runFloorPlan(opts: FloorPlanRunOptions): Promise<FloorPlan
       remediation: fit.remediation,
     }, 0, `floor-plan skipped: ${fit.reason}`)
   }
-  const units = floorPlanUnitsFor(opts.scaleKind)
+  // The unit of those same poses: the calibration's, or for a scan with none, the runtime's that posed them.
+  const units = floorPlanUnitsFor(floorPlanScaleKind(opts, records))
   const { transform, ...alignment } = fit.alignment
 
   // 2. The interpreter and the worker. One that is not found is a skip with the remediation GET /capabilities prints.

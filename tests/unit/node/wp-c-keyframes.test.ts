@@ -14,6 +14,9 @@
  * stop in flight.
  * WP-09: each keyframe's meta carries the frame epoch its pose was read in
  * (src/ar/frame-epoch.ts), so a session whose frames span a frame shift says so.
+ * Scale mode: each keyframe's meta names the unit of the runtime that posed it
+ * (`scaleMode`, src/world/scale-mode.ts), read as the frame is taken, which the
+ * floor plan of a scan with no calibration reads (server/floor_plan.ts).
  *
  * Run: node --experimental-strip-types --no-warnings --test tests/unit/node/wp-c-keyframes.test.ts
  */
@@ -566,4 +569,105 @@ test('WP-09b: no keyframe is taken while recording is held, and the stream carri
   await tick(s)
   await settle()
   assert.equal(p.captures, 1)
+})
+
+// ─── The unit each keyframe's pose is in: the provider's scale mode ────────────────────────────
+
+/** A stub provider that names its unit the way the providers do (`scaleMode()`, src/world/scale-mode.ts). */
+function scaleProvider(mode: unknown): StubProvider & { mode: unknown; scaleMode(): unknown } {
+  const p = Object.assign(stubProvider(true, 'NORMAL'), {
+    mode,
+    scaleMode(): unknown {
+      return p.mode
+    },
+  })
+  return p
+}
+
+test('scale mode: a keyframe\'s meta names the unit of the runtime that posed it, WebXR, native or 8th Wall', async (t) => {
+  for (const mode of ['webxr-metric', 'native-metric', 'responsive-unconfigured', 'responsive-originY:1.4', 'absolute-ready']) {
+    reset()
+    const s = streamerFor(scaleProvider(mode))
+    t.after(() => s.stop())
+    await s.start()
+    await tick(s)
+    await settle()
+    assert.equal(uploadedMeta.length, 1, mode)
+    assert.equal(uploadedMeta[0]!['scaleMode'], mode)
+    await s.stop()
+  }
+})
+
+test('scale mode: the native provider\'s getter form is read as the method form is', async (t) => {
+  reset()
+  // NativeARProvider (src/ar/native.ts) exposes `scaleMode` as a getter that returns the function to call.
+  const p = Object.assign(stubProvider(true, 'NORMAL'), {})
+  Object.defineProperty(p, 'scaleMode', { get: () => () => 'native-metric' })
+  const s = streamerFor(p)
+  t.after(() => s.stop())
+  await s.start()
+  await tick(s)
+  await settle()
+  assert.equal(uploadedMeta[0]!['scaleMode'], 'native-metric')
+})
+
+test('scale mode: frames in one session carry the mode each was taken in, as 8th Wall absolute scale settles', async (t) => {
+  reset()
+  const p = scaleProvider('absolute-notready')
+  const s = streamerFor(p)
+  t.after(() => s.stop())
+  await s.start()
+  await tick(s)
+  await settle()
+  p.mode = 'absolute-ready'
+  p.moveTo(1)
+  await tick(s)
+  await settle()
+  assert.deepEqual(uploadedMeta.map((m) => m['scaleMode']), ['absolute-notready', 'absolute-ready'])
+})
+
+test('scale mode: the mode is the one the frame was taken in, not the one the provider has moved to while the JPEG was encoded', async (t) => {
+  reset()
+  const p = scaleProvider('absolute-notready')
+  ;(globalThis as { createImageBitmap?: unknown }).createImageBitmap = async () => {
+    p.mode = 'absolute-ready'
+    return { close(): void {} }
+  }
+  t.after(() => {
+    ;(globalThis as { createImageBitmap?: unknown }).createImageBitmap = async () => ({ close(): void {} })
+  })
+  const s = streamerFor(p)
+  t.after(() => s.stop())
+  await s.start()
+  await tick(s)
+  await settle()
+  assert.equal(p.mode, 'absolute-ready', 'the scale settled during the encode')
+  assert.equal(uploadedMeta[0]!['scaleMode'], 'absolute-notready')
+})
+
+test('scale mode: a provider that names none, throws, or answers with something that is not a mode sends its frame with no scaleMode key', async (t) => {
+  const throwing = Object.assign(stubProvider(true, 'NORMAL'), {
+    scaleMode(): never {
+      throw new Error('engine gone')
+    },
+  })
+  const cases: Array<[string, StubProvider]> = [
+    ['no scaleMode', stubProvider(true, 'NORMAL')],
+    ['undefined', scaleProvider(undefined)],
+    ['throws', throwing],
+    ['a kind, not a mode', scaleProvider('metric')],
+    ['a word that is no mode', scaleProvider('webxr')],
+    ['a number', scaleProvider(1)],
+  ]
+  for (const [what, p] of cases) {
+    reset()
+    const s = streamerFor(p)
+    t.after(() => s.stop())
+    await s.start()
+    await tick(s)
+    await settle()
+    assert.equal(uploadedMeta.length, 1, `${what}: the frame is still sent`)
+    assert.equal('scaleMode' in uploadedMeta[0]!, false, what)
+    await s.stop()
+  }
 })

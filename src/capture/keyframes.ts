@@ -21,6 +21,7 @@ import { epochOf } from '../ar/frame-epoch.ts'
 import { isQueuedOffline } from '../shared/offline-queue.ts'
 import { apiUrl } from '../shared/api-base.ts'
 import { rotationAngleDeg } from '../shared/pose-math.ts'
+import { asScaleMode, type ScaleMode } from '../world/scale-mode.ts'
 import { FRAME_JPEG_MAX_LONG_EDGE_PX, FRAME_JPEG_QUALITY, encodeFrameJpeg, fitLongEdge } from './frame-image.ts'
 
 export interface KeyframeStreamerOptions {
@@ -117,6 +118,21 @@ const UPLOAD_TIMEOUT_MS = 20_000
 export function keyframeUploadRetryable(status: number): boolean {
   if (status === 408 || status === 429) return true
   return !(status >= 400 && status < 500)
+}
+
+/**
+ * The unit the provider's session is in at this instant (`ARProvider.scaleMode`), or undefined when it names none.
+ *
+ * Asked with no `since`: that argument is for a calibration, whose points were measured by hit tests over a span of time,
+ * and a keyframe measures nothing. A frame is worth more than the stamp on it, so a provider whose read throws, or that
+ * answers with something that is not a mode, gives no stamp and the frame is still sent.
+ */
+function scaleModeNow(provider: Pick<ARProvider, 'scaleMode'>): ScaleMode | undefined {
+  try {
+    return asScaleMode(provider.scaleMode?.())
+  } catch {
+    return undefined
+  }
 }
 
 export class KeyframeStreamer {
@@ -417,6 +433,8 @@ export class KeyframeStreamer {
       : epochOf(this.provider)
     // The run is read where the epoch is, for the same reason: the frame belongs to the scan that was live when it was taken.
     const arRunId = this._opts.runId()
+    // And so is the unit the pose is in, which 8th Wall's absolute scale changes while tracking settles.
+    const scaleMode = scaleModeNow(this.provider)
 
     // The size the JPEG is encoded at, which the intrinsics below describe.
     const { width: w, height: h } = fitLongEdge(width, height, this._opts.maxLongEdgePx)
@@ -438,6 +456,10 @@ export class KeyframeStreamer {
       epoch,
       // The run the scan store was in, with the epoch a re-anchored scan began in on the end (`<run>.<epoch>`).
       ...(arRunId ? { arRunId } : {}),
+      // What one unit of the pose is worth, as the configuration that produced it (src/world/scale-mode.ts): the record
+      // of which runtime posed the frame. The floor plan of a scan with no calibration reads it (server/floor_plan.ts).
+      // Absent when the provider names none.
+      ...(scaleMode ? { scaleMode } : {}),
       intrinsics: {
         fovYDeg: this.provider.getCameraFovY(),
         aspect: this.provider.getCameraAspect(),

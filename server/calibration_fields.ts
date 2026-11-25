@@ -400,7 +400,9 @@ function twoPointEvidenceFromMeta(meta: Record<string, unknown>, record: unknown
  *
  * A scan the scanner never calibrated has no unit to report either. The sidecar this build writes for
  * one says `null` in both flat keys and an older sidecar has no key at all; the manifest does not tell
- * those two apart, and both come out with no key.
+ * those two apart, and both come out with no key. Its keyframes may still say which runtime posed them
+ * (each one's `scaleMode`, src/capture/keyframes.ts). The floor plan reads that for a scan with no
+ * calibration (server/floor_plan.ts); the manifest does not, so these two fields stay the calibration's.
  */
 export function calibrationScaleFromMeta(meta: Record<string, unknown>): Pick<ScanManifest, 'scaleMode' | 'scaleKind'> {
   const record = meta['calibration']
