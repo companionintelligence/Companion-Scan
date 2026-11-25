@@ -246,13 +246,36 @@ export function planPlaceRegister(
  * history trimming happen, and enqueues the returned job on the pump after the
  * world lock is released. Null means nothing was queued.
  */
+/**
+ * When a stored scan arrived, read from its name, which the upload gives as `<ms>_<stem>.glb`
+ * (server/world/scan_store.ts). A name with no such prefix counts as the oldest.
+ */
+function arrivalOf(scan: Pick<ScanManifest, 'filename'>): [number, string] {
+  const ms = /^(\d+)_/.exec(scan.filename)
+  return [ms ? Number(ms[1]) : 0, scan.filename]
+}
+
+/** True when `earlier` arrived before `later`. Two uploads in the same millisecond are ordered by name. */
+function arrivedBefore(earlier: Pick<ScanManifest, 'filename'>, later: Pick<ScanManifest, 'filename'>): boolean {
+  const [a, aName] = arrivalOf(earlier)
+  const [b, bName] = arrivalOf(later)
+  return a !== b ? a < b : aName < bName
+}
+
 export function queuePlaceRegisterForScan(
   world: WorldProject,
   scanId: string,
   create: (world: WorldProject, type: 'place-register', scanId: string, payload: Record<string, unknown>) => WorldJob,
 ): WorldJob | null {
   if (!PLACE_REGISTER_AUTO_QUEUE) return null
-  const plan = planPlaceRegister(world, scanId)
+  // This runs after the upload has answered, and a scan stored a moment later can already be in the world by then. The
+  // references are the scans that arrived before this one, so the later upload is the one that joins and the earlier
+  // one queues nothing. Without this, which of two concurrent uploads got a proposal depended on how their hooks were
+  // scheduled, and the first scan of a Place could get a proposal against the second (the place-register race).
+  const joiner = world.scans.find((scan) => scan.scanId === scanId)
+  if (!joiner) return null
+  const arrivedFirst = { scans: world.scans.filter((scan) => scan.scanId === scanId || arrivedBefore(scan, joiner)) }
+  const plan = planPlaceRegister(arrivedFirst, scanId)
   if (!plan.ok) return null
   return create(world, 'place-register', scanId, {
     source: 'joined-place',
