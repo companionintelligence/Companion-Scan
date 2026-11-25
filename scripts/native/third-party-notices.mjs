@@ -5,10 +5,13 @@
  *   node scripts/native/third-party-notices.mjs --shell desktop|mobile --bundle-report <json>
  *        --out <THIRD-PARTY-NOTICES.txt> [--json <notices.json>] [--targets <rust triple,...>]
  *   node scripts/native/third-party-notices.mjs --merge <a.json> <b.json>... --out <file.txt>
+ *   node scripts/native/third-party-notices.mjs --shell quest [--out-dir <folder>]
  *
  * scripts/native/build-web.mjs runs the first form for every shell build and puts the result in
  * the bundle (THIRD-PARTY-NOTICES.txt beside index.html), so each app carries its own notices.
- * The release workflow merges the JSON of every build into the release asset.
+ * The release workflow merges the JSON of every build into the release asset. The last form is the
+ * Quest app's (meta/), which has no web bundle: run it after the app's build, and it writes the
+ * notices to meta/build/third-party-notices/ (or <folder>) for a release to attach beside the APK.
  *
  * What is listed, and where it comes from:
  *   - npm packages: the ones whose modules are in the web bundle (the Vite module list that
@@ -27,6 +30,12 @@
  *     the onnxruntime-web WASM files, qrcodegen, and the WebView2 loader (Windows).
  *   - Data the bundle includes by its module: the World Magnetic Model coefficients (NOAA NCEI), when
  *     the web bundle holds src/world/wmm<year>-coefficients.ts (addBundledData).
+ *   - The Quest app (--shell quest): every library in its release APK, direct or transitive, from its
+ *     Gradle lockfile (meta/app/gradle.lockfile), which its release build enforces as the Android
+ *     app's does, each with the licence QUEST_LICENCES gives it. The Meta Spatial SDK gets the
+ *     copyright notice its agreement asks for and the agreement's text, and its notices.html goes
+ *     beside the notices: both files are read from the SDK's AARs, in the Gradle cache that the
+ *     app's build filled (questNotices).
  *
  * Every component gets its licence text: the files it ships, or, for one that ships none, its
  * project's text kept in scripts/native/licence-texts/ (SUPPLIED_TEXTS). A proprietary SDK whose
@@ -36,9 +45,11 @@
  */
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { crc32, inflateRawSync } from 'node:zlib'
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -538,17 +549,263 @@ export function mergeNotices(parts) {
   return { titles: merged.titles, components: merged.components, texts: merged.texts }
 }
 
+/** The lockfile that pins every library of the Quest app's release build (meta/app/build.gradle.kts). */
+export const QUEST_LOCKFILE = join(ROOT, 'meta', 'app', 'gradle.lockfile')
+
+/** Where `--shell quest` writes the Quest app's notices, unless --out-dir names another folder. build/ is git-ignored. */
+export const QUEST_NOTICES_DIR = join(ROOT, 'meta', 'build', 'third-party-notices')
+
+/** The Quest app's name, as its manifest labels it, which the first line of its notices gives. */
+export const QUEST_PRODUCT = 'Scan for Quest'
+
+/** The file the Meta Spatial SDK's notices.html is copied to, beside the Quest app's THIRD-PARTY-NOTICES.txt. */
+export const META_SDK_NOTICES_FILE = 'META-SPATIAL-SDK-NOTICES.html'
+
+/**
+ * What the Quest app's notices say of the Meta Spatial SDK, ahead of the text of its agreement. Section 1.3 of the
+ * Meta Platform Technologies SDK License Agreement asks that a redistribution of the SDK's materials carry the
+ * copyright notice below, and a copy of the "License" or "Notice" file they include. Each of the SDK's AARs carries
+ * two: LICENSE, the agreement, whose text follows this notice, and notices.html, the third-party code in the SDK's
+ * native libraries, which goes beside the notices unchanged (META_SDK_NOTICES_FILE).
+ */
+export const META_SPATIAL_SDK_NOTICE = [
+  'This app includes the Meta Spatial SDK.',
+  'Copyright © Meta Platform Technologies, LLC and its affiliates. All rights reserved.',
+  'The Meta Spatial SDK is licensed under the Meta Platform Technologies SDK License Agreement, '
+    + 'https://developer.oculus.com/licenses/oculussdk/, not under the licence of this app. Its text follows, as '
+    + "each of the SDK's AARs carries it (LICENSE).",
+].join('\n\n')
+
+/**
+ * The licence of each library the Quest app's release build pins (meta/app/gradle.lockfile), by `group:artifact`,
+ * as its POM declares it. Every name is spelled out, so a library none of them matches stops the notices, even one
+ * from a family listed here: check its licence (its POM, and the LICENSE in its AAR), then add it. The entries take
+ * the shape of ANDROID_LICENCES, and androidLicenceTexts gives each its texts, except the Meta Spatial SDK's
+ * (`metaSdk`), which get META_SPATIAL_SDK_NOTICE and then the agreement as the SDK's AARs carry it
+ * (questLicenceTexts). A `source` or `note` may be a function of the library, `{ group, artifact, version }`.
+ */
+export const QUEST_LICENCES = [
+  {
+    match: /^com\.meta\.spatial:meta-spatial-sdk(?:-isdk|-splat|-toolkit|-vr)?$/,
+    licence: 'Meta Platform Technologies SDK License Agreement (proprietary)',
+    source: ({ group, artifact, version }) => `https://repo1.maven.org/maven2/${group.replaceAll('.', '/')}/${artifact}/${version}/`,
+    note: `Its native libraries include third-party code, which ${META_SDK_NOTICES_FILE} lists with its licences `
+      + "(the notices.html each of the SDK's AARs carries, unchanged).",
+    metaSdk: true,
+  },
+  {
+    // The AAR ships no licence file; the text is onnxruntime's own LICENSE, as licence-texts/ keeps it.
+    match: /^com\.microsoft\.onnxruntime:onnxruntime-android$/,
+    licence: 'MIT',
+    source: 'https://github.com/microsoft/onnxruntime',
+    note: ({ version }) => 'The library also contains third-party code, which onnxruntime lists with its licences in '
+      + `https://github.com/microsoft/onnxruntime/blob/v${version}/ThirdPartyNotices.txt.`,
+    text: 'onnxruntime-LICENSE.txt',
+  },
+  { match: /^com\.squareup\.okhttp3:okhttp$/, licence: 'Apache-2.0', source: 'https://square.github.io/okhttp/' },
+  { match: /^com\.squareup\.okio:okio$/, licence: 'Apache-2.0', source: 'https://github.com/square/okio/' },
+  { match: /^org\.jetbrains\.kotlin:kotlin-stdlib$/, licence: 'Apache-2.0', source: 'https://github.com/JetBrains/kotlin' },
+  { match: /^org\.jetbrains\.kotlin:kotlin-stdlib-common$/, licence: 'Apache-2.0', source: 'https://kotlinlang.org/' },
+  {
+    match: /^org\.jetbrains\.kotlinx:kotlinx-coroutines-(?:android|bom|core|core-jvm)$/,
+    licence: 'Apache-2.0',
+    source: 'https://github.com/Kotlin/kotlinx.coroutines',
+  },
+  {
+    match: /^org\.jetbrains\.kotlinx:kotlinx-serialization-(?:bom|core|core-jvm|json|json-jvm)$/,
+    licence: 'Apache-2.0',
+    source: 'https://github.com/Kotlin/kotlinx.serialization',
+  },
+  { match: /^org\.jetbrains:annotations$/, licence: 'Apache-2.0', source: 'https://github.com/JetBrains/java-annotations' },
+]
+
+/**
+ * The licence texts a QUEST_LICENCES entry puts in the notices: androidLicenceTexts' for every entry but the Meta
+ * Spatial SDK's, which gets META_SPATIAL_SDK_NOTICE and then `metaSdk.licence`, the agreement its AARs carry.
+ */
+export function questLicenceTexts(entry, metaSdk) {
+  if (!entry.metaSdk) return androidLicenceTexts(entry)
+  if (!metaSdk?.licence) throw new Error("the Meta Spatial SDK's agreement was not read from its AARs, and the notices cannot be made without it")
+  return [META_SPATIAL_SDK_NOTICE, metaSdk.licence]
+}
+
+/** The Gradle home whose cache holds what a build downloaded: GRADLE_USER_HOME, as Gradle reads it, or ~/.gradle. */
+export function gradleHome(env = process.env) {
+  return env.GRADLE_USER_HOME || join(homedir(), '.gradle')
+}
+
+/** Every copy of a library's AAR in a Gradle cache: caches/modules-2/files-2.1/<group>/<artifact>/<version>/<sha1>/. */
+export function cachedAars({ group, artifact, version }, home = gradleHome()) {
+  const dir = join(home, 'caches', 'modules-2', 'files-2.1', group, artifact, version)
+  if (!existsSync(dir)) return []
+  return readdirSync(dir).sort().map((hash) => join(dir, hash, `${artifact}-${version}.aar`)).filter((path) => existsSync(path))
+}
+
+/**
+ * One file of a ZIP archive, such as an AAR, by its name, or null when the archive holds none by that name. It reads
+ * the central directory, so it needs no tool beside Node, and takes stored and deflated files, checked against their
+ * size and CRC-32. It does not read ZIP64 archives, which an AAR under 4 GiB is not.
+ * @param {Buffer} zip
+ * @param {string} name
+ * @returns {Buffer | null}
+ */
+export function zipEntry(zip, name) {
+  // The end of central directory record: 22 bytes, then a comment of up to 65535.
+  let end = -1
+  for (let at = zip.length - 22; at >= Math.max(0, zip.length - 22 - 0xffff); at--) {
+    if (zip.readUInt32LE(at) === 0x06054b50) {
+      end = at
+      break
+    }
+  }
+  if (end < 0) throw new Error(`no ZIP end of central directory, so ${name} cannot be read: not a ZIP archive`)
+  const count = zip.readUInt16LE(end + 10)
+  let at = zip.readUInt32LE(end + 16)
+  if (count === 0xffff || at === 0xffffffff) throw new Error(`a ZIP64 archive, which zipEntry does not read (${name})`)
+  for (let i = 0; i < count; i++) {
+    if (zip.readUInt32LE(at) !== 0x02014b50) throw new Error(`a damaged ZIP central directory, at entry ${i} (${name})`)
+    const nameLength = zip.readUInt16LE(at + 28)
+    const next = at + 46 + nameLength + zip.readUInt16LE(at + 30) + zip.readUInt16LE(at + 32)
+    if (zip.toString('utf8', at + 46, at + 46 + nameLength) === name) {
+      const [method, crc, size, length, offset] = [zip.readUInt16LE(at + 10), zip.readUInt32LE(at + 16), zip.readUInt32LE(at + 20),
+        zip.readUInt32LE(at + 24), zip.readUInt32LE(at + 42)]
+      if (zip.readUInt32LE(offset) !== 0x04034b50) throw new Error(`${name}: a damaged ZIP local header`)
+      const start = offset + 30 + zip.readUInt16LE(offset + 26) + zip.readUInt16LE(offset + 28)
+      const stored = zip.subarray(start, start + size)
+      if (method !== 0 && method !== 8) throw new Error(`${name}: ZIP compression method ${method}, which zipEntry does not read`)
+      const data = method === 8 ? inflateRawSync(stored) : Buffer.from(stored)
+      if (data.length !== length || crc32(data) !== crc) throw new Error(`${name}: its size or CRC-32 is not the one the ZIP directory records`)
+      return data
+    }
+    at = next
+  }
+  return null
+}
+
+/**
+ * The Meta Spatial SDK's agreement and third-party notices, from the AARs of `libraries` (the SDK's modules, at the
+ * versions the lockfile pins) in the Gradle cache that the Quest app's build filled. Each AAR carries both, as LICENSE
+ * and notices.html; the notices hold one copy of each, so every AAR must carry the same two files, and LICENSE must be
+ * the agreement. Stops when an AAR is not in the cache.
+ * @returns {{ licence: string, noticesHtml: Buffer }} the agreement as the notices print it, and notices.html's bytes
+ */
+export function metaSpatialSdkFiles(libraries, home = gradleHome()) {
+  const copies = []
+  for (const library of libraries) {
+    const coordinates = `${library.group}:${library.artifact}:${library.version}`
+    const aars = cachedAars(library, home)
+    if (!aars.length) {
+      throw new Error(`${coordinates} is not in the Gradle cache (${home}), so the LICENSE and notices.html its AAR carries cannot be `
+        + 'read. Build the Quest app first (in meta/: ./gradlew :app:assembleRelease), or set GRADLE_USER_HOME to the Gradle home its build used.')
+    }
+    for (const aar of aars) {
+      const zip = readFileSync(aar)
+      const [licence, noticesHtml] = ['LICENSE', 'notices.html'].map((name) => zipEntry(zip, name))
+      if (!licence || !noticesHtml) {
+        throw new Error(`the AAR of ${coordinates} carries no ${licence ? 'notices.html' : 'LICENSE'}, which every Meta Spatial SDK AAR has carried `
+          + 'and section 1.3 of its agreement asks to pass on. Read what this version carries, then change questNotices to match.')
+      }
+      copies.push({ coordinates, licence, noticesHtml })
+    }
+  }
+  if (!copies.length) throw new Error('no Meta Spatial SDK module was given, so there is no agreement to read')
+  const [first] = copies
+  const others = copies.filter((copy) => !copy.licence.equals(first.licence) || !copy.noticesHtml.equals(first.noticesHtml))
+  if (others.length) {
+    throw new Error(`the Meta Spatial SDK's AARs do not all carry the same LICENSE and notices.html (${first.coordinates} against `
+      + `${others.map((copy) => copy.coordinates).join(', ')}), so one copy of each cannot stand for them all. Change questNotices to carry each.`)
+  }
+  const licence = first.licence.toString('utf8').replace(/\r\n/g, '\n').trim()
+  if (!licence.startsWith('Meta Platform Technologies SDK License Agreement')) {
+    throw new Error(`the LICENSE in the AAR of ${first.coordinates} is not the Meta Platform Technologies SDK License Agreement. `
+      + 'Read what it is before the notices name it.')
+  }
+  return { licence, noticesHtml: first.noticesHtml }
+}
+
+/** The Quest app's version, as its build sets it (versionName in meta/app/build.gradle.kts), which titles its notices. */
+export function questVersion(gradle = readFileSync(join(ROOT, 'meta', 'app', 'build.gradle.kts'), 'utf8')) {
+  const version = gradle.match(/^\s*versionName\s*=\s*"([^"]+)"\s*$/m)?.[1]
+  if (!version) throw new Error('meta/app/build.gradle.kts sets no versionName, which the Quest notices are titled with')
+  return version
+}
+
+/**
+ * Builds the Quest app's notices (meta/): every library its release build pins, BOMs included, sorted by name, with
+ * the licence QUEST_LICENCES gives it, the Meta Spatial SDK's with its notice and agreement. Returns the notices, and
+ * the SDK's notices.html, which goes beside them (writeQuestNotices).
+ * @param {object} [options]
+ * @param {string} [options.lockfile] the lockfile's text: meta/app/gradle.lockfile's, unless the tests give another
+ * @param {(libraries: Array<{ group: string, artifact: string, version: string }>) => { licence: string, noticesHtml: Buffer }} [options.readMetaSdk]
+ *   what reads the SDK's agreement and notices.html: metaSpatialSdkFiles, from the Gradle cache, unless the tests give another
+ */
+export function questNotices({ lockfile, readMetaSdk = metaSpatialSdkFiles } = {}) {
+  if (lockfile === undefined) {
+    if (!existsSync(QUEST_LOCKFILE)) {
+      throw new Error('meta/app/gradle.lockfile is missing. In meta/, run ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --write-locks')
+    }
+    lockfile = readFileSync(QUEST_LOCKFILE, 'utf8')
+  }
+  const libraries = lockedLibraries(lockfile)
+    .map((library) => ({ ...library, name: `${library.group}:${library.artifact}` }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  if (!libraries.length) throw new Error('meta/app/gradle.lockfile pins no library for releaseRuntimeClasspath')
+  const entryOf = (library) => QUEST_LICENCES.find((entry) => entry.match.test(library.name))
+  const unknown = libraries.filter((library) => !entryOf(library)).map((library) => `${library.name}:${library.version}`)
+  if (unknown.length) {
+    throw new Error(`the Quest app's libraries include some of no known licence: ${unknown.join(', ')}. `
+      + 'Check the licence of each (its POM, and the LICENSE in its AAR), then add it to QUEST_LICENCES in scripts/native/third-party-notices.mjs.')
+  }
+  const sdkModules = libraries.filter((library) => entryOf(library).metaSdk)
+  const metaSdk = sdkModules.length ? readMetaSdk(sdkModules.map(({ group, artifact, version }) => ({ group, artifact, version }))) : null
+  const notices = new Notices(`${QUEST_PRODUCT} (meta/), release APK`)
+  const of = (field, { group, artifact, version }) => (typeof field === 'function' ? field({ group, artifact, version }) : field)
+  for (const library of libraries) {
+    const entry = entryOf(library)
+    notices.add({
+      group: 'quest',
+      name: library.name,
+      version: library.version,
+      licence: entry.licence,
+      source: of(entry.source, library),
+      note: of(entry.note, library),
+    }, questLicenceTexts(entry, metaSdk))
+  }
+  const json = notices.toJSON()
+  const bare = componentsWithoutText(json)
+  if (bare.length) {
+    throw new Error(`no licence text for: ${bare.join('; ')}. The Apache License 2.0 is read from node_modules/typescript, so run npm ci `
+      + 'in the repo root first; an entry under another licence in QUEST_LICENCES needs a text of its own.')
+  }
+  return { notices: json, metaSdkNotices: metaSdk?.noticesHtml ?? null }
+}
+
+/**
+ * Writes the Quest app's notices into `outDir`: THIRD-PARTY-NOTICES.txt, the Meta Spatial SDK's notices.html beside it
+ * (META_SDK_NOTICES_FILE), and third-party-notices.json, the notices as --merge reads them. Returns the notices.
+ */
+export function writeQuestNotices(outDir = QUEST_NOTICES_DIR, options = {}) {
+  const { notices, metaSdkNotices } = questNotices(options)
+  mkdirSync(outDir, { recursive: true })
+  writeFileSync(join(outDir, 'THIRD-PARTY-NOTICES.txt'), renderNotices(notices, questVersion(), { product: QUEST_PRODUCT }))
+  if (metaSdkNotices) writeFileSync(join(outDir, META_SDK_NOTICES_FILE), metaSdkNotices)
+  else rmSync(join(outDir, META_SDK_NOTICES_FILE), { force: true })
+  writeFileSync(join(outDir, 'third-party-notices.json'), JSON.stringify(notices))
+  return notices
+}
+
 const GROUPS = [
   ['vendored', 'Components no package manager lists'],
   ['npm', 'npm packages in the web bundle (from package-lock.json)'],
   ['android', 'Android runtime and libraries (from mobile/package-lock.json and mobile/android/app/gradle.lockfile)'],
   ['rust', 'Rust crates linked into the desktop app (from desktop/src-tauri/Cargo.lock)'],
+  ['quest', 'Libraries in the Quest app (from meta/app/gradle.lockfile)'],
 ]
 
-/** The notices as the text file each bundle and each release carries. */
-export function renderNotices(notices, version) {
+/** The notices as the text file each bundle and each release carries. `product` is the app its first line names. */
+export function renderNotices(notices, version, { product = 'Companion Scan' } = {}) {
   const lines = [
-    `Companion Scan ${version} - third-party notices`,
+    `${product} ${version} - third-party notices`,
     `For: ${notices.titles.join('; ')}`,
     'Generated from the lockfiles by scripts/native/third-party-notices.mjs.',
     '',
@@ -600,16 +857,22 @@ export function rustTargets(triple = process.env.TAURI_ENV_TARGET_TRIPLE) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = parseArgs(process.argv.slice(2))
-  const version = readJson(join(ROOT, 'desktop', 'package.json')).version
-  let notices
-  if (args.merge.length) {
-    notices = mergeNotices(args.merge.map(readJson))
+  if (args.shell === 'quest') {
+    const outDir = resolve(args['out-dir'] ?? QUEST_NOTICES_DIR)
+    const notices = writeQuestNotices(outDir)
+    console.log(`[notices] ${notices.components.length} components, ${Object.keys(notices.texts).length} licence texts: ${outDir}`)
   } else {
-    const report = readJson(args['bundle-report'])
-    const targets = args.shell === 'desktop' ? (args.targets ? args.targets.split(',') : rustTargets()) : []
-    notices = bundleNotices({ shell: args.shell, bundledModules: report.modules, targets })
+    const version = readJson(join(ROOT, 'desktop', 'package.json')).version
+    let notices
+    if (args.merge.length) {
+      notices = mergeNotices(args.merge.map(readJson))
+    } else {
+      const report = readJson(args['bundle-report'])
+      const targets = args.shell === 'desktop' ? (args.targets ? args.targets.split(',') : rustTargets()) : []
+      notices = bundleNotices({ shell: args.shell, bundledModules: report.modules, targets })
+    }
+    if (args.json) writeFileSync(args.json, JSON.stringify(notices))
+    writeFileSync(args.out, renderNotices(notices, version))
+    console.log(`[notices] ${notices.components.length} components, ${Object.keys(notices.texts).length} licence texts: ${args.out}`)
   }
-  if (args.json) writeFileSync(args.json, JSON.stringify(notices))
-  writeFileSync(args.out, renderNotices(notices, version))
-  console.log(`[notices] ${notices.components.length} components, ${Object.keys(notices.texts).length} licence texts: ${args.out}`)
 }

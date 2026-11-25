@@ -64,6 +64,18 @@ Not everything here is under a permissive licence. These are the exceptions:
   Only the Android app includes ARCore. The iOS app's `ScanAR` plugin uses Apple's ARKit,
   and the desktop app has no AR capture.
 
+- **Meta Spatial SDK (Quest app)**: the `com.meta.spatial` libraries, version 0.15.0
+  (`meta/app/build.gradle.kts`), on which the Quest app (`meta/`) is built. Meta provides them
+  under the [Meta Platform Technologies SDK License Agreement](https://developer.oculus.com/licenses/oculussdk/),
+  which is proprietary, not a permissive licence. Its section 1.3 asks that a redistribution of
+  the SDK's materials carry Meta's copyright notice, and a copy of the License or Notice file
+  they include. Each of the SDK's AARs carries two: `LICENSE`, the agreement, and `notices.html`,
+  which lists the third-party code in its native libraries. The Quest app's notices carry the
+  copyright notice and the agreement's text, with `notices.html` beside them. Only the Quest app
+  includes the SDK.
+
+  > Copyright © Meta Platform Technologies, LLC and its affiliates. All rights reserved.
+
 Everything else in the apps and in this repository's manifests is under a permissive licence
 (MIT, Apache-2.0, ISC, BSD, Zlib, Unicode-3.0 or similar), except the public-domain data below.
 
@@ -77,6 +89,12 @@ includes it. Each comes with its licence text. For a package that
 ships none, its project's text is kept in `scripts/native/licence-texts/`, and the generator
 stops while any component is left without one. Each native release attaches the merged notices
 of all its builds.
+
+The Quest app (`meta/`) has no web bundle, and its APK carries no notices. After its build,
+`node scripts/native/third-party-notices.mjs --shell quest` writes them from
+`meta/app/gradle.lockfile`, which its release build enforces in the same way, with the Meta
+Spatial SDK's `notices.html` beside them, for a release to attach beside the APK
+([docs/targets/meta-quest.md](docs/targets/meta-quest.md#third-party-notices)).
 
 ## U.S. Government data (public domain)
 

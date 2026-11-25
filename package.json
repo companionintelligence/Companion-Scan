@@ -42,7 +42,7 @@
     "test:desktop-engine-state": "node --experimental-strip-types --no-warnings --test tests/unit/node/desktop_engine_state.test.ts",
     "test:page-load": "node --experimental-strip-types --no-warnings --test tests/unit/node/page_load.test.ts",
     "test:legal-notices": "node --experimental-strip-types --no-warnings --test tests/unit/node/legal_notices.test.ts",
-    "test:notices": "node --experimental-strip-types --no-warnings --test tests/unit/node/third_party_notices.test.ts tests/unit/node/wp-11-wmm-bundle-notice.test.ts",
+    "test:notices": "node --experimental-strip-types --no-warnings --test tests/unit/node/third_party_notices.test.ts tests/unit/node/wp-11-wmm-bundle-notice.test.ts tests/unit/node/quest_notices.test.ts",
     "test:android-lockfile": "node --experimental-strip-types --no-warnings --test tests/unit/node/android_lockfile.test.ts",
     "test:native-release": "node --experimental-strip-types --no-warnings --test tests/unit/node/native_release.test.ts",
     "test:native-provider": "node --experimental-strip-types --no-warnings --test tests/unit/node/native_provider.test.ts",

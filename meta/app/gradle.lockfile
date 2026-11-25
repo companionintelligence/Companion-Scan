@@ -1,0 +1,24 @@
+# This is a Gradle generated file for dependency locking.
+# Manual edits can break the build and are not advised.
+# This file is expected to be part of source control.
+com.meta.spatial:meta-spatial-sdk-isdk:0.15.0=releaseRuntimeClasspath
+com.meta.spatial:meta-spatial-sdk-splat:0.15.0=releaseRuntimeClasspath
+com.meta.spatial:meta-spatial-sdk-toolkit:0.15.0=releaseRuntimeClasspath
+com.meta.spatial:meta-spatial-sdk-vr:0.15.0=releaseRuntimeClasspath
+com.meta.spatial:meta-spatial-sdk:0.15.0=releaseRuntimeClasspath
+com.microsoft.onnxruntime:onnxruntime-android:1.32.0=releaseRuntimeClasspath
+com.squareup.okhttp3:okhttp:4.9.1=releaseRuntimeClasspath
+com.squareup.okio:okio:2.8.0=releaseRuntimeClasspath
+org.jetbrains.kotlin:kotlin-stdlib-common:2.1.20=releaseRuntimeClasspath
+org.jetbrains.kotlin:kotlin-stdlib:2.1.20=releaseRuntimeClasspath
+org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1=releaseRuntimeClasspath
+org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.10.1=releaseRuntimeClasspath
+org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.1=releaseRuntimeClasspath
+org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.1=releaseRuntimeClasspath
+org.jetbrains.kotlinx:kotlinx-serialization-bom:1.6.3=releaseRuntimeClasspath
+org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.6.3=releaseRuntimeClasspath
+org.jetbrains.kotlinx:kotlinx-serialization-core:1.6.3=releaseRuntimeClasspath
+org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.6.3=releaseRuntimeClasspath
+org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3=releaseRuntimeClasspath
+org.jetbrains:annotations:23.0.0=releaseRuntimeClasspath
+empty=

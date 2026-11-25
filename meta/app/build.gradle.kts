@@ -35,6 +35,16 @@ kotlin {
     }
 }
 
+// The libraries in the release APK are locked in app/gradle.lockfile, and the app's third-party
+// notices list them from it (scripts/native/third-party-notices.mjs --shell quest). The release
+// build uses the versions locked there, and fails when it would take in a library the lockfile
+// does not list or leave out one it does, so the notices cannot fall behind the APK. After
+// changing a dependency, run here in meta/:
+//   ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --write-locks
+configurations.matching { it.name == "releaseRuntimeClasspath" }.configureEach {
+    resolutionStrategy.activateDependencyLocking()
+}
+
 dependencies {
     implementation("com.meta.spatial:meta-spatial-sdk:0.15.0")
     implementation("com.meta.spatial:meta-spatial-sdk-toolkit:0.15.0")

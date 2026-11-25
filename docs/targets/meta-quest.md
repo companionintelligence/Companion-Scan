@@ -83,6 +83,38 @@ cd meta
 The APK is `meta/app/build/outputs/apk/debug/app-debug.apk`. It is a debug build: use it on your own
 headset only.
 
+### Third-party notices
+
+Every library in the release APK, direct or transitive, is locked in `meta/app/gradle.lockfile`. The
+release build fails when the libraries it resolves are not the ones locked there; the debug build is
+not locked. After changing a dependency, run this in `meta/` and commit the lockfile:
+
+```bash
+./gradlew :app:dependencies --configuration releaseRuntimeClasspath --write-locks
+```
+
+After the app's build, and `npm ci` in the repo root, this command makes the notices that a release
+attaches beside the APK:
+
+```bash
+node scripts/native/third-party-notices.mjs --shell quest
+```
+
+It writes three files to `meta/build/third-party-notices/` (or the folder `--out-dir` names):
+
+- `THIRD-PARTY-NOTICES.txt`:
+  - every library the lockfile pins, BOMs included, with the licence `QUEST_LICENCES` gives it, and
+    that licence's text; a library the table does not name stops it;
+  - for the Meta Spatial SDK, the copyright notice section 1.3 of its agreement asks for, then the
+    agreement as the SDK's AARs carry it (`LICENSE`).
+- `META-SPATIAL-SDK-NOTICES.html`: the `notices.html` the SDK's AARs carry, unchanged, which lists the
+  third-party code in its native libraries.
+- `third-party-notices.json`: the same notices, for `--merge`.
+
+The SDK's two files are read from its AARs in the Gradle cache (`GRADLE_USER_HOME`, or `~/.gradle`),
+so the build runs first. The script stops unless every AAR carries the same two. The app itself
+neither carries nor shows the notices.
+
 ## Run
 
 1. Install it on a Quest 3 or 3S in developer mode: `adb install -r app-debug.apk`. It needs Horizon OS v74 or later.
@@ -120,4 +152,6 @@ The Quest Browser checks for the web path stay in [web-webxr.md](web-webxr.md#te
 - Licences:
   - The Meta Spatial SDK is under the Meta Platform Technologies SDK License Agreement, which must be reviewed before the app is distributed.
   - ONNX Runtime is MIT.
-  - The release workflow and the third-party notices do not cover `meta/` yet.
+  - The release workflow does not build `meta/` yet. A Quest release is built by hand, and its
+    notices are made with `third-party-notices.mjs --shell quest`, from `meta/app/gradle.lockfile`
+    ([Third-party notices](#third-party-notices)).
