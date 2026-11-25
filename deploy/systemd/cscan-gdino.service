@@ -1,0 +1,22 @@
+# Companion Scan — the detection service: Grounding DINO behind POST /detect
+# (scripts/grounding_dino_server.py). Optional. Installed by
+# `scripts/install-services.sh --with-gdino`, which substitutes __REPO__ and __GDINO_PYTHON__
+# (an interpreter with torch, transformers and Pillow: see docs/operations/GPU_BACKENDS.md).
+# GDINO_HOST, GDINO_PORT, GDINO_MODEL, GDINO_DEVICE and GDINO_TOKEN come from
+# ~/.config/cscan/env. It serves HTTPS with the box's Tailscale cert, the files cscan-cert renews;
+# the service reads them again when they change, so a renewal needs no restart.
+[Unit]
+Description=Companion Scan detection service (Grounding DINO, :8010 by default)
+After=network-online.target
+
+[Service]
+WorkingDirectory=__REPO__
+EnvironmentFile=%h/.config/cscan/env
+Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+ExecStart=__GDINO_PYTHON__ __REPO__/scripts/grounding_dino_server.py --cert-file __REPO__/${TAILSCALE_HOSTNAME}.crt --key-file __REPO__/${TAILSCALE_HOSTNAME}.key
+Restart=on-failure
+RestartSec=10
+SyslogIdentifier=cscan-gdino
+
+[Install]
+WantedBy=default.target
