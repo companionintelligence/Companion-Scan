@@ -21,6 +21,7 @@ reached through the same resolver, and each reports what it actually used.
 | --- | --- | --- | --- | --- | --- |
 | Ollama vision inference (`server/inference.ts`) | Supported | Supported (ROCm); Vulkan is opt-in | Supported (Metal) | Experimental (Vulkan, opt-in) | Supported |
 | Panoptic segmentation, Mask2Former (`scripts/panoptic_worker.py`) | fp16. **Verified** on RTX 3070, 2026-11-12 | fp16 via ROCm torch. Unverified | fp16. Unverified | fp32 until measured. Unverified | fp32 |
+| Detection service, Grounding DINO (`scripts/grounding_dino_server.py`) | fp16 autocast. **Verified** on RTX 3070, 2026-11-25: base model, 150–180 ms for a 512 px frame once warm, 1.9 GiB of GPU memory | fp16 autocast via ROCm torch. Unverified | fp32; autocast is not used on MPS. Unverified | fp16 autocast. Unverified | fp32. Unmeasured |
 | LingBot-Map (`scripts/lingbot_map_worker.py`) | fp16 autocast. Unverified here (no checkpoint on this box) | fp16 autocast via ROCm torch. Unverified | fp32; autocast is not used on MPS | fp32 until measured. Unverified | fp32 |
 | Brush splat training (wgpu) | Vulkan | Vulkan | Metal | Vulkan. Unverified | Not usable |
 | Spirula splat training (wgpu) | Vulkan | Vulkan | No macOS build in this repo | Vulkan. Unverified | Not usable |
@@ -111,6 +112,7 @@ cd scripts && ~/.venvs/cv-gpu/bin/python -c "import torch; from _torch_device im
 | --- | --- |
 | `PANOPTIC_DEVICE` | Panoptic device: `auto` (default), `cpu`, `cuda`, `cuda:N`, `mps`, `xpu`. Read by `server/panoptic/panoptic_scan.ts` |
 | `LINGBOT_MAP_DEVICE` | LingBot device: `auto`, `cpu`, `cuda`, `mps`, `xpu`. Read by `server/lingbot-map/lingbot_map.ts` |
+| `GDINO_DEVICE` | Detection service device: `auto` (default), `cpu`, `cuda`, `cuda:N`, `mps`, `xpu`. Read by `scripts/grounding_dino_server.py` |
 | `PYTORCH_ENABLE_MPS_FALLBACK` | Set to `1` by the workers unless already exported. Unsupported MPS ops fall back to CPU |
 | `HIP_VISIBLE_DEVICES` | AMD device selection (ROCm) |
 | `ZE_AFFINITY_MASK` | Intel device selection (Level Zero) |
@@ -130,6 +132,35 @@ see what ran.
 
 These are not ported. Making them run elsewhere would mean a different attention kernel and
 different weights, which is a model decision, not a device one.
+
+## The detection service (Grounding DINO)
+
+`scripts/grounding_dino_server.py` serves open-vocabulary object detection over HTTP: an XR
+client posts a camera frame and the names of the things to find, and gets boxes back. It runs
+the open weights of Grounding DINO (`IDEA-Research/grounding-dino-base` by default, Apache-2.0)
+through transformers, on the device `_torch_device.py` resolves. It stands in for NVIDIA's
+hosted NV-Grounding-DINO, which the Unity-MetaXR-AI-ZeroShot reference calls, so frames stay on
+the tailnet. It is not an `INFERENCE_MODE` engine: the scanner's own `/infer` is unchanged.
+
+- **Contract.** `POST /detect` takes `{"prompt", "threshold", "max_detections",
+  "image_base64"}` and answers `{"frame_width", "frame_height", "detections": [{"label",
+  "confidence", "bbox": [x, y, w, h]}]}` in pixels of the frame as sent, plus `model`, `device`
+  and `inference_ms`. `GET /health` reports whether the model has loaded, and why not.
+- **Clients.** The ZeroShot detector in the Unity avatar prototype sends and reads this contract
+  ([`ZeroShotDetector.cs`](https://github.com/companionintelligence/CI-Spatial-Agent-Unity/blob/3a8b2b607bb1578d0793a6f1c646cd7f4f9f6ef1/Assets/Scripts/ZeroShot/ZeroShotDetector.cs),
+  branch `pr/scaffold2`). Point its `ZeroShotBackendConfig`'s `endpointUrl` here. With
+  `GDINO_TOKEN` set, also turn on its `useBearerAuth` and put the token in `apiKey`. The
+  prototype's own development server can forward to this service (`ZERO_SHOT_BACKEND=forward`
+  with `GROUNDING_DINO_URL`), but it sends no token.
+- **Environment.** `GDINO_HOST` (default `127.0.0.1`), `GDINO_PORT` (default `8010`),
+  `GDINO_MODEL`, `GDINO_DEVICE`, `GDINO_TOKEN` (a bearer token, if set), and
+  `GDINO_CERT_FILE` / `GDINO_KEY_FILE` for HTTPS. Set them in `~/.config/cscan/env`.
+- **Install.** It uses the NVIDIA venv above: `transformers` and `pillow` are already in it.
+  `scripts/install-services.sh --with-gdino` adds the `cscan-gdino` user unit, which serves
+  HTTPS with the box's Tailscale cert. The first start downloads the weights (933 MB for base,
+  689 MB for `grounding-dino-tiny`) into the Hugging Face cache.
+- **Test.** `npm run test:python:gdino` covers the request rules and the HTTP layer with a fake
+  model, so it needs no torch.
 
 ## Sources for the vendor install commands
 

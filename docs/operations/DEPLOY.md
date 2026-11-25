@@ -75,6 +75,13 @@ All box-local config lives in `~/.config/cscan/env` (never in the repo):
 
 Apply config changes: `systemctl --user restart cscan-server cscan-web`.
 
+**The detection service (optional).** `scripts/install-services.sh --with-gdino` also installs
+`cscan-gdino`: Grounding DINO behind `POST /detect` on `:8010`, run by `~/.venvs/cv-gpu/bin/python`
+unless `GDINO_PYTHON` names another interpreter. It reads the `GDINO_*` settings from the same env
+file. Its default `GDINO_HOST=127.0.0.1` serves this box only; set it to the box's Tailscale address
+(`tailscale ip -4`) to serve the tailnet without exposing the LAN. Logs: `journalctl --user -u
+cscan-gdino -f`. Setup and contract: [GPU_BACKENDS.md](GPU_BACKENDS.md#the-detection-service-grounding-dino).
+
 ## Day-to-day
 
 ```bash
