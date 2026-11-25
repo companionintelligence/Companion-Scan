@@ -173,7 +173,9 @@ test('the Quest release build takes the locked versions, and each library its bu
 test('every library the Quest lockfile pins has exactly one licence entry, so the notices can name it', () => {
   const pins = locked()
   assert.ok(pins.length >= 15, 'the lockfile is read')
+  // questNotices leaves a BOM out: it aligns versions and puts nothing in the APK.
   const problems = pins
+    .filter((l) => !l.artifact.endsWith('-bom'))
     .map((l) => `${l.group}:${l.artifact}`)
     .filter((name) => entriesFor(name).length !== 1)
   assert.deepEqual(problems, [], 'a pinned library with no licence entry stops the notices: check its licence, then add it to QUEST_LICENCES')
@@ -196,6 +198,23 @@ test('a library no entry spells out stops the Quest notices, even one from a fam
   assert.throws(() => build({ lockfile, readMetaSdk }),
     /no known licence: com\.meta\.spatial:meta-spatial-sdk-physics:0\.15\.0, org\.jetbrains\.kotlinx:kotlinx-coroutines-play-services:1\.10\.1\. .*QUEST_LICENCES/)
   assert.throws(() => build({ lockfile: 'empty=\n', readMetaSdk }), /pins no library for releaseRuntimeClasspath/)
+})
+
+test("a BOM the lockfile pins is left out of the Quest notices, as it is of the Android app's, and needs no entry: it puts nothing in the APK", () => {
+  const { asked, readMetaSdk } = standIn()
+  const lockfile = [
+    lockLine('com.microsoft.onnxruntime:onnxruntime-android', '1.32.0'),
+    lockLine('org.jetbrains.kotlinx:kotlinx-serialization-bom', '1.6.3'),
+    lockLine('com.example:a-library-bom', '1.0.0'),
+    '',
+  ].join('\n')
+  const { notices, metaSdkNotices } = build({ lockfile, readMetaSdk })
+  assert.deepEqual(notices.components.map((c) => c.name), ['com.microsoft.onnxruntime:onnxruntime-android'], 'a BOM, even one no entry names, is not listed and does not stop the notices')
+  assert.deepEqual(entriesFor('org.jetbrains.kotlinx:kotlinx-serialization-bom'), [], 'the table names no BOM')
+  assert.deepEqual(asked, [], 'with no SDK module pinned, no AAR is read')
+  assert.equal(metaSdkNotices, null)
+  assert.throws(() => build({ lockfile: `${lockLine('org.jetbrains.kotlinx:kotlinx-coroutines-bom', '1.10.1')}\n`, readMetaSdk }),
+    /pins no library for releaseRuntimeClasspath/, 'a lockfile of BOMs alone pins no library')
 })
 
 // ── The Meta Spatial SDK ───────────────────────────────────────────────────────────────────────
@@ -289,10 +308,11 @@ test('the Quest notices list each pinned library once, by name, at its pinned ve
   const pins = locked()
   assert.deepEqual(asked, [pins.filter((l) => l.group === 'com.meta.spatial').sort((a, b) => (a.artifact < b.artifact ? -1 : 1))],
     "the SDK's files are read once, from the AARs of every SDK module at its pinned version")
-  // Every pin, BOMs included, once, in order of name.
-  const names = pins.map((l) => `${l.group}:${l.artifact}`).sort()
+  // Every pin but the BOMs, once, in order of name.
+  assert.ok(pins.some((l) => l.artifact.endsWith('-bom')), 'control: the lockfile pins BOMs')
+  const names = pins.filter((l) => !l.artifact.endsWith('-bom')).map((l) => `${l.group}:${l.artifact}`).sort()
   assert.deepEqual(notices.components.map((c) => c.name), names)
-  assert.ok(names.includes('org.jetbrains.kotlinx:kotlinx-coroutines-bom'), 'a BOM is listed, as the lockfile pins it')
+  assert.ok(!notices.components.some((c) => c.name.endsWith('-bom')), 'no BOM is listed: it puts nothing in the APK')
   for (const component of notices.components) {
     const pin = pins.find((l) => `${l.group}:${l.artifact}` === component.name)!
     const [entry] = entriesFor(component.name)
@@ -343,7 +363,7 @@ test("the Quest notices are written with the SDK's own agreement, and its notice
     assert.ok(text.includes(`\n\n${agreement}\n`), 'the agreement as the AAR carries it')
     assert.equal(text.split(META_AGREEMENT + '\n').length - 1, 1, 'printed once for the five modules')
     assert.deepEqual(JSON.parse(readFileSync(join(dir, 'third-party-notices.json'), 'utf8')), JSON.parse(JSON.stringify(notices)), 'and the JSON a merge reads')
-    assert.equal(notices.components.length, locked().length)
+    assert.equal(notices.components.length, locked().filter((l) => !l.artifact.endsWith('-bom')).length, 'every pin but the BOMs')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

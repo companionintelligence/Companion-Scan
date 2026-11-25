@@ -103,8 +103,9 @@ node scripts/native/third-party-notices.mjs --shell quest
 It writes three files to `meta/build/third-party-notices/` (or the folder `--out-dir` names):
 
 - `THIRD-PARTY-NOTICES.txt`:
-  - every library the lockfile pins, BOMs included, with the licence `QUEST_LICENCES` gives it, and
-    that licence's text; a library the table does not name stops it;
+  - every library the lockfile pins, with the licence `QUEST_LICENCES` gives it and that licence's
+    text; a library the table does not name stops it. A BOM is left out, as in the Android app's
+    notices: it only aligns versions, and puts nothing in the APK;
   - for the Meta Spatial SDK, the copyright notice section 1.3 of its agreement asks for, then the
     agreement as the SDK's AARs carry it (`LICENSE`).
 - `META-SPATIAL-SDK-NOTICES.html`: the `notices.html` the SDK's AARs carry, unchanged, which lists the
