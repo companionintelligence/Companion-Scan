@@ -58,8 +58,12 @@ Plan: [wave 17](../factory/17-xr-device-targets/README.md).
   - A dev server run with `VITE_AR_RUNTIME=webxr`, and with no `?ar=` in the address, chose WebXR
     under the `?mock=webxr` emulator and requested no `xr.js`. No session was started.
 - **CI:** the Mobile Build workflow has a job for this build, "Android, WebXR only (debug APK)".
-  It checks that the bundle left the engine out before Gradle runs. It has not run yet. Native
-  Release does not build this APK.
+  It checks that the bundle left the engine out before Gradle runs.
+  - It passed in run 45480257543 on 2026-11-24, at `da82b88` on `feat/xreal-aura-target`, which merged as #308.
+    The workflow has not changed since.
+  - Native Release does not build this APK.
+- **Built again for the device kit** on 2026-11-25, at `9872ccb`: a debug APK of 25.6 MiB that names the
+  kit's Scan server. It has not run on a device.
 - **Unit tests:**
   - `native_ar_runtime_select.test.ts`: the forced runtime.
   - `native_build.test.ts`: the build option, the scripts, the workflow job, and which bundles

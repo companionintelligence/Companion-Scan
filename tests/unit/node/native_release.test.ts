@@ -192,6 +192,10 @@ test('every native and subsystem test suite has a workflow job, and every such w
   const quest = read2('.github/workflows/quest-build.yml')
   assert.match(quest, /working-directory: meta\n {8}run: \.\/gradlew :app:testDebugUnitTest --no-daemon/, "the Quest app's JVM tests")
   assert.match(quest, /working-directory: meta\n {8}run: \.\/gradlew :app:assembleDebug --no-daemon/, 'and its build')
+  // The Android XR probe compiles eight of the Quest app's files from meta/ (android-xr/quest-shared), so a change there
+  // must keep its build passing too: its tests and its APK run in the same workflow, in a job of their own.
+  assert.match(quest, /\n {2}android-xr:\n[\s\S]*?working-directory: android-xr\n {8}run: \.\/gradlew :probe:testDebugUnitTest --no-daemon/, "the Android XR probe's JVM tests")
+  assert.match(quest, /working-directory: android-xr\n {8}run: \.\/gradlew :probe:assembleDebug --no-daemon[\s\S]*?name: scan-androidxr-probe-debug-apk/, 'and its APK, kept')
   // In the developer build only. The release job gets them once a desktop-build run has passed them: until then a step that
   // has never run would sit between the installers and the release.
   assert.match(read2('.github/workflows/desktop-build.yml'), /run: npm run build --prefix desktop[^\n]*\n(?: +#[^\n]*\n)*(?: +- name: Desktop shell unit tests \(Rust\)\n {8}if: runner\.os == 'Linux'\n {8}run: cargo test --locked --manifest-path desktop\/src-tauri\/Cargo\.toml)/, 'the Rust tests, after the build that makes what they embed')
