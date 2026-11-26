@@ -60,7 +60,7 @@ The whole-Place file holds every scan's geometry, so `GET /worlds/<slug>/export.
 1. `cd mobile && npm run build:web && npx cap sync android && (cd android && ./gradlew assembleDebug)`. To start the app on this box, put `VITE_API_BASE=https://<host>:5173` before `npm run build:web` (see "Building the shells").
 2. Install `mobile/android/app/build/outputs/apk/debug/app-debug.apk` on an ARCore-capable phone.
 3. Give the app its Scan server as for iOS, unless the build named one.
-4. Expected: the start screen renders and the Server row names this box. Tap Walk the room, pick or create a Place, and confirm. The camera, motion and location prompts should appear and the scanner should start on the ARCore session when `Capacitor.Plugins.ScanAR.capabilities()` reports `supported` (`[native-ar] trackingStatus:` lines and no `the native session did not start` warning), and on 8th Wall (status line "8th Wall ready") when it does not. Write down what `capabilities()` returns (`supported` and `reason`) and what happens.
+4. Expected: the start screen renders and the Server row names this box. Tap Walk the room: the location prompt comes as the Place picker opens. Pick or create a Place, and confirm. The camera and motion prompts should appear and the scanner should start on the ARCore session when `Capacitor.Plugins.ScanAR.capabilities()` reports `supported` (`[native-ar] trackingStatus:` lines and no `the native session did not start` warning), and on 8th Wall (status line "8th Wall ready") when it does not. Write down what `capabilities()` returns (`supported` and `reason`) and what happens.
 5. Then run [Checklist E](DEVICE_TESTING.md#checklist-e--native-arcore-scan-android-app) in DEVICE_TESTING.md, the Android app's own checklist.
 
 ### Quest headset, edit a place
@@ -109,7 +109,7 @@ adb shell monkey -p com.companionintelligence.scan -c android.intent.category.LA
 
 - The device name is whatever `avdmanager list device` shows. On the SDK that recipe was run with, it was `pixel_6`, not `pixel_7`.
 - The emulator needs read and write access to `/dev/kvm`.
-- The location prompt appears on first launch. Accept it, then the app continues.
+- The location prompt appears when the Place picker first opens (Walk the room, Upload or the tripod sweep), not at launch. Accept it, then the picker lists the nearby Places.
 
 ## Recording a run
 

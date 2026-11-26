@@ -333,10 +333,10 @@ run there.
 
 | # | Step | Expected result |
 |---|------|-----------------|
-| 1 | Launch the app | The start screen appears. On the first launch Android asks for location; answer it and the app continues. The first-run Server row names the Scan server, or "None set" when the build named none |
+| 1 | Launch the app | The start screen appears, with no location prompt: the app asks for location when the Place picker opens (row 4). The first-run Server row names the Scan server, or "None set" when the build named none |
 | 2 | Before AR starts: `await Capacitor.Plugins.ScanAR.capabilities()` | `platform` is `android`, `engine` is `arcore`, `supported` is true and `checking` is false. `depth` says whether the device has the ARCore depth API. Right after launch `checking` can still be true: ask again a second later, as the page does |
 | 3 | Read the status line before AR starts | It reads "ARCore ready", which says only that the native runtime was chosen |
-| 4 | Tap Walk the room, pick or create a Place, confirm, and allow the camera | Android asks for the camera when the session starts, not at launch. The camera shows behind the web view, fitted whole (contain fit), with the HUD on top. The console shows `[native-ar] trackingStatus:` lines and no `[native-ar] the native session did not start; using the web runtime:` warning |
+| 4 | Tap Walk the room, pick or create a Place, confirm, and allow the camera | Android asks for location as the Place picker opens, and the list then puts the Places within 100 m first. It asks for the camera when the session starts. The camera shows behind the web view, fitted whole (contain fit), with the HUD on top. The console shows `[native-ar] trackingStatus:` lines and no `[native-ar] the native session did not start; using the web runtime:` warning |
 | 5 | Walk slowly around the room | The overlay moves with the phone and the HUD tracking reads NORMAL. The point cloud and the hit samples grow |
 | 6 | Aim at a wall: `await Capacitor.Plugins.ScanAR.hitTest({ x: 0.5, y: 0.5 })` | `hit` is true; `rotation` is not `[0,0,0,1]`, and its Y axis is horizontal (the wall's normal), so a placed item faces the wall |
 | 7 | Press Home, wait 10 s, then return to the app | While the app is away, another camera app can open the camera: the paused session released it. On return the console logs `[native-ar] trackingStatus: NOT_AVAILABLE`, then `LIMITED` with no reason, then `NORMAL` once ARCore tracks again. Record whether the overlay sits on the same spot of the floor |

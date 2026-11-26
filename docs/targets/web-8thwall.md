@@ -73,7 +73,8 @@ The engine is committed at `public/xr.js`: there is nothing to download.
 3. On the box, run `npm run qr -- "/?project=default"` and scan the code with the phone. Or type
    `https://<host>:5173/?project=default` into Safari.
 4. Select or create a Place, calibrate, and tap **Scan a Place**. The camera and motion prompts
-   must come from that tap.
+   must come from that tap. The location prompt comes earlier, as the Place picker opens, and not
+   when the page loads.
 
 To read the phone's console on the box, start the server with `CLIENT_LOGS_BROADCAST=1`, run `npm run logs:watch` and
 add `?debug=remote` to the page address.

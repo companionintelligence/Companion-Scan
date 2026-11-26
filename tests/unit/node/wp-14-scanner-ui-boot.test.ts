@@ -312,7 +312,9 @@ test('FN-015: the starting Place is read from sessionStorage only, where it is w
 test('F-44, FN-014: the Place picker reads the list through fetchPlaceList, and main.ts has no reader of its own', () => {
   assert.doesNotMatch(main, /function fetchProjects\(/)
   assert.doesNotMatch(main, /fetch\(apiUrl\('\/projects'\)\)/, 'no bare GET /projects')
-  assert.match(main, /const list = await fetchPlaceList\(\)\n\s+const listFailed = !list\.ok\n\s+const listed = list\.places/)
+  // The redraw for a GPS answer reuses the list the last render fetched or is fetching (lastList), so it does not
+  // ask GET /projects again; every list still comes from fetchPlaceList.
+  assert.match(main, /const list = await \(reuseList && lastList \? lastList : \(lastList = fetchPlaceList\(\)\)\)\n\s+const listFailed = !list\.ok\n\s+const listed = list\.places/)
 })
 
 test('FN-022: the live feed is wired before the calibration; the camera-frame default and the probe log stay after it', () => {

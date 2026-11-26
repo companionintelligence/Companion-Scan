@@ -98,8 +98,8 @@ are in [mobile/README.md](../../mobile/README.md#build) and [Releases](README.md
    with Google Play Services for AR installed (`adb install -r ...`).
 2. Set the Scan server on the first-run screen's Server row (Add server, then
    `https://<host>:5173` for a dev box), unless the build named one.
-3. Tap Walk the room, pick or create a Place, and confirm. The camera, motion and location
-   prompts should appear.
+3. Tap Walk the room: the location prompt comes as the Place picker opens, not at launch. Pick or
+   create a Place, and confirm. The camera and motion prompts should follow.
 
 The emulator is the quickest way to see the shell boot. It has no ARCore and no camera pose, so it
 shows that the shell starts, not that AR works

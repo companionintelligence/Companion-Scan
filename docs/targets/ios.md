@@ -91,8 +91,9 @@ Capabilities, and run on the phone. `cap sync ios` takes the Swift Package Manag
 1. Give the app its Scan server on the first-run Server row (Add server, then
    `https://<host>:5173` for a dev box), unless the build named one. An address saved on the phone
    beats the build's.
-2. Tap Walk the room, pick or create a Place, and confirm. The camera and motion prompts should
-   appear.
+2. Tap Walk the room: the location prompt comes as the Place picker opens, not at launch (in the
+   app WebKit names the page "localhost" in it). Pick or create a Place, and confirm. The camera
+   and motion prompts should follow.
 3. To drive the plugin, turn on Web Inspector on the phone (Settings, Safari, Advanced) and use
    the console from Safari's Develop menu on the Mac.
 
