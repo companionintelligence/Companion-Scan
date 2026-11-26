@@ -23,7 +23,7 @@ import type { RawDetection } from './prompt.ts'
 export const GROUNDING_DINO_PROMPT = CORE_LABELS.join(', ')
 
 /**
- * The longest one POST /detect may take. The service answers in about 0.25 s once warm (2026-11-25, beta-glass);
+ * The longest one POST /detect may take. The service answers in about 0.25 s once warm (measured 2026-11-25 on an RTX 3070);
  * the bound only keeps a hung service from holding /infer, whose own cap is 60 s. Untuned.
  */
 export const GROUNDING_DINO_TIMEOUT_MS = 30_000

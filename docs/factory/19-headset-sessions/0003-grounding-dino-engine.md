@@ -71,7 +71,7 @@ None. `RawDetection` is unchanged.
 
 - [x] Given a fake service that answers, when a frame is inferred, then the boxes come back as fractional corners,
   strongest first, folded and capped as the Ollama engine's are.
-- [ ] Given beta-glass's service, when the box runs with this engine, then a capture's boxes reach the scan. Not run:
+- [ ] Given the box's own detection service, when the box runs with this engine, then a capture's boxes reach the scan. Not run:
   this wave changes no shared host.
 
 ## Risks / potential issues
