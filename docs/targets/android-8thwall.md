@@ -71,7 +71,9 @@ Scan server on the Server row, then tap Walk the room. ARCore is not needed on t
 
 ## Test
 
-There is no checklist for this build. On a device, use the 8th Wall rows that apply:
+[Checklist E](../testing/DEVICE_TESTING.md#checklist-e--native-arcore-scan-android-app) row 12
+runs this build on a device, after the native rows on the same phone. On its own, use the 8th Wall
+rows that apply:
 
 - Install and set up the app as in the
   [Android native shell](../testing/DEVICE_TEST_KIT.md#android-native-shell) steps of

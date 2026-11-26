@@ -58,6 +58,7 @@ The whole-Place file holds every scan's geometry, so `GET /worlds/<slug>/export.
 2. Install `mobile/android/app/build/outputs/apk/debug/app-debug.apk` on an ARCore-capable phone.
 3. Give the app its Scan server as for iOS, unless the build named one.
 4. Expected: the start screen renders and the Server row names this box. Tap Walk the room, pick or create a Place, and confirm. The camera, motion and location prompts should appear and the scanner should start on the ARCore session when `Capacitor.Plugins.ScanAR.capabilities()` reports `supported` (`[native-ar] trackingStatus:` lines and no `the native session did not start` warning), and on 8th Wall (status line "8th Wall ready") when it does not. Write down what `capabilities()` returns (`supported` and `reason`) and what happens.
+5. Then run [Checklist E](DEVICE_TESTING.md#checklist-e--native-arcore-scan-android-app) in DEVICE_TESTING.md, the Android app's own checklist.
 
 ### Quest headset, edit a place
 1. Open `https://<host>:5173/xr-world.html?world=<slug>` in the Quest browser and press Enter VR.

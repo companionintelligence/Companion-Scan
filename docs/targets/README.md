@@ -71,8 +71,9 @@ Server CI since wave 18) passed again; the server workflow had failed at `8deb26
 ## Where the checklists are
 
 - [testing/DEVICE_TESTING.md](../testing/DEVICE_TESTING.md): the per-device checklists (A for
-  iPhone Safari, B for Android Chrome WebXR, C for person capture, D for the iOS app), the results
-  matrix, the room-loop benchmark and the remote-controlled Android setup.
+  iPhone Safari, B for Android Chrome WebXR, C for person capture, D for the iOS app, E for the
+  Android app), the results matrix, the room-loop benchmark and the remote-controlled Android
+  setup.
 - [testing/DEVICE_TEST_KIT.md](../testing/DEVICE_TEST_KIT.md): the preflight (`npm run device:preflight`),
   each surface with what was checked on the dev box and what only a device shows, and the steps for
   each device.

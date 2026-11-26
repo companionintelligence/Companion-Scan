@@ -112,9 +112,10 @@ shows that the shell starts, not that AR works
   (`chrome://inspect` on the debug build) and write down `supported` and `reason`. A native start
   logs `[native-ar] trackingStatus:` lines; the warning `[native-ar] the native session did not
   start; using the web runtime:` means it fell back to 8th Wall.
-- Android has no checklist of its own yet: use rows 1 to 3 of
-  [Checklist D](../testing/DEVICE_TESTING.md#checklist-d--native-arkit-scan-ios-shell) and the
-  console lines.
+- [Checklist E](../testing/DEVICE_TESTING.md#checklist-e--native-arcore-scan-android-app) in
+  DEVICE_TESTING.md, rows 1 to 13: `capabilities()`, the status line, the native start and its
+  console lines, a wall hit test, pause and resume, the origin anchor, depth, a refused camera,
+  the sign-in return, the 8th Wall build, and a device without ARCore.
 - The room-loop benchmark asks for an ARCore phone or tablet in the Android shell
   ([DEVICE_TESTING.md](../testing/DEVICE_TESTING.md#devices)).
 - Without a device: `npm run test:native-ar`, `npm run test:android-lockfile`, and
