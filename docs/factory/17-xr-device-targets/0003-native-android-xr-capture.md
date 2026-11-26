@@ -29,7 +29,7 @@ own tracking. The frames would come from the glasses' camera, if apps may open i
 - **The Quest app is the reference** for pairing camera frames with a head pose on one clock
   (`meta/`: `pose/` and `capture/`). Share that code, or port it with its tests. Do not copy it
   without its tests.
-  - The probe shares it: `android-xr/quest-shared/` compiles seven of the Quest's pure-Kotlin files from `meta/`, and
+  - The probe shares it: `android-xr/quest-shared/` compiles eight of the Quest's pure-Kotlin files from `meta/`, and
     the Quest's own tests stay where they are.
 - **Google's documented pieces, read again on 2026-11-24** ([sources](#sources)):
   - ARCore for Jetpack XR's device pose needs the runtime permission `android.permission.HEAD_TRACKING` "on immersive

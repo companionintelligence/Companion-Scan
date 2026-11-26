@@ -70,13 +70,13 @@ Plan: [wave 13](../factory/13-device-targets/README.md), tickets 0005 and 0006.
 - `splat/`: the splat viewer.
 - `vision/`: the ONNX Runtime hook.
 - `meta/app/src/main/AndroidManifest.xml`: permissions and features.
-- Seven pure-Kotlin files are compiled into the Android XR probe as well, from here:
+- Eight pure-Kotlin files are compiled into the Android XR probe as well, from here:
   - `pose/` (all five);
   - `capture/KeyframeSelector.kt` and `capture/YuvFrame.kt`;
   - `upload/KeyframeMeta.kt`.
 
   They are named in `android-xr/quest-shared/build.gradle.kts`. A change to one must keep both builds passing (wave 17
-  ticket 0003).
+  ticket 0003). Quest Build checks both: the probe's tests and APK run in its `android-xr` job.
 
 ## Build
 
@@ -140,7 +140,8 @@ carry the session token.
 
 ## Test
 
-There is no headset checklist yet. The first run should record:
+The first session follows [FIRST_RUN_QUEST_3.md](../testing/FIRST_RUN_QUEST_3.md): the app and the Quest Browser, in
+order, with the commands. Among what it records:
 
 - the camera's timestamp source and active array size;
 - whether the uploaded poses line up in the editor;

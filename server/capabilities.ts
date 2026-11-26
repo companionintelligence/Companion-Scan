@@ -71,6 +71,8 @@ import { runWithDeadline } from './run_with_deadline.ts'
 import { configFromEnv as memoryPushConfigFromEnv } from './memory_push.ts'
 import { FDANYONE_HOST_REMEDIATION } from './person4d/person_4d.ts'
 import { onnxModelPaths } from './lfm-driver-onnx.ts'
+import { inferenceModeFrom } from './inference_mode.ts'
+import { groundingDinoConfigFromEnv } from './grounding_dino.ts'
 import { normalizeOllamaHost } from '../src/shared/ollama-host.ts'
 import * as fs from 'node:fs/promises'
 
@@ -506,9 +508,38 @@ export function serviceProbes(env: EnvReader): ServiceProbe[] {
   })
 
   // ── The inference engine ──
-  const requested = env('INFERENCE_MODE')
-  const mode = requested === 'onnx' ? 'onnx' : requested === 'mock' ? 'mock' : 'ollama'
-  if (mode === 'ollama') {
+  const mode = inferenceModeFrom(env('INFERENCE_MODE'))
+  if (mode === 'grounding-dino') {
+    // The detection service (scripts/grounding_dino_server.py). Its GET /health needs no token, so none is sent.
+    const { config, problem } = groundingDinoConfigFromEnv(env)
+    const origin = config ? serviceOrigin(config.url) : null
+    probes.push({
+      row: {
+        id: 'inference-engine',
+        label: 'Inference engine (Grounding DINO)',
+        kind: 'service',
+        usedBy: 'capture inference — /infer, the object detection during a scan (INFERENCE_MODE=grounding-dino)',
+        envVar: 'GDINO_URL',
+        found: origin !== null,
+        ...(origin ? { path: origin, via: 'env' as const } : {}),
+        searched: ['env:GDINO_URL'],
+        ...(origin ? {} : { remediation: problem ?? 'GDINO_URL is not a usable address.' }),
+      },
+      ...(config
+        ? {
+          health: {
+            url: `${config.url}/health`,
+            headers: {},
+            ok: async (res) => {
+              const body = await res.json().catch(() => null) as { ready?: unknown; state?: unknown } | null
+              if (body?.ready === true) return 'answered, model ready'
+              return `answered, model not ready${typeof body?.state === 'string' ? ` (${body.state})` : ''}`
+            },
+          },
+        }
+        : {}),
+    })
+  } else if (mode === 'ollama') {
     const configured = Boolean(env('OLLAMA_HOST'))
     const ollama = normalizeOllamaHost(env('OLLAMA_HOST'))
     const origin = serviceOrigin(ollama)

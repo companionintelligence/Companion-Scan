@@ -38,7 +38,7 @@ open still leaves the pose statistics.
 
 ## What it shares with the Quest app
 
-`quest-shared/` compiles seven of the Quest app's pure-Kotlin files from where they live in `meta/`, so there is one copy
+`quest-shared/` compiles eight of the Quest app's pure-Kotlin files from where they live in `meta/`, so there is one copy
 of each:
 
 - `pose/`: clocks, pose maths, the pose ring buffer, coordinate conversions and epochs;
@@ -47,7 +47,8 @@ of each:
 
 The files are named one by one in `quest-shared/build.gradle.kts`, so nothing that needs the Meta Spatial SDK comes
 with them. A file that moves in `meta/` fails this build. The Quest app's own tests (`meta/app/src/test`) test those
-files. The probe's tests test what it adds:
+files. The Quest Build workflow runs the probe's tests and builds its APK in a job of its own, beside the Quest app's, so a
+change in `meta/` that breaks the probe shows there. The probe's tests test what it adds:
 
 - the stamp, with injected clocks;
 - the Jetpack XR pose conversion, pinned to Jetpack XR's own math classes and to the server's `poseToMatrix` fixture

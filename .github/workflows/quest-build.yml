@@ -6,6 +6,10 @@ name: Quest Build
 # address, key or secret is built in: the person types their own Scan server's address on the app's
 # panel.
 #
+# The Android XR probe (android-xr/) has a job of its own here, because it compiles eight of the Quest
+# app's files from meta/ (android-xr/quest-shared/build.gradle.kts): a change to one of them must keep
+# both builds passing. Its JVM unit tests run, and its debug APK is kept like the Quest app's.
+#
 # Run by hand, as every workflow here is: server-ci.yml keeps its push and pull request triggers gated.
 on:
   workflow_dispatch:
@@ -66,5 +70,41 @@ jobs:
         with:
           name: scan-quest-debug-apk
           path: meta/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  android-xr:
+    name: Android XR probe (unit tests and debug APK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Android SDK packages (the runner's own SDK)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" > /dev/null
+      # The probe's own tests (the boot-clock stamp, the Jetpack XR pose conversion against the poseToMatrix
+      # fixture, the tracking gate, the recording's shape). The quest-shared files they build on are tested in
+      # the Quest app's job, where they live.
+      - name: Probe unit tests
+        working-directory: android-xr
+        run: ./gradlew :probe:testDebugUnitTest --no-daemon
+      - name: Build the probe's debug APK
+        working-directory: android-xr
+        run: ./gradlew :probe:assembleDebug --no-daemon
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: androidxr-probe-test-reports
+          path: android-xr/probe/build/reports/tests/
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scan-androidxr-probe-debug-apk
+          path: android-xr/probe/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14

@@ -1,13 +1,15 @@
 /**
  * Inference engine — the server's object detector for /infer.
  *
- * Supports three modes (INFERENCE_MODE env):
+ * Supports four modes (INFERENCE_MODE env, read by inferenceModeFrom in ./inference_mode.ts):
  * 1. "ollama" (default) — POSTs to an Ollama API (OLLAMA_HOST, OLLAMA_MODEL; DEFAULT_MODEL_TAG in
  *                         src/shared/model-catalog.ts). Ollama runs the model on whatever accelerator it has.
  * 2. "onnx"             — runs LFM2.5-VL-1.6B-ONNX in this process via onnxruntime-node, on the CPU only
  *                         (executionProviders: ['cpu'] in load()), loaded dynamically to avoid load errors
  * 3. "mock"             — deterministic colour-blob detector for tests/CI; recognises the
  *                         shared CV palette colours (test-data/cv images, xr8-mock feed)
+ * 4. "grounding-dino"   — POSTs to the detection service (scripts/grounding_dino_server.py) at GDINO_URL, with
+ *                         GDINO_TOKEN if set: open-vocabulary boxes for the scanner's own labels (./grounding_dino.ts)
  *
  * The ollama path logs counts and timing, never the model's reply: a capture is the inside of someone's room, and the
  * reply describes it (F-07, the rule /infer in main.ts states for its own log line). The mock engine logs its palette
@@ -23,6 +25,10 @@ import { resolveOllamaModel } from '../src/shared/ollama-model.ts'
 import { loadLfmDriver, runLfmDriver } from '../src/inference/lfm-driver.ts'
 import type { LfmDriverHandle, LfmPort } from '../src/inference/lfm-driver.ts'
 import { createNodeOnnxPort } from './lfm-driver-onnx.ts'
+import { inferenceModeFrom } from './inference_mode.ts'
+import type { InferenceMode } from './inference_mode.ts'
+import { detectWithGroundingDino, groundingDinoConfigFromEnv, groundingDinoHealth } from './grounding_dino.ts'
+import type { GroundingDinoConfig } from './grounding_dino.ts'
 
 // Re-export shared types
 export type { RawDetection }
@@ -147,9 +153,12 @@ export class InferenceEngine {
       ? 'LiquidAI/LFM2.5-VL-1.6B-ONNX'
       : this._mode === 'mock'
       ? 'mock/color-blob-v1'
+      : this._mode === 'grounding-dino'
+      // The model the service said it runs, once load() has asked it.
+      ? `GroundingDINO/${this.gdinoModel ?? 'not yet asked'}`
       : `Ollama/${this.ollamaModel}`
   }
-  private _mode: 'ollama' | 'onnx' | 'mock'
+  private _mode: InferenceMode
   private _lastInferMs: number | null = null
   private _lastInferAt: number | null = null
 
@@ -162,15 +171,28 @@ export class InferenceEngine {
   private driverHandle: LfmDriverHandle | null = null
   private _onnxQueue: Promise<unknown> = Promise.resolve()
 
-  constructor() {
-    const requested = process.env.INFERENCE_MODE
-    this._mode = requested === 'onnx' ? 'onnx' : requested === 'mock' ? 'mock' : 'ollama'
-    this.ollamaUrl = normalizeOllamaHost(process.env.OLLAMA_HOST)
-    this.ollamaModel = process.env.OLLAMA_MODEL ?? DEFAULT_MODEL_TAG
+  // Grounding DINO: the detection service's address and token, or why there are none
+  private gdinoConfig: GroundingDinoConfig | null = null
+  private gdinoProblem: string | null = null
+  private gdinoModel: string | null = null
+  private readonly fetchImpl: typeof fetch
+
+  /** `env` and `fetch` are for tests; the server reads its own environment and the global fetch. */
+  constructor(options: { env?: (name: string) => string | undefined; fetch?: typeof fetch } = {}) {
+    const env = options.env ?? ((name: string) => process.env[name])
+    this.fetchImpl = options.fetch ?? ((input, init) => fetch(input, init))
+    this._mode = inferenceModeFrom(env('INFERENCE_MODE'))
+    this.ollamaUrl = normalizeOllamaHost(env('OLLAMA_HOST'))
+    this.ollamaModel = env('OLLAMA_MODEL') ?? DEFAULT_MODEL_TAG
+    if (this._mode === 'grounding-dino') {
+      const { config, problem } = groundingDinoConfigFromEnv(env)
+      this.gdinoConfig = config
+      this.gdinoProblem = problem
+    }
   }
 
   /** Resolved inference mode (INFERENCE_MODE env). */
-  get mode(): 'ollama' | 'onnx' | 'mock' {
+  get mode(): InferenceMode {
     return this._mode
   }
 
@@ -232,6 +254,32 @@ export class InferenceEngine {
       return
     }
 
+    if (this._mode === 'grounding-dino') {
+      if (!this.gdinoConfig) throw new Error(this.gdinoProblem ?? 'GDINO_URL is not set')
+      const where = new URL(this.gdinoConfig.url).origin
+      console.log(`[engine] Initializing the Grounding DINO engine (detection service at ${where})…`)
+      // Only the reachability check belongs in this try, as for Ollama above.
+      let health
+      try {
+        health = await groundingDinoHealth(this.gdinoConfig, this.fetchImpl)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        throw new Error(
+          `The detection service is unreachable at ${where} (${message}). Check GDINO_URL, and that the service runs ` +
+          '(cscan-gdino; docs/operations/GPU_BACKENDS.md).',
+        )
+      }
+      this.gdinoModel = health.model
+      if (health.ready) {
+        console.log(`[engine] Detection service ready: ${health.model ?? 'model not named'}`)
+      } else {
+        // The service loads its model in the background and retries a failed load every minute, so a server that starts
+        // with it does not wait: until the model is in, /infer passes on the service's 503 and its reason.
+        console.warn(`[engine] The detection service answers, but its model is not ready (${health.state}): /infer fails until it is`)
+      }
+      return
+    }
+
     // ONNX mode
     console.log(`[engine] Loading local ONNX model sessions (${NUM_THREADS} threads)…`)
 
@@ -271,6 +319,10 @@ export class InferenceEngine {
     }
     if (this._mode === 'ollama') {
       return this._inferOllama(imageBytes)
+    }
+    if (this._mode === 'grounding-dino') {
+      if (!this.gdinoConfig) return Promise.reject(new Error(this.gdinoProblem ?? 'GDINO_URL is not set'))
+      return detectWithGroundingDino(imageBytes, this.gdinoConfig, this.fetchImpl)
     }
 
     // ONNX serialisation queue

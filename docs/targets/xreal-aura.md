@@ -59,7 +59,8 @@ is, how to make it, and what was checked. These are the reasons for it on this d
 2. The scanner asks for an `immersive-ar` session with `hit-test` required, and `dom-overlay`,
    `local-floor` and `anchors` optional (`src/ar/webxr.ts`). Google's list for Chrome on Android
    XR has hit test and anchors. It does not mention `dom-overlay`, and without it the scanner's
-   page is not drawn inside the session.
+   page is not drawn inside the session. The scanner then draws its own panel in the session
+   (wave 19, 0002): the scan's status, and Start scan, Stop scan and Capture on a pinch.
 3. Keyframe images come from a separate camera stream (`getUserMedia` with
    `facingMode: 'environment'`), not from WebXR's own camera access. No page says whether Chrome on
    Aura can open the glasses' camera. If it cannot, the session still tracks and hit-tests, and
@@ -144,7 +145,8 @@ session.
 
 ## First run on an Aura: what to record
 
-There is no checklist for this device yet. This list is what the first run should write down, with
+[FIRST_RUN_XREAL_AURA.md](../testing/FIRST_RUN_XREAL_AURA.md) runs this list, and the probe's, with the commands. This
+list is what the first run should write down, with
 the date, back into [Status](#status) and into
 [AR_DEVICE_SUPPORT.md](../operations/AR_DEVICE_SUPPORT.md). The answers decide
 [ticket 0003](../factory/17-xr-device-targets/0003-native-android-xr-capture.md).

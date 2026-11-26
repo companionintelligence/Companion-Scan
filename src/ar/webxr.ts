@@ -22,6 +22,12 @@
  * the less-proven half of the calibration-decal work (the 8th Wall side has
  * a working in-repo reference; this doesn't) — needs verification on a real
  * WebXR device, not just review.
+ *
+ * On a headset (wave 19, 0002) two more things hold. The browser draws no `dom-overlay`, so the page's HUD is gone once
+ * the session starts: a world-locked panel (./xr-session-panel.ts) shows the scanner's status and presses its controls
+ * on a controller's trigger or a hand's pinch. And the viewer pose and the view's projection are the eyes', not the
+ * camera's that `getUserMedia` opens: with a measured camera model (./xr-camera-model.ts, `?camoffset=`, `?camfov=`)
+ * a frame carries the camera's pose and field of view instead. With none, it keeps the eyes', and the panel says so.
  */
 import * as THREE from 'three'
 import type { ARProvider, BurstFrameListener, HitBurst, HitResult, Pose, RawFrame } from './provider'
@@ -51,6 +57,17 @@ import {
   type PendingCapture,
 } from './provider-plumbing.ts'
 import { unsupportedCameraFeed, type CameraFrame, type CameraFrameOptions, type CameraFrameSubscription } from './camera-frame-feed.ts'
+import { XrSessionPanel, shouldShowSessionPanel } from './xr-session-panel.ts'
+import { cameraPoseFromViewer, describeCameraModel, readCameraModel, type XrCameraModel } from './xr-camera-model.ts'
+
+/** The page's localStorage, or null where reading it throws (a private window, some WebViews). */
+function pageStorage(): Storage | null {
+  try {
+    return globalThis.localStorage ?? null
+  } catch {
+    return null
+  }
+}
 
 /**
  * Probe grid subscribed against the viewer space, N x N. Imported rather than
@@ -170,6 +187,12 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
   private _sessionVisibility = new HiddenSpell()
   /** Removes the listeners `_watchOrigin` added. */
   private _unwatch: Array<() => void> = []
+  /** The in-session panel, on a session with no `dom-overlay` (./xr-session-panel.ts). Null otherwise. */
+  private xrPanel: XrSessionPanel | null = null
+  /** The headset camera's measured model, if this device has one (./xr-camera-model.ts). */
+  private cameraModel: XrCameraModel | null = null
+  /** A viewer pose with more than one view: a headset, whose views are the eyes and not the camera. */
+  private _headMounted = false
 
   async start(canvas: HTMLCanvasElement): Promise<void> {
     if (!navigator.xr) throw new Error('WebXR not available')
@@ -267,6 +290,19 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
     const session = this.liveSession()
     this.scene = new THREE.Scene()
     this.decalCamera = new THREE.PerspectiveCamera()
+    this.cameraModel = readCameraModel(globalThis.location?.search ?? '', pageStorage())
+    if (shouldShowSessionPanel(session, globalThis.location?.search ?? '')) {
+      // The panel is an aid: a page that cannot build it still gets its session.
+      try {
+        this.xrPanel = new XrSessionPanel(this.scene, session, {
+          refSpace: () => this.refSpace,
+          describePose: () => describeCameraModel(this.cameraModel, this._headMounted),
+        })
+        console.log('[webxr] no dom-overlay: the in-session panel takes the HUD\'s place')
+      } catch (e) {
+        console.warn('[webxr] no in-session panel:', e)
+      }
+    }
 
     const [localFloor, viewer] = await Promise.all([
       session.requestReferenceSpace('local-floor').catch(() =>
@@ -333,6 +369,11 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
         self.latestPose = {
           position: { x: p.x, y: p.y, z: p.z },
           rotation: { x: q.x, y: q.y, z: q.z, w: q.w },
+        }
+        const headMounted = viewerPose.views.length > 1
+        if (headMounted !== self._headMounted) {
+          self._headMounted = headMounted
+          console.log(`[webxr] ${describeCameraModel(self.cameraModel, headMounted)}`)
         }
         if (viewerPose.views.length > 0) {
           // Both or neither (src/shared/pose-math.ts): the probe grid is aimed with the pair.
@@ -419,7 +460,7 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
               pixels: imageData.data,
               width: w,
               height: h,
-              pose: { ...self.latestPose, position: { ...self.latestPose.position } },
+              pose: self.framePose(),
               timestamp: time,
               epoch: self._epochs.epoch,
             }
@@ -431,6 +472,9 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
           }
         }
       }
+
+      // The in-session panel reads the page and the inputs, and is drawn with the scene below.
+      self.xrPanel?.onFrame(frame, viewerPose, time)
 
       // Render the calibration decal (and anything else added to self.scene)
       // on top of the passthrough. By the time Three's setAnimationLoop calls
@@ -468,6 +512,9 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
 
   stop(): void {
     this.renderer?.setAnimationLoop(null)
+    this.xrPanel?.dispose()
+    this.xrPanel = null
+    this._headMounted = false
     // No frame loop runs after teardown, so a capture still waiting would only
     // sit until its timer fired. Fail it now.
     failCaptures(this.captureQueue, 'AR session ended — restart the scan')
@@ -907,12 +954,27 @@ export class WebXRProvider implements ARProvider, ImageHitTestContract {
     this._unwatch.push(() => session.removeEventListener('visibilitychange', onVisibility))
   }
 
+  /**
+   * The field of view a captured frame was taken with. On a phone, the view's: its one view is the camera. On a headset
+   * with a camera model, the camera's, and the aspect of the image the companion stream gives; with none, the eyes'.
+   */
   getCameraFovY(): number {
-    return this._fovY
+    return this._headMounted && this.cameraModel?.fovYDeg != null ? this.cameraModel.fovYDeg : this._fovY
   }
 
   getCameraAspect(): number {
+    if (this._headMounted && this.cameraModel?.fovYDeg != null) {
+      const w = this.videoEl?.videoWidth ?? 0
+      const h = this.videoEl?.videoHeight ?? 0
+      if (w > 0 && h > 0) return w / h
+    }
     return this._aspect
+  }
+
+  /** The pose a captured frame carries: the camera's on a headset with a camera model, the viewer's otherwise. */
+  private framePose(): Pose {
+    if (this._headMounted && this.cameraModel) return cameraPoseFromViewer(this.latestPose, this.cameraModel)
+    return { ...this.latestPose, position: { ...this.latestPose.position } }
   }
 
   /**

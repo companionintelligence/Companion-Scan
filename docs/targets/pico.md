@@ -69,7 +69,8 @@ The scanner asks for an `immersive-ar` session with `hit-test` required, and `do
 
 - PICO OS 6 lists hit test and anchors.
 - It does not list `dom-overlay`. Without it the scanner's page is not drawn inside the session,
-  as on Quest Browser.
+  as on Quest Browser. The scanner then draws its own panel in the session (wave 19, 0002): the
+  scan's status, and Start scan, Stop scan and Capture on the controller's trigger or a pinch.
 - Keyframe images come from a separate `getUserMedia` stream (`facingMode: 'environment'`). If PICO
   gives it no passthrough camera, the session still tracks and hit-tests, and frame capture is
   off. The console then reads `[webxr] No camera stream — frame capture disabled`.
@@ -95,7 +96,8 @@ macOS, and this work was done on Linux. The build's own status is on
 
 ## First run on a PICO headset: what to record
 
-There is no checklist for these devices yet. This list is what the first run should write down,
+[FIRST_RUN_PICO_4_PRO.md](../testing/FIRST_RUN_PICO_4_PRO.md) runs this list on a PICO 4 Pro, with the commands. This
+list is what the first run should write down,
 with the date, the device and its PICO OS version, back into [Status](#status) and into
 [AR_DEVICE_SUPPORT.md](../operations/AR_DEVICE_SUPPORT.md). The answers decide
 [ticket 0005](../factory/17-xr-device-targets/0005-native-pico-capture.md).
