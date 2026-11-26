@@ -63,7 +63,7 @@ The app icon and both launch screens are drawn from `scripts/icon-source/scan-re
 | iOS purpose strings | Camera, location when in use, motion | The code asks for these. No microphone: every `getUserMedia` call sets `audio: false`. No photo-library key: the file input uses the system picker. |
 | Android permissions | `CAMERA`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` | Device motion needs no Android permission. ARCore is optional (`com.google.ar.core` meta-data `optional`), so the app installs on phones without it. |
 | Android backup | Off: `allowBackup="false"`, and `res/xml/data_extraction_rules.xml` excludes every domain from cloud backup and device-to-device transfer | The WebView's storage holds the session token and the scans. `allowBackup="false"` alone still lets Android 12 and later copy them to a new phone. |
-| Version | `versionName` 0.2.1, `versionCode` 3 | In step with the desktop app (`scripts/native/check-versions.mjs`). Raise `versionCode` by one with every release. |
+| Version | Android `versionName` 0.2.1, `versionCode` 3; iOS `MARKETING_VERSION` 0.2.1, `CURRENT_PROJECT_VERSION` 3 | In step with the desktop app (`scripts/native/check-versions.mjs`). Raise `versionCode` and the iOS build number by one, together, with every release. iOS sat at 1.0 (1) until 2026-11-25, outside the check. |
 | Release signing | Four environment variables, or `keystore.properties` | See *Publishing*. The release build type is never debuggable. |
 
 ## Server address

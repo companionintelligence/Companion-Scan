@@ -111,7 +111,9 @@ the notices. The Android release build signs from four environment variables or 
 
 ### Publishing a pre-release
 
-1. Set the next version in all six places, and raise the Android `versionCode` by one.
+1. Set the next version in all seven places (the six of the desktop and Android apps, and the iOS
+   target's `MARKETING_VERSION`), and raise the Android `versionCode` and the iOS build number
+   (`CURRENT_PROJECT_VERSION`) by one, together.
    `node scripts/native/check-versions.mjs` says whether they agree.
 2. Dispatch **Native Release** with the tag `v<version>` (for example `v0.2.0`; `v0.1.0` is the
    container pre-release) and `android_signing`: `auto` signs with the release key when the four

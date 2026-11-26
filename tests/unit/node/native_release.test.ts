@@ -10,16 +10,17 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { androidVersionCode, appVersions, versionProblems } from '../../../scripts/native/check-versions.mjs'
+import { androidVersionCode, appVersions, iosBuildNumber, versionProblems } from '../../../scripts/native/check-versions.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8')
 
-test('the desktop and Android apps are both 0.2.1, written the same in all six places', () => {
+test('the desktop, Android and iOS apps are all 0.2.1, written the same in all seven places', () => {
   const versions = appVersions()
-  assert.equal(Object.keys(versions).length, 6)
+  assert.equal(Object.keys(versions).length, 7)
   for (const [file, version] of Object.entries(versions)) assert.equal(version, '0.2.1', file)
   assert.equal(androidVersionCode(), 3, 'versionCode rises with each release: 2 was 0.2.0, 1 was the scaffold')
+  assert.equal(iosBuildNumber(), 3, 'the iOS build number is the Android versionCode, so one bump raises both')
   assert.deepEqual(versionProblems(), [])
 })
 

@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 /**
- * The desktop and Android apps share one version, written in six places:
+ * The desktop, Android and iOS apps share one version, written in seven places:
  * `node scripts/native/check-versions.mjs [--tag v0.2.0]`.
  *
  *   desktop/package.json, desktop/src-tauri/tauri.conf.json, desktop/src-tauri/Cargo.toml and
- *   its Cargo.lock entry, mobile/package.json, and mobile/android/app/build.gradle (versionName).
+ *   its Cargo.lock entry, mobile/package.json, mobile/android/app/build.gradle (versionName), and
+ *   the iOS target's MARKETING_VERSION in mobile/ios/App/App.xcodeproj/project.pbxproj.
  *
- * They must agree, the Android versionCode must be a positive whole number, and with --tag the
+ * They must agree, the Android versionCode must be a positive whole number, the iOS build number
+ * (CURRENT_PROJECT_VERSION) must be the same number, so one bump raises both, and with --tag the
  * release tag must be `v` and that version. The release workflow runs this before it builds
  * anything. Exits 1 and says what differs.
+ *
+ * The iOS app was left out until 2026-11-25 and sat at 1.0 (1) while the others moved on.
  */
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -30,7 +34,23 @@ export function appVersions() {
     'desktop/src-tauri/Cargo.lock': cargoLock.match(/name = "companion-scan-desktop"\r?\nversion = "([^"]+)"/)?.[1],
     'mobile/package.json': JSON.parse(read('mobile/package.json')).version,
     'mobile/android/app/build.gradle (versionName)': gradle.match(/^\s*versionName "([^"]+)"/m)?.[1],
+    'mobile/ios/App/App.xcodeproj/project.pbxproj (MARKETING_VERSION)': iosSetting('MARKETING_VERSION'),
   }
+}
+
+/**
+ * One build setting of the iOS target, which the project writes once per configuration (Debug and Release).
+ * When the configurations disagree, every value is returned joined by " / ", so the check names them.
+ */
+function iosSetting(name) {
+  const project = read('mobile/ios/App/App.xcodeproj/project.pbxproj')
+  const values = [...new Set([...project.matchAll(new RegExp(`^\\s*${name} = ([^;]+);`, 'gm'))].map((match) => match[1].trim()))]
+  return values.length === 0 ? undefined : values.join(' / ')
+}
+
+/** The iOS build number (CURRENT_PROJECT_VERSION), which rises with the Android versionCode. */
+export function iosBuildNumber() {
+  return Number(iosSetting('CURRENT_PROJECT_VERSION'))
 }
 
 /** The Android versionCode, which must rise with every release. */
@@ -50,6 +70,8 @@ export function versionProblems(tag) {
   if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) problems.push(`"${version}" is not a plain x.y.z version, which the MSI installer needs`)
   const code = androidVersionCode()
   if (!Number.isInteger(code) || code < 1) problems.push(`the Android versionCode "${code}" is not a positive whole number`)
+  const build = iosBuildNumber()
+  if (build !== code) problems.push(`the iOS build number (CURRENT_PROJECT_VERSION) "${iosSetting('CURRENT_PROJECT_VERSION') ?? '(none)'}" is not the Android versionCode ${code}: raise both together`)
   if (tag !== undefined) {
     if (!/^v\d+\.\d+\.\d+$/.test(tag)) problems.push(`the tag "${tag}" is not v and a plain x.y.z version`)
     else if (tag.slice(1) !== version) problems.push(`the tag ${tag} does not match the apps' version ${version}`)
@@ -65,5 +87,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     for (const problem of problems) console.error(problem)
     process.exit(1)
   }
-  console.log(`Apps at ${Object.values(appVersions())[0]}, Android versionCode ${androidVersionCode()}${tag ? `, tag ${tag}` : ''}: all in step`)
+  console.log(`Apps at ${Object.values(appVersions())[0]}, Android versionCode and iOS build ${androidVersionCode()}${tag ? `, tag ${tag}` : ''}: all in step`)
 }
