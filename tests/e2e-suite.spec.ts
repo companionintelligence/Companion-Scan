@@ -7,6 +7,7 @@ import type * as THREE from 'three'
 import { mergeDetections, type WorldDetection } from '../src/spatial/resolver'
 import { normalizeDetections, parseDetections } from '../server/prompt.ts'
 import { ONBOARDING_KEY } from '../src/shared/storage-keys'
+import { LIVE_PREVIEW_OFF, livePreviewOpen } from './support/live-preview'
 
 /**
  * Complete a pre-#128 detection fixture into a valid `WorldDetection`.
@@ -224,6 +225,9 @@ test.describe('Tier 1: Feature Coverage', () => {
         },
         loadChunk: async () => {},
         GlTextureRenderer: { pipelineModule: () => ({ name: 'gl-renderer' }) },
+        // EighthWallProvider.start() adds XR8.Threejs.pipelineModule() to the pipeline, as the shared mock
+        // (public/test-fixtures/xr8-mock.js) explains; without it start() throws before any module is added.
+        Threejs: { pipelineModule: () => ({ name: 'threejs' }), xrScene: () => ({ scene: null, camera: null, renderer: null }) },
         XrController: { pipelineModule: () => ({ name: 'xr-controller' }) },
         CameraPixelArray: { pipelineModule: () => ({ name: 'pixel-array' }) },
         XrConfig: { device: () => ({ ANY: {} }) },
@@ -273,6 +277,7 @@ test.describe('Tier 1: Feature Coverage', () => {
         },
         loadChunk: async () => {},
         GlTextureRenderer: { pipelineModule: () => ({}) },
+        Threejs: { pipelineModule: () => ({}), xrScene: () => ({ scene: null, camera: null, renderer: null }) },
         XrController: { pipelineModule: () => ({}) },
         CameraPixelArray: { pipelineModule: () => ({}) },
         XrConfig: { device: () => ({ ANY: {} }) },
@@ -322,6 +327,7 @@ test.describe('Tier 1: Feature Coverage', () => {
         },
         loadChunk: async () => {},
         GlTextureRenderer: { pipelineModule: () => ({}) },
+        Threejs: { pipelineModule: () => ({}), xrScene: () => ({ scene: null, camera: null, renderer: null }) },
         XrController: {
           pipelineModule: () => ({}),
           hitTest: () => [{
@@ -623,12 +629,19 @@ test.describe('Tier 2: Boundary & Corner Cases', () => {
   })
 
   test('Test 19: Bbox Coordinate Denormalization Recovery', () => {
-    const pixelText = `[{"label": "chair", "bbox": [100, 200, 300, 400], "confidence": 0.9, "description": "chair"}]`
-    const results = parseDetections(pixelText)
-    expect(results.length).toBe(1)
-    const bbox = results[0].bbox
-    expect(bbox[3]).toBe(1.0)
-    expect(bbox[0]).toBe(0.25)
+    // Since #270 (server/prompt.ts, coerceBox) a box whose largest value is above 1.5 and at most 1000 is read as
+    // Qwen-VL's 0-1000 grounding grid and divided by 1000. Only a box with a value above 1000 is pixels, scaled by
+    // the largest pixel value in the answer. This test used to expect the pixel reading of a grid-sized box.
+    const gridText = `[{"label": "chair", "bbox": [100, 200, 300, 400], "confidence": 0.9, "description": "chair"}]`
+    const grid = parseDetections(gridText)
+    expect(grid.length).toBe(1)
+    expect(grid[0].bbox).toEqual([0.1, 0.2, 0.3, 0.4])
+
+    const pixelText = `[{"label": "chair", "bbox": [1200, 300, 1600, 900], "confidence": 0.9, "description": "chair"}]`
+    const pixels = parseDetections(pixelText)
+    expect(pixels.length).toBe(1)
+    expect(pixels[0].bbox[2]).toBe(1.0)
+    expect(pixels[0].bbox[0]).toBe(0.75)
   })
 
   test('Test 20: Server Startup with Missing ONNX Models', async ({ request }) => {
@@ -787,6 +800,7 @@ test.describe('Tier 2: Boundary & Corner Cases', () => {
         },
         loadChunk: async () => {},
         GlTextureRenderer: { pipelineModule: () => ({}) },
+        Threejs: { pipelineModule: () => ({}), xrScene: () => ({ scene: null, camera: null, renderer: null }) },
         XrController: { pipelineModule: () => ({}) },
         CameraPixelArray: { pipelineModule: () => ({}) },
         XrConfig: { device: () => ({ ANY: {} }) },
@@ -832,6 +846,7 @@ test.describe('Tier 2: Boundary & Corner Cases', () => {
         },
         loadChunk: async () => {},
         GlTextureRenderer: { pipelineModule: () => ({}) },
+        Threejs: { pipelineModule: () => ({}), xrScene: () => ({ scene: null, camera: null, renderer: null }) },
         XrController: { pipelineModule: () => ({}), hitTest: () => [] },
         CameraPixelArray: { pipelineModule: () => ({}) },
         XrConfig: { device: () => ({ ANY: {} }) },
@@ -1014,6 +1029,8 @@ test.describe('Tier 3: Cross-Feature Combinations', () => {
 
     const webgpuBtn = page.locator('[data-mode="webgpu"]')
     if (await webgpuBtn.isVisible()) {
+      // A browser with no WebGPU adapter shows the control disabled (wave 05 / 0004, src/ui/panel.ts).
+      test.skip(await webgpuBtn.isDisabled(), 'no WebGPU adapter in this browser: the on-device toggle is disabled')
       await webgpuBtn.click()
       const mode = await page.evaluate(() => localStorage.getItem('infer-mode'))
       expect(mode).toBe('webgpu')
@@ -1025,7 +1042,8 @@ test.describe('Tier 3: Cross-Feature Combinations', () => {
     }
   })
 
-  test('Test 32: WebRTC Live Collaboration Updates (F1 + F3)', async ({ page }) => {
+  test('Test 32: WebRTC Live Collaboration Updates (F1 + F3)', async ({ page, request }) => {
+    test.skip(!(await livePreviewOpen(request, BASE)), LIVE_PREVIEW_OFF)
     await page.goto(BASE, { waitUntil: 'domcontentloaded' })
 
     const room = `pw-collab-${Date.now()}`
@@ -1201,7 +1219,9 @@ test.describe('Tier 4: Real-World Application Scenarios', () => {
 
     const dbStatus = await page.evaluate(async () => {
       return new Promise<boolean>((resolve) => {
-        const req = indexedDB.open('ci-xr-scan', 1)
+        // No version: the store is at DB_VERSION 3 (src/scene/store.ts), and asking for 1 fails with a VersionError.
+        // The app has opened the database by now, so this cannot create it.
+        const req = indexedDB.open('ci-xr-scan')
         req.onsuccess = () => {
           const db = req.result
           const storeExists = db.objectStoreNames.contains('sessions')
@@ -1214,7 +1234,8 @@ test.describe('Tier 4: Real-World Application Scenarios', () => {
     expect(dbStatus).toBeTruthy()
   })
 
-  test('Test 38: Remote Inspector WebRTC Walkthrough (F1 + F2 + F3)', async ({ page }) => {
+  test('Test 38: Remote Inspector WebRTC Walkthrough (F1 + F2 + F3)', async ({ page, request }) => {
+    test.skip(!(await livePreviewOpen(request, BASE)), LIVE_PREVIEW_OFF)
     await page.goto(BASE, { waitUntil: 'domcontentloaded' })
     const room = `pw-inspector-${Date.now()}`
 

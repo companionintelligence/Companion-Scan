@@ -842,6 +842,23 @@ async function main() {
     followCaptureSession()
   }
 
+  // The history drawer needs only the store, so it is wired before the WebGPU probe
+  // below. After it, the history button did nothing for up to 2 s where
+  // requestAdapter() never answers (WebKit, so Safari): a tap there was lost.
+  const history = new SessionHistory(store, resetScanner)
+  if (readOnlyScanner) history.setReadOnly()
+  history.mount()
+
+  // Deliberately no saveSnapshot() here. Persisting at boot wrote an empty
+  // record on every page load, so the history drawer filled with "0 objects"
+  // rows that buried the real scans. The first capture persists; until then
+  // there is nothing worth storing.
+  void checkStorageQuota(store, overlay)
+
+  document.getElementById('history-btn')?.addEventListener('click', () => {
+    void initDrawerGeoMap(geoTracker.snapshot())
+  })
+
   // The On-device toggle and its model row read hasWebGPU when the panel is built,
   // so the adapter probe runs first. It is bounded (2 s), and router.init() below
   // reuses its answer rather than asking the browser again.
@@ -905,20 +922,6 @@ async function main() {
   if (router.hasWebGPU) {
     void getProvisioningStatus({ probe: true }).then((status) => panel.setModelStatus(status))
   }
-
-  const history = new SessionHistory(store, resetScanner)
-  if (readOnlyScanner) history.setReadOnly()
-  history.mount()
-
-  // Deliberately no saveSnapshot() here. Persisting at boot wrote an empty
-  // record on every page load, so the history drawer filled with "0 objects"
-  // rows that buried the real scans. The first capture persists; until then
-  // there is nothing worth storing.
-  void checkStorageQuota(store, overlay)
-
-  document.getElementById('history-btn')?.addEventListener('click', () => {
-    void initDrawerGeoMap(geoTracker.snapshot())
-  })
 
   await router.init(
     (stage, pct) => { overlay.setProgress(pct, stage) },

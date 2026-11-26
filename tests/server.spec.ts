@@ -9,6 +9,7 @@
  */
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { createHash } from 'crypto'
+import { LIVE_PREVIEW_OFF, livePreviewOpen } from './support/live-preview'
 
 // 5173 here is just the last-resort default (matches VITE_PORT's own default in
 // main.ts/vite.config.ts). Set VITE_URL to point at a differently-ported instance.
@@ -545,6 +546,12 @@ test.describe('World scan manifests', () => {
 // ── WebSocket /rtc-signal ────────────────────────────────────────────────────
 
 test.describe('GET /rtc-signal (WebSocket)', () => {
+  // Every test here opens the phone or viewer role, the experimental live preview's, which the server opens only
+  // with VITE_ENABLE_WEBRTC_LIVE=true (FN-121). Off, they would fail on a refusal the server means to give.
+  test.beforeEach(async ({ request }) => {
+    test.skip(!(await livePreviewOpen(request, BASE)), LIVE_PREVIEW_OFF)
+  })
+
   test('upgrades to WebSocket for phone role', async ({ page }) => {
     await page.goto(`${BASE}`, { waitUntil: 'domcontentloaded' })
     const opened = await page.evaluate(async (base: string) => {

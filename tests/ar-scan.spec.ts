@@ -787,6 +787,9 @@ test.describe('AI engine settings', () => {
 
     const webgpuBtn = page.locator('[data-mode="webgpu"]')
     if (await webgpuBtn.isVisible()) {
+      // Since wave 05 / 0004 a browser with no WebGPU adapter shows this control disabled, with the reason in its
+      // title (src/ui/panel.ts). Headless WebKit has none, so there is nothing to switch to there.
+      test.skip(await webgpuBtn.isDisabled(), 'no WebGPU adapter in this browser: the on-device toggle is disabled')
       await webgpuBtn.click()
       const saved = await page.evaluate(() => localStorage.getItem('infer-mode'))
       expect(saved).toBe('webgpu')
