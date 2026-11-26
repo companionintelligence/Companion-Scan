@@ -480,7 +480,7 @@ The server reads these settings. Defaults are the code's own, and the Hub column
 
 | Variable | Default | Effect | Companion Hub |
 |---|---|---|---|
-| `INFERENCE_MODE` | `ollama` | Engine: `ollama`, `onnx` or `mock`. | Not set by the Hub. |
+| `INFERENCE_MODE` | `ollama` | Engine: `ollama`, `onnx`, `mock` or `grounding-dino` (which also needs `GDINO_URL`, and `GDINO_TOKEN` when the service has one). | Not set by the Hub. |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama address. A bare `host:port` is accepted. | From the Hub's AI settings (`hub_integration.inference`). |
 | `OLLAMA_MODEL` | `qwen3-vl:4b` | Vision model to run. If that tag is not pulled, the server uses a substitute, and `/health` reports the one in use. | From the Hub's AI settings (`vision_model`). |
 | `OLLAMA_NUM_CTX` | `8192` | Context window for each Ollama call. Values above 131072 are clamped; invalid values fall back to 8192. | Not set by the Hub. |
@@ -733,6 +733,7 @@ Inference is engine-agnostic. The server picks its engine from `INFERENCE_MODE`:
 - **`ollama`** (default) — POSTs a JPEG to a local [Ollama](https://ollama.com) server running whatever `OLLAMA_MODEL` names (`qwen3-vl:4b` by default). Use `npm run setup:models` to see the recommended models and install the ones you want, and `npm run bench:models` to compare candidates.
 - **`onnx`** — runs the bundled `LiquidAI/LFM2.5-VL-1.6B-ONNX` locally via `onnxruntime-node` (CPU/GPU). ~2–8s on Apple Silicon.
 - **`mock`** — a deterministic colour-blob CV engine for CI and tests; needs no model download.
+- **`grounding-dino`** — POSTs the frame to the detection service (`scripts/grounding_dino_server.py`, `POST /detect`) at `GDINO_URL`, with the scanner's own labels as the prompt: Grounding DINO's boxes from a GPU box in about a quarter of a second, with no description. See [GPU_BACKENDS.md](docs/operations/GPU_BACKENDS.md).
 
 Separately, a **WebGPU in-browser path** runs the same LFM2.5-VL-1.6B-ONNX model directly on-device via `onnxruntime-web`'s WebGPU execution provider (`src/inference/lfm-driver-web.ts`) — detection without the server, and no image leaves the phone. It is **opt-in and capability-gated**: the router (`src/inference/router.ts`) uses the server by default and only switches to WebGPU when both the `infer-mode` localStorage key selects it *and* `InferenceRouter.hasWebGPU` (a live `navigator.gpu` check, not a build flag) is true — a browser without WebGPU never gets the option, and the side panel's toggle says so specifically instead of failing on use. If on-device inference fails once selected (timeout, a crashed worker, or an unprovisioned model), the router never silently retries through the server: it rejects with a typed `WebGpuInferenceError` and the capture fails honestly, so a capture the UI marked "On-device" never quietly leaves the device. See `docs/factory/05-on-device-inference/0004-ungate-toggle-and-fallback-policy.md`.
 

@@ -43,12 +43,12 @@ None.
 
 ## Definition of Done
 
-- [ ] Three checklists, each with the connect steps, every path in order, the exact commands and what to record.
-- [ ] Each target page links its checklist.
+- [x] Three checklists, each with the connect steps, every path in order, the exact commands and what to record.
+- [x] Each target page links its checklist.
 
 ## Tests
 
-- [ ] `npm run verify`.
+- [x] `npm run verify`.
 
 ## Acceptance Criteria
 
@@ -61,4 +61,4 @@ None.
 
 ## Subtasks
 
-1. [ ] The three checklists and the links.
+1. [x] The three checklists and the links.

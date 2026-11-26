@@ -17,7 +17,7 @@ worn run, and PICO-native capture (wave 17, 0005) until the first PICO run.
 
 | # | Ticket | Status |
 |---|---|---|
-| 0001 | [First-run checklists for Aura, Quest 3 and PICO 4 Pro](0001-first-run-checklists.md) | planned |
+| 0001 | [First-run checklists for Aura, Quest 3 and PICO 4 Pro](0001-first-run-checklists.md) | done; not yet used on a device |
 | 0002 | [The WebXR page inside a headset session](0002-webxr-headset-session.md) | done; checked on the iwer emulator only |
 | 0003 | [Grounding DINO as an `/infer` engine](0003-grounding-dino-engine.md) | done; checked against a fake service only |
 | 0004 | [The Android XR probe in Quest Build](0004-probe-in-quest-build.md) | done; the workflow was not dispatched |

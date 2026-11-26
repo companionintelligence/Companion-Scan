@@ -145,7 +145,8 @@ session.
 
 ## First run on an Aura: what to record
 
-There is no checklist for this device yet. This list is what the first run should write down, with
+[FIRST_RUN_XREAL_AURA.md](../testing/FIRST_RUN_XREAL_AURA.md) runs this list, and the probe's, with the commands. This
+list is what the first run should write down, with
 the date, back into [Status](#status) and into
 [AR_DEVICE_SUPPORT.md](../operations/AR_DEVICE_SUPPORT.md). The answers decide
 [ticket 0003](../factory/17-xr-device-targets/0003-native-android-xr-capture.md).

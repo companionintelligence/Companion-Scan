@@ -140,7 +140,8 @@ carry the session token.
 
 ## Test
 
-There is no headset checklist yet. The first run should record:
+The first session follows [FIRST_RUN_QUEST_3.md](../testing/FIRST_RUN_QUEST_3.md): the app and the Quest Browser, in
+order, with the commands. Among what it records:
 
 - the camera's timestamp source and active array size;
 - whether the uploaded poses line up in the editor;

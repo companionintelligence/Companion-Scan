@@ -96,7 +96,8 @@ macOS, and this work was done on Linux. The build's own status is on
 
 ## First run on a PICO headset: what to record
 
-There is no checklist for these devices yet. This list is what the first run should write down,
+[FIRST_RUN_PICO_4_PRO.md](../testing/FIRST_RUN_PICO_4_PRO.md) runs this list on a PICO 4 Pro, with the commands. This
+list is what the first run should write down,
 with the date, the device and its PICO OS version, back into [Status](#status) and into
 [AR_DEVICE_SUPPORT.md](../operations/AR_DEVICE_SUPPORT.md). The answers decide
 [ticket 0005](../factory/17-xr-device-targets/0005-native-pico-capture.md).
