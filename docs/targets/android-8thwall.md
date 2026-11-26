@@ -31,6 +31,8 @@ starts on the 8th Wall engine and never on the phone's ARCore session.
   --ar-runtime=8thwall`) makes this build, and the Mobile Build workflow has a job for it, which
   built a debug APK on `main` at `8deb264` (run 45327838056). Native Release still builds only the
   default, native-first APK.
+- **Built and started at `9872ccb`.** On 2026-11-25 this build was made on a Mac and started on an
+  Android 16 emulator ([Builds of 9872ccb](README.md#builds-of-9872ccb-2026-11-25)).
 - **Not run on a device.** The 8th Wall path has not run inside the shell on any build
   ([mobile/README.md](../../mobile/README.md#gates)). The one 8th Wall device result is in Android
   Chrome, not in the shell: on an XREAL Beam Pro, about 2 starts in 8 reach video

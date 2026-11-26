@@ -14,14 +14,14 @@ and [PLATFORM_SUPPORT.md](../operations/PLATFORM_SUPPORT.md).
 
 | Target | Devices | AR runtime | Entry point | Status | Page |
 |---|---|---|---|---|---|
-| Web, 8th Wall | iPhone and iPad, Safari | the 8th Wall XR Engine (`public/xr.js`) | `/?project=default` | In code. The web bundle built at `81e437c` ([below](#builds-of-the-merged-tree)). No run on an iPhone or iPad is recorded. | [web-8thwall.md](web-8thwall.md) |
+| Web, 8th Wall | iPhone and iPad, Safari | the 8th Wall XR Engine (`public/xr.js`) | `/?project=default` | In code. The web bundle built at `9872ccb` on 2026-11-25 ([below](#builds-of-9872ccb-2026-11-25)), and the iPhone 15 and desktop Safari Playwright profiles pass on `npm run test:box`'s own servers. No run on an iPhone or iPad is recorded. | [web-8thwall.md](web-8thwall.md) |
 | Web, WebXR | Android Chrome with ARCore, Meta Quest Browser | WebXR `immersive-ar` | `/webxr.html` | In code, in the same bundle. On Android one session start was seen, and tracking was not reached. Quest support is documented, not verified. | [web-webxr.md](web-webxr.md) |
-| Android app, ARCore | Android phones and tablets | ARCore through `ScanAR`, then 8th Wall, then WebXR | the app (`mobile/`) | Built at `81e437c`, and on `main` after wave 14 by Mobile Build (run 45327838056), which also runs its unit tests. Not run on a device. | [android-arcore.md](android-arcore.md) |
-| Android app, 8th Wall | Android phones and tablets | 8th Wall only | the app, built with `VITE_AR_RUNTIME=8thwall` | Built locally at `81e437c`, and on `main` after wave 14 by Mobile Build's 8th Wall job (run 45327838056); `npm run build:8thwall` in `mobile/` makes it. Not run on a device. | [android-8thwall.md](android-8thwall.md) |
-| Android app, WebXR only | XREAL Aura (Android XR on its Compute Puck); PICO headsets (PICO OS 5 and 6) | WebXR only: no ARCore session, and no 8th Wall engine in the bundle. Whether the WebView has WebXR is per device: documented on PICO OS 6, not stated for Android XR or PICO OS 5 | the app, built with `VITE_AR_RUNTIME=webxr` | Built locally on 2026-11-24 (`npm run build:webxr` in `mobile/`, then Gradle), a debug APK of about 25 MB. Mobile Build has a job for it that has not run. Not run on a device. Where the WebView has no WebXR, the device's browser at `/webxr.html` is the capture path to try first. | [android-webxr.md](android-webxr.md); devices: [xreal-aura.md](xreal-aura.md), [pico.md](pico.md) |
+| Android app, ARCore | Android phones and tablets | ARCore through `ScanAR`, then 8th Wall, then WebXR | the app (`mobile/`) | Built at `9872ccb` on 2026-11-25, with its 19 JVM unit tests ([below](#builds-of-9872ccb-2026-11-25)); Mobile Build last ran on `main` at `bd80f58` (run 45330560945). It installs and starts on an Android 16 emulator, which has no ARCore. Not run on a device: [Checklist E](../testing/DEVICE_TESTING.md#checklist-e--native-arcore-scan-android-app). | [android-arcore.md](android-arcore.md) |
+| Android app, 8th Wall | Android phones and tablets | 8th Wall only | the app, built with `VITE_AR_RUNTIME=8thwall` | Built at `9872ccb` on 2026-11-25; Mobile Build's 8th Wall job last ran on `main` at `bd80f58` (run 45330560945); `npm run build:8thwall` in `mobile/` makes it. It installs and starts on an Android 16 emulator. Not run on a device: Checklist E row 12. | [android-8thwall.md](android-8thwall.md) |
+| Android app, WebXR only | XREAL Aura (Android XR on its Compute Puck); PICO headsets (PICO OS 5 and 6) | WebXR only: no ARCore session, and no 8th Wall engine in the bundle. Whether the WebView has WebXR is per device: documented on PICO OS 6, not stated for Android XR or PICO OS 5 | the app, built with `VITE_AR_RUNTIME=webxr` | Built at `9872ccb` on 2026-11-25 (`npm run build:webxr` in `mobile/`, then Gradle), a debug APK of about 26 MB with no engine files. Mobile Build's job for it passed on 2026-11-24 at `da82b88` on `feat/xreal-aura-target`, merged as #308 (run 45480257543); it has not run on `main`. Installed on one XREAL Aura, whose WebView has no WebXR, so it cannot capture there. Where the WebView has no WebXR, the device's browser at `/webxr.html` is the capture path to try first. | [android-webxr.md](android-webxr.md); devices: [xreal-aura.md](xreal-aura.md), [pico.md](pico.md) |
 | Meta Quest app | Meta Quest 3 and 3S | native: Meta Spatial SDK, Camera2 passthrough | the app (`meta/`) | Built locally at `81e437c`, and on `main` after wave 14 by the Quest Build workflow (run 45327834865), whose 108 JVM unit tests pass. Not run on a headset. | [meta-quest.md](meta-quest.md) |
-| iOS app | iPhone | ARKit through `ScanAR`, drawn in RealityKit's `ARView`, then 8th Wall | the app (`mobile/`) | Compiled for the iOS Simulator at `81e437c` (Mobile Build run 45260987425), and on `main` after wave 14 (run 45327838056). Not run on a device. | [ios.md](ios.md) |
-| Desktop app | Windows, macOS, Linux | none: no capture | the app (`desktop/`) | In code. Built by workflows run by hand: Desktop Build passed on `main` after wave 14 for Linux, Windows and macOS (runs 45327841063 and 45330563893). Sign-in has not run against a real Portal. | [desktop/README.md](../../desktop/README.md) |
+| iOS app | iPhone | ARKit through `ScanAR`, drawn in RealityKit's `ARView`, then 8th Wall | the app (`mobile/`) | Built for a device (development-signed) and for the Simulator at `9872ccb` on 2026-11-25 ([below](#builds-of-9872ccb-2026-11-25)); Mobile Build's Simulator job last ran on `main` at `bd80f58` (run 45330560945). The device build is installed on one iPhone, and no row of [Checklist D](../testing/DEVICE_TESTING.md#checklist-d--native-arkit-scan-ios-shell) has run on it. | [ios.md](ios.md) |
+| Desktop app | Windows, macOS, Linux | none: no capture | the app (`desktop/`) | In code. Built by workflows run by hand: Desktop Build passed on `main` after wave 14 for Linux, Windows and macOS (runs 45327841063 and 45330563893). The universal macOS app built at `9872ccb` on 2026-11-25, and has not been opened on a Mac. Sign-in has not run against a real Portal. | [desktop/README.md](../../desktop/README.md) |
 | Scan server | Linux; macOS and Windows unverified | none | `server/main.ts` | Runs on Linux: verified on one host. | [server.md](server.md) |
 
 Every capture target uses one contract, `ARProvider` (`src/ar/provider.ts`), so the scanner above
@@ -34,6 +34,22 @@ build, for XREAL Aura and PICO, WebXR alone.
 Planning for the device targets is in wave 13:
 [factory/13-device-targets/README.md](../factory/13-device-targets/README.md). XREAL Aura and
 PICO are planned in wave 17: [factory/17-xr-device-targets/README.md](../factory/17-xr-device-targets/README.md).
+
+## Builds of `9872ccb` (2026-11-25)
+
+On 2026-11-25 every phone, web and desktop target was built and tested on a Mac from `main` at `9872ccb`, for
+testing on devices. The Android and iOS builds name a default Scan server (`VITE_API_BASE`). No workflow ran on
+that commit: GitHub last built these targets on `main` at `bd80f58` (#292).
+
+| Build | Result |
+| --- | --- |
+| Gates | `npm run verify`: 9,965 pass, 0 fail, 12 skipped. `npm run test:box` (`api`, `chromium-mock`): 239 pass, with `mock-editor-homes:172` the known failure |
+| Web bundle (`npm run build`) | built. The two Safari profiles (`TEST_BOX_PROJECTS=webkit-iphone15,webkit-desktop npm run test:box`) passed 344, skipped 22, failed 0 once their stale tests were fixed the same day |
+| Android app, ARCore, 8th Wall and WebXR only (`npm run build:web`, `build:8thwall` or `build:webxr` in `mobile/`, then `./gradlew assembleDebug`) | three debug APKs and an unsigned release APK; `testDebugUnitTest` 19 of 19, the instrumented tests compiled; the release dependency lock unchanged. Each installed and started on an Android 16 emulator, which has no ARCore and no camera pose |
+| iOS app (`xcodebuild`, Debug) | a development-signed device build, and a Simulator build that started on an iPhone 17 Pro Simulator. The device build was installed on one iPhone; no checklist row has run on it |
+| Desktop app (`npm run build --prefix desktop -- --target universal-apple-darwin --bundles app,dmg`) | a universal app and disk image, ad-hoc signed; `npm run test:native` 7 of 7 and `cargo test --locked` 2 of 2. Not opened on a Mac |
+
+Nothing else built from it has run on a phone or a tablet.
 
 ## Builds of the merged tree
 

@@ -31,13 +31,14 @@ counts as verified only when someone ran it on the hardware and read the output 
 
 | Target | Status | Page |
 |---|---|---|
-| **Web, 8th Wall**: iPhone and iPad Safari | In code. No run on an iPhone or iPad is recorded. | [web-8thwall.md](docs/targets/web-8thwall.md) |
+| **Web, 8th Wall**: iPhone and iPad Safari | In code. The iPhone 15 and desktop Safari Playwright profiles pass on `npm run test:box`'s servers (`TEST_BOX_PROJECTS`). No run on an iPhone or iPad is recorded. | [web-8thwall.md](docs/targets/web-8thwall.md) |
 | **Web, WebXR**: Android Chrome with ARCore, Meta Quest Browser | In code. On Android one session start was seen, and tracking was not reached. Quest support is documented, not verified. | [web-webxr.md](docs/targets/web-webxr.md) |
-| **Android app, ARCore**: the Capacitor shell with `ScanAR`, native first, then 8th Wall, then WebXR | Built at `81e437c`, the tree `main` merged as `e897380`, and on `main` after wave 14 by Mobile Build (run 45327838056), which also runs its unit tests. Not run on a device. | [android-arcore.md](docs/targets/android-arcore.md) |
-| **Android app, 8th Wall**: the same shell built with `VITE_AR_RUNTIME=8thwall` | Built locally at `81e437c`, and by Mobile Build's 8th Wall job on `main` after wave 14 (run 45327838056); `npm run build:8thwall` in `mobile/` makes it. No device run is recorded. It shares the app id, so it replaces the ARCore build on a device. | [android-8thwall.md](docs/targets/android-8thwall.md) |
+| **Android app, ARCore**: the Capacitor shell with `ScanAR`, native first, then 8th Wall, then WebXR | Built at `9872ccb` on 2026-11-25, with its 19 JVM unit tests; Mobile Build last ran on `main` at `bd80f58` (run 45330560945). It starts on an Android 16 emulator, which has no ARCore. Not run on a device: [Checklist E](docs/testing/DEVICE_TESTING.md#checklist-e--native-arcore-scan-android-app). | [android-arcore.md](docs/targets/android-arcore.md) |
+| **Android app, 8th Wall**: the same shell built with `VITE_AR_RUNTIME=8thwall` | Built at `9872ccb` on 2026-11-25, and by Mobile Build's 8th Wall job on `main` at `bd80f58` (run 45330560945); `npm run build:8thwall` in `mobile/` makes it. No device run is recorded. It shares the app id, so it replaces the ARCore build on a device. |
+| **Android app, WebXR only**: the same shell built with `VITE_AR_RUNTIME=webxr`, for XREAL Aura and PICO | Built at `9872ccb` on 2026-11-25, with no 8th Wall engine. Installed on one XREAL Aura, whose WebView has no WebXR, so it cannot capture there. It shares the app id too. | [android-webxr.md](docs/targets/android-webxr.md) | [android-8thwall.md](docs/targets/android-8thwall.md) |
 | **Meta Quest app**: a native headset app on the Meta Spatial SDK (`meta/`) | Built locally at `81e437c`, and by the Quest Build workflow on `main` after wave 14 (run 45327834865), whose 108 JVM unit tests pass. It signs in with `shell=quest`. Not run on a headset. | [meta-quest.md](docs/targets/meta-quest.md) |
-| **iOS app**: the Capacitor shell with ARKit through `ScanAR` | In code, drawn in RealityKit's `ARView` (ADR 0012). Compiled for the iOS Simulator at `81e437c` (Mobile Build run 45260987425), and on `main` after wave 14 (run 45327838056); not run on a device. | [ios.md](docs/targets/ios.md) |
-| **Desktop app**: the editor and viewer, for Windows, macOS and Linux | In code. It cannot capture. Sign-in has not run against a real Portal. | [desktop/README.md](desktop/README.md) |
+| **iOS app**: the Capacitor shell with ARKit through `ScanAR` | In code, drawn in RealityKit's `ARView` (ADR 0012), with a geo view on ARKit geo tracking (ADR 0017). Built for a device and the Simulator at `9872ccb` on 2026-11-25; Mobile Build's Simulator job last ran on `main` at `bd80f58`. Installed on one iPhone; no row of Checklist D has run on it. | [ios.md](docs/targets/ios.md) |
+| **Desktop app**: the editor and viewer, for Windows, macOS and Linux | In code. It cannot capture. The universal macOS app built at `9872ccb` on 2026-11-25 and has not been opened on a Mac. Sign-in has not run against a real Portal. | [desktop/README.md](desktop/README.md) |
 
 The desktop and Android apps are published only as GitHub pre-releases, and no app is in an app
 store. How they are built and released: [docs/targets/README.md](docs/targets/README.md#releases).
@@ -666,7 +667,7 @@ The repo defines over 140 npm scripts (`package.json`). The most common:
 | `npm run test:mobile` | Playwright tests (webkit iPhone 15 emulation) |
 | `npm run test:iphone` | Playwright (WebKit, iPhone 15 profile) against the live tailnet URL; no real device, no USB |
 | `npm run test:house` | Two-story-house field-acceptance suite |
-| `npm run test:box` | Self-contained browser loop — boots its own API server (`:8100`) and Vite (`:5273`) on scratch data dirs, seeds a corpus, runs the `api` + `chromium-mock` Playwright projects, tears it all down. Never touches the long-lived `:8000`/`:5173` servers or the real `scans/`. |
+| `npm run test:box` | Self-contained browser loop — boots its own API server (`:8100`) and Vite (`:5273`) on scratch data dirs, seeds a corpus, runs the `api` + `chromium-mock` Playwright projects (or the ones `TEST_BOX_PROJECTS` names), tears it all down. Never touches the long-lived `:8000`/`:5173` servers or the real `scans/`. |
 | `npm run test:mock` / `test:api` | Mock-engine + API-only test tiers |
 | `npm run smoke:pipeline` | End-to-end scan-optimization pipeline smoke test |
 | `npm run setup:models` | Show the recommended Ollama vision-model catalog and install the ones you want |
@@ -851,6 +852,10 @@ npm run test:iphone
 # Full isolated browser loop: boots its own API server + Vite on scratch ports and
 # data dirs, seeds a corpus, runs the api + chromium-mock Playwright projects.
 npm run test:box
+
+# The same loop on the two Safari profiles (npm test and npm run test:mobile above
+# need servers of their own): TEST_BOX_PROJECTS replaces the api + chromium-mock pair.
+TEST_BOX_PROJECTS=webkit-iphone15,webkit-desktop npm run test:box
 ```
 
 See `playwright.config.ts` for project configurations. The on-device checklists for each target are linked from [docs/targets/](docs/targets/README.md).

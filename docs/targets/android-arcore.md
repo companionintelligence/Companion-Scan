@@ -52,9 +52,10 @@ ARCore session as the AR runtime. It is the scanner and the editor. The full she
   tests. Since wave 14 the Mobile Build workflow runs `./gradlew testDebugUnitTest` (11
   `ScanARRules` tests and 8 `OriginAnchorStoreTest` tests, where Capacitor's template stubs were) and
   compiles the instrumented tests, which no job runs; its run 45327838056 passed on `main` at
-  `8deb264`. No build has been installed on a phone or an emulator. A debug APK build, an install and launch on an Android
-  16 emulator, and the start screen were observed before the merge, on a tree that registered a
-  different plugin ([DEVICE_TEST_KIT.md](../testing/DEVICE_TEST_KIT.md#surfaces)).
+  `8deb264`. On 2026-11-25 `9872ccb` was built on a Mac: a debug APK, an unsigned release APK, and
+  the 19 JVM tests, which pass ([Builds of 9872ccb](README.md#builds-of-9872ccb-2026-11-25)). That
+  debug APK installed and started on an Android 16 emulator, which has no ARCore and no camera
+  pose, so the native session could not run there. No build has been installed on a phone.
 - **Web side: tested without a device.** `npm run test:native-ar` covers the codec, the provider
   against a fake plugin (with the fallback) and the runtime choice. `tests/mock-native-ar.spec.ts`
   runs the scanner in Chromium on a stand-in plugin and checks the handover to the 8th Wall mock.
