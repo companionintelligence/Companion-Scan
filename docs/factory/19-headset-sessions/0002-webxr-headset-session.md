@@ -38,13 +38,20 @@ the viewer pose and the view's projection are the eyes', not the camera's that t
 - Q: When does the panel show? — A: When the session has no `dom-overlay` (`domOverlayState` absent). `?xrpanel=on` or
   `off` overrides it.
 - Q: Head-mounted or not? — A: A viewer pose with more than one view. Only then can the camera model apply.
+- Q: Where do the consent question's words come from? — A: From the open dialog itself (its heading and paragraphs),
+  so the panel shows what the page would, and imports none of the consent modules, which only `main.ts` may
+  (`wp-15b-keyframe-controller.test.ts`, "no part of the app but the consent modules and the panel row reads the
+  answer").
+- Q: What if the panel cannot be built (no 2-D canvas)? — A: The session starts without it; the panel is an aid.
 
 ## Files impacted
 
 - New: `src/ar/xr-panel-layout.ts`, `src/ar/xr-session-panel.ts`, `src/ar/xr-camera-model.ts`,
   `tests/mock-webxr-session-panel.spec.ts`, `tests/unit/node/wp-19-xr-session-panel.test.ts`,
   `tests/unit/node/wp-19-xr-camera-model.test.ts`.
-- Changed: `src/ar/webxr.ts`, `docs/targets/web-webxr.md`, `docs/factory/atlas.html`.
+- Changed: `src/ar/webxr.ts`, `docs/targets/pico.md`, `docs/targets/xreal-aura.md`, `docs/factory/atlas.html`.
+  `docs/targets/web-webxr.md` belongs to the phones-and-web branch, so it is left for that branch: its Quest lines
+  still describe the page without the panel.
 
 ## Schema required
 
@@ -52,21 +59,23 @@ None.
 
 ## Definition of Done
 
-- [ ] With no `dom-overlay`, a world-locked panel shows the scanner's status, and `select` on its buttons starts and
+- [x] With no `dom-overlay`, a world-locked panel shows the scanner's status, and `select` on its buttons starts and
   stops streaming, captures, and answers the consent question.
-- [ ] With a camera model on a head-mounted session, frames carry the camera's pose and the camera's field of view.
+- [x] With a camera model on a head-mounted session, frames carry the camera's pose and the camera's field of view.
 
 ## Tests
 
-- [ ] Unit: the panel's layout, placement and ray test; the camera model's parsing, storage and pose.
-- [ ] Playwright on the iwer emulator, with no `dom-overlay`: the panel shows, and a trigger press on its buttons
-  reaches the scanner's own controls.
-- [ ] `npm run verify`.
+- [x] Unit: the panel's layout, placement and ray test; the camera model's parsing, storage and pose
+  (`wp-19-xr-session-panel.test.ts`, `wp-19-xr-camera-model.test.ts`, in `npm run test:wave`).
+- [x] Playwright on the iwer emulator, with no `dom-overlay`: the panel shows, and a trigger press on its buttons
+  reaches the scanner's own controls (`tests/mock-webxr-session-panel.spec.ts`).
+- [x] `npm run verify`.
 
 ## Acceptance Criteria
 
-- [ ] Given an emulated Quest 3 session without `dom-overlay`, when the trigger is pressed on Start, then the scanner's
+- [x] Given an emulated Quest 3 session without `dom-overlay`, when the trigger is pressed on Start, then the scanner's
   stream toggle runs.
+- [ ] Given a real headset, the same. Not run: no headset was connected (the checklists, 0001).
 
 ## Risks / potential issues
 
@@ -75,4 +84,4 @@ None.
 
 ## Subtasks
 
-1. [ ] The panel, the camera model, their tests and the docs.
+1. [x] The panel, the camera model, their tests and the docs.
