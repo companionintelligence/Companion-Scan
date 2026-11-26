@@ -52,9 +52,10 @@ ARCore session as the AR runtime. It is the scanner and the editor. The full she
   tests. Since wave 14 the Mobile Build workflow runs `./gradlew testDebugUnitTest` (11
   `ScanARRules` tests and 8 `OriginAnchorStoreTest` tests, where Capacitor's template stubs were) and
   compiles the instrumented tests, which no job runs; its run 45327838056 passed on `main` at
-  `8deb264`. No build has been installed on a phone or an emulator. A debug APK build, an install and launch on an Android
-  16 emulator, and the start screen were observed before the merge, on a tree that registered a
-  different plugin ([DEVICE_TEST_KIT.md](../testing/DEVICE_TEST_KIT.md#surfaces)).
+  `8deb264`. On 2026-11-25 `9872ccb` was built on a Mac: a debug APK, an unsigned release APK, and
+  the 19 JVM tests, which pass ([Builds of 9872ccb](README.md#builds-of-9872ccb-2026-11-25)). That
+  debug APK installed and started on an Android 16 emulator, which has no ARCore and no camera
+  pose, so the native session could not run there. No build has been installed on a phone.
 - **Web side: tested without a device.** `npm run test:native-ar` covers the codec, the provider
   against a fake plugin (with the fallback) and the runtime choice. `tests/mock-native-ar.spec.ts`
   runs the scanner in Chromium on a stand-in plugin and checks the handover to the 8th Wall mock.
@@ -98,8 +99,8 @@ are in [mobile/README.md](../../mobile/README.md#build) and [Releases](README.md
    with Google Play Services for AR installed (`adb install -r ...`).
 2. Set the Scan server on the first-run screen's Server row (Add server, then
    `https://<host>:5173` for a dev box), unless the build named one.
-3. Tap Walk the room, pick or create a Place, and confirm. The camera, motion and location
-   prompts should appear.
+3. Tap Walk the room: the location prompt comes as the Place picker opens, not at launch. Pick or
+   create a Place, and confirm. The camera and motion prompts should follow.
 
 The emulator is the quickest way to see the shell boot. It has no ARCore and no camera pose, so it
 shows that the shell starts, not that AR works
@@ -112,9 +113,10 @@ shows that the shell starts, not that AR works
   (`chrome://inspect` on the debug build) and write down `supported` and `reason`. A native start
   logs `[native-ar] trackingStatus:` lines; the warning `[native-ar] the native session did not
   start; using the web runtime:` means it fell back to 8th Wall.
-- Android has no checklist of its own yet: use rows 1 to 3 of
-  [Checklist D](../testing/DEVICE_TESTING.md#checklist-d--native-arkit-scan-ios-shell) and the
-  console lines.
+- [Checklist E](../testing/DEVICE_TESTING.md#checklist-e--native-arcore-scan-android-app) in
+  DEVICE_TESTING.md, rows 1 to 13: `capabilities()`, the status line, the native start and its
+  console lines, a wall hit test, pause and resume, the origin anchor, depth, a refused camera,
+  the sign-in return, the 8th Wall build, and a device without ARCore.
 - The room-loop benchmark asks for an ARCore phone or tablet in the Android shell
   ([DEVICE_TESTING.md](../testing/DEVICE_TESTING.md#devices)).
 - Without a device: `npm run test:native-ar`, `npm run test:android-lockfile`, and

@@ -2,10 +2,15 @@
 /**
  * device-preflight.mjs — the checks a phone or tablet test silently depends on.
  *
- * Run it on the box that serves the app, before a device test starts:
+ * Run it before a device test starts, on the box that serves the app or from another machine:
  *
  *   npm run device:preflight
  *   TAILSCALE_HOSTNAME=my-box.example.ts.net npm run device:preflight   # when `tailscale` is not on PATH
+ *   TAILSCALE_HOSTNAME=my-box.example.ts.net API_URL=http://my-box.example.ts.net:8000 npm run device:preflight
+ *                                                                       # from a dev machine: that box's API, directly
+ *
+ * Off the box without API_URL, the direct API check warns instead of failing when the proxy check reached
+ * the box's API (scripts/lib/preflight-api.mjs).
  *
  * The host is named the way the server, vite.config.ts and `npm run qr` name it: TAILSCALE_HOSTNAME,
  * then VITE_HOSTNAME, then the Tailscale CLI's own DNS name.
@@ -21,6 +26,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { directApiTarget, directApiVerdict, ownTailscaleName } from './lib/preflight-api.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const VITE_PORT = process.env.VITE_PORT ?? '5173'
@@ -55,6 +61,31 @@ async function checkHttp(name, url) {
     record('FAIL', name, `${url}: ${err.cause?.code ?? err.message}`)
     return null
   }
+}
+
+/**
+ * The API server checked directly, not through the proxy: at `API_URL` when it is set, else on this
+ * machine. Off the box, with the proxy check passing, nothing on localhost is a warning, not a failure
+ * (scripts/lib/preflight-api.mjs).
+ */
+async function checkDirectApi(host, ts, proxyHealthy) {
+  const { url, explicit } = directApiTarget(process.env, API_PORT)
+  let reached = false
+  let detail
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+    reached = res.status === 200
+    detail = `${res.status}  ${url}`
+  } catch (err) {
+    detail = `${url}: ${err.cause?.code ?? err.message}`
+  }
+  const onThisBox = ownTailscaleName(ts) === host
+  const verdict = directApiVerdict({ reached, explicit, onThisBox, proxyHealthy })
+  if (verdict === 'WARN') {
+    detail = `nothing answers ${url}, and ${host} is not this machine: the proxy check above reached its API. ` +
+      `To check that API directly, set API_URL (for example API_URL=http://${host}:8000)`
+  }
+  record(verdict, 'api server (direct)', detail)
 }
 
 /** The Access-Control-Allow-Origin a preflight from `origin` gets back, or null. */
@@ -112,7 +143,7 @@ async function main() {
     record(ready ? 'PASS' : 'FAIL', 'inference engine', ready ? `${body.model} ready` : `engineLoadState=${body?.engineLoadState ?? 'unknown'}`)
   }
   await checkHttp('projects api (via proxy)', `${base}/projects`)
-  await checkHttp('api server (direct)', `http://localhost:${API_PORT}/health`)
+  await checkDirectApi(host, ts, health?.status === 200)
 
   // ── Native shells: CORS origins the server must allow ─────────────────────
   for (const origin of ['capacitor://localhost', 'https://localhost']) {

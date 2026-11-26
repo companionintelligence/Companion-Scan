@@ -31,7 +31,12 @@ iPad Safari, which have no WebXR AR.
   the camera stream to video; the rest stall there. Expect to press Start more than once
   ([AR_DEVICE_SUPPORT.md](../operations/AR_DEVICE_SUPPORT.md#xreal-beam-pro)).
 - **Build.** The web bundle built at commit `81e437c`, the tree `main` merged as `e897380`
-  (#282), on 2026-11-23 ([Builds of the merged tree](README.md#builds-of-the-merged-tree)).
+  (#282), on 2026-11-23 ([Builds of the merged tree](README.md#builds-of-the-merged-tree)), and at
+  `9872ccb` on 2026-11-25 ([Builds of 9872ccb](README.md#builds-of-9872ccb-2026-11-25)).
+- **Safari in a browser engine, not on an iPhone.** WebKit with the iPhone 15 profile and desktop
+  Safari run `ar-scan`, `e2e-suite`, `project` and `server` on `npm run test:box`'s own servers
+  with `TEST_BOX_PROJECTS=webkit-iphone15,webkit-desktop`. On 2026-11-25, once their stale tests
+  were fixed: 344 pass, 22 skip (the live preview is off, and WebKit has no WebGPU adapter), none fail.
 - **The automated tests use a scripted engine, not the real one.**
   `public/test-fixtures/xr8-mock.js`, loaded with `?mock=xr8`, sends poses, feature points and a
   fake camera feed. Playwright cannot drive Safari on a real iPhone (`playwright.config.ts`).
@@ -73,7 +78,8 @@ The engine is committed at `public/xr.js`: there is nothing to download.
 3. On the box, run `npm run qr -- "/?project=default"` and scan the code with the phone. Or type
    `https://<host>:5173/?project=default` into Safari.
 4. Select or create a Place, calibrate, and tap **Scan a Place**. The camera and motion prompts
-   must come from that tap.
+   must come from that tap. The location prompt comes earlier, as the Place picker opens, and not
+   when the page loads.
 
 To read the phone's console on the box, start the server with `CLIENT_LOGS_BROADCAST=1`, run `npm run logs:watch` and
 add `?debug=remote` to the page address.

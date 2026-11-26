@@ -635,7 +635,19 @@ async function main() {
   // What this walk records of where it is and which way it faces (src/geo/session-seed.ts): the best fix of its first minute and the
   // session's true bearing from steady compass samples, written beside the scan in place of the one snapshot an export took.
   const geoSession = new GeoSessionSampler({ pairedCompass: (rotation) => geoTracker.pairedCompass(rotation), compassReading: () => geoTracker.compassReading })
-  const placePicker = mountPlacePicker(projectStore, geoTracker, selectedProject, (project, areaId) => {
+  // Location is asked for where it is first needed, the Place picker below, not when the page opens. The prompt at
+  // launch came before the person had chosen to do anything with a Place, and in the iOS app WebKit asks a second
+  // time, naming "localhost". GPS starts once, and every caller shares its first answer.
+  let geoStart: Promise<GeoFix | null> | null = null
+  const startGeoTracking = (): Promise<GeoFix | null> => {
+    geoStart ??= geoTracker.start().then((fix) => {
+      if (fix) updateGeoIndicator(fix)
+      if (fix?.address) overlay.setStatus(fix.address)
+      return fix
+    })
+    return geoStart
+  }
+  const placePicker = mountPlacePicker(projectStore, geoTracker, startGeoTracking, selectedProject, (project, areaId) => {
     selectedProject = project
     selectedAreaId = areaId
     uploadPlaceTarget = { projectId: project?.projectId ?? null, areaId }
@@ -696,14 +708,10 @@ async function main() {
   // stream clears it again.
   let keyframeCountClosed = false
 
-  // Start geo tracker early (GPS needs time to acquire a fix)
-  // Wire geo indicator chip immediately when first fix arrives
+  // The geo indicator chip and the walk's geo record follow every fix. GPS itself starts when the Place picker
+  // first opens (startGeoTracking, above), which every capture path does before it captures anything.
   geoTracker.onUpdate = (fix) => updateGeoIndicator(fix)
   geoTracker.onPosition = (fix, takenAtMs) => geoSession.noteFix(fix, takenAtMs)
-  void geoTracker.start().then((fix) => {
-    if (fix) updateGeoIndicator(fix)
-    if (fix?.address) overlay.setStatus(fix.address)
-  })
 
   // End of section 1: project selection is ready and the picker is wired
   // (requestPlaceSelection, above), and nothing has awaited since
@@ -842,6 +850,23 @@ async function main() {
     followCaptureSession()
   }
 
+  // The history drawer needs only the store, so it is wired before the WebGPU probe
+  // below. After it, the history button did nothing for up to 2 s where
+  // requestAdapter() never answers (WebKit, so Safari): a tap there was lost.
+  const history = new SessionHistory(store, resetScanner)
+  if (readOnlyScanner) history.setReadOnly()
+  history.mount()
+
+  // Deliberately no saveSnapshot() here. Persisting at boot wrote an empty
+  // record on every page load, so the history drawer filled with "0 objects"
+  // rows that buried the real scans. The first capture persists; until then
+  // there is nothing worth storing.
+  void checkStorageQuota(store, overlay)
+
+  document.getElementById('history-btn')?.addEventListener('click', () => {
+    void initDrawerGeoMap(geoTracker.snapshot())
+  })
+
   // The On-device toggle and its model row read hasWebGPU when the panel is built,
   // so the adapter probe runs first. It is bounded (2 s), and router.init() below
   // reuses its answer rather than asking the browser again.
@@ -905,20 +930,6 @@ async function main() {
   if (router.hasWebGPU) {
     void getProvisioningStatus({ probe: true }).then((status) => panel.setModelStatus(status))
   }
-
-  const history = new SessionHistory(store, resetScanner)
-  if (readOnlyScanner) history.setReadOnly()
-  history.mount()
-
-  // Deliberately no saveSnapshot() here. Persisting at boot wrote an empty
-  // record on every page load, so the history drawer filled with "0 objects"
-  // rows that buried the real scans. The first capture persists; until then
-  // there is nothing worth storing.
-  void checkStorageQuota(store, overlay)
-
-  document.getElementById('history-btn')?.addEventListener('click', () => {
-    void initDrawerGeoMap(geoTracker.snapshot())
-  })
 
   await router.init(
     (stage, pct) => { overlay.setProgress(pct, stage) },
@@ -2612,6 +2623,7 @@ const PLACE_ICON_AREA = '<svg viewBox="0 0 16 16" fill="none" stroke="currentCol
 function mountPlacePicker(
   projectStore: ProjectStore,
   geoTracker: GeoTracker,
+  startGeo: () => Promise<GeoFix | null>,
   selected: Project | null,
   onSelect: (project: Project | null, areaId: string | null) => void,
 ): { open: (afterSelection?: () => void, purpose?: PlaceSelectionPurpose, onDismiss?: () => void) => void } {
@@ -2627,6 +2639,8 @@ function mountPlacePicker(
   // Set by open(); defaults to 'scan' so a caller that forgets still gets the
   // path this modal was originally written for rather than blank copy.
   let currentPurpose: PlaceSelectionPurpose = 'scan'
+  // Set once GPS has first answered (a fix, a refusal or a timeout), after which open() draws the list once.
+  let geoAnswered = false
 
   const sheet = document.createElement('div')
   sheet.id = 'place-sheet'
@@ -2641,10 +2655,13 @@ function mountPlacePicker(
     dismissed?.()
   }
 
-  const render = async () => {
+  // The list the last render fetched, or is fetching. A redraw for a new GPS answer (open(), below) reuses it: only
+  // the distances change, and a second GET /projects would read as a second open of the sheet.
+  let lastList: ReturnType<typeof fetchPlaceList> | null = null
+  const render = async (reuseList = false) => {
     // The one reader of GET /projects (src/project/frame-sync.ts), as the boot's resolveInitialProject() reads it:
     // it gives up after a timeout, and a service worker's queued-offline answer is not a list (F-44, FN-014).
-    const list = await fetchPlaceList()
+    const list = await (reuseList && lastList ? lastList : (lastList = fetchPlaceList()))
     const listFailed = !list.ok
     const listed = list.places
     // A frame this phone calibrated and the server does not hold yet stands for the Place's frame, and its row says so.
@@ -3067,10 +3084,21 @@ function mountPlacePicker(
     pendingDismissAction = onDismiss ?? null
     currentPurpose = purpose
     sheet.hidden = false
+    // Every capture path (scan, upload, tripod sweep) opens this sheet first, and its list puts the Places within
+    // 100 m of the fix first, so location is asked for here. Started before render(), so a fix this tab kept is
+    // read at once; until GPS answers the list says it has no fix, and it is drawn once more when it does.
+    const geo = startGeo()
     void render()
     void retryPendingFrames(projectStore, undefined, 'picker').then(({ changed }) => {
       if (changed && !sheet.hidden) void render()
     })
+    if (!geoAnswered) {
+      void geo.then(() => {
+        if (geoAnswered) return
+        geoAnswered = true
+        if (!sheet.hidden) void render(true)
+      })
+    }
   }
   sheet.addEventListener('click', (event) => {
     if (event.target === sheet) dismissSheet()

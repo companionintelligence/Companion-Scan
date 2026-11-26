@@ -11,7 +11,10 @@
  * long-lived :8000/:5173 servers or the real scans/ and worlds/ dirs.
  *
  * Env knobs: TEST_BOX_API_PORT (8100), TEST_BOX_VITE_PORT (5273),
- * CHROMIUM_EXECUTABLE_PATH (forwarded to Playwright).
+ * TEST_BOX_PROJECTS (the Playwright projects, comma-separated; `api,chromium-mock`
+ * unless set, scripts/lib/test-box-projects.mjs), CHROMIUM_EXECUTABLE_PATH
+ * (forwarded to Playwright). The two Safari profiles, which no workflow runs:
+ *   TEST_BOX_PROJECTS=webkit-iphone15,webkit-desktop npm run test:box
  *
  * Extra command-line arguments are forwarded to Playwright, so a single spec can be run
  * on its own ports: npm run test:box -- tests/mock-offline-queue.spec.ts --repeat-each=3
@@ -20,6 +23,7 @@ import { spawn, execSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, openSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { boxProjects } from './lib/test-box-projects.mjs'
 
 const isWindows = process.platform === 'win32'
 
@@ -196,8 +200,9 @@ try {
   })
 
   // 4. Test suites
-  console.log('[test-box] running playwright: api + chromium-mock')
-  const pw = spawnCompat('npx', ['playwright', 'test', '--project=api', '--project=chromium-mock', ...process.argv.slice(2)], {
+  const projects = boxProjects(process.env)
+  console.log(`[test-box] running playwright: ${projects.join(' + ')}`)
+  const pw = spawnCompat('npx', ['playwright', 'test', ...projects.map((name) => `--project=${name}`), ...process.argv.slice(2)], {
     cwd: root,
     stdio: 'inherit',
     env: {

@@ -40,19 +40,27 @@ is [mobile/README.md](../../mobile/README.md).
   45247696203), and again on the merged tree (`81e437c`, run 45260987425). See
   [ADR 0012](../adr/0012-the-ios-shell-draws-its-native-ar-view-with-realitykit.md) and
   [wave 13](../factory/13-device-targets/README.md).
+- **A geo view** (`GeoViewController.swift`, ADR 0017): the viewer page opens it through two more
+  `ScanAR` methods, `openGeoView` and `closeGeoView`, and it shows one label per Place at its pin. It
+  runs ARKit geo tracking where Apple offers it, with a GPS and compass fallback, drawn in RealityKit.
+  ARKit runs one session at a time, so the geo view and a scan refuse to open while the other runs.
+  Compiled; not run on a device.
 
 ## Status
 
 - **Not run on a device.** No ARKit iPhone has run `ScanAR`: tracking, interruptions,
   relocalization, depth and autosave are verified only on a phone, and none of them has been
-  ([mobile/README.md](../../mobile/README.md#native-ar-capture)).
+  ([mobile/README.md](../../mobile/README.md#native-ar-capture)). A development-signed device build
+  of `9872ccb` was installed and launched on one iPhone on 2026-11-25; no row of Checklist D has run
+  on it.
 - **Build: the merged tree compiles for the iOS Simulator.** The Mobile Build workflow's iOS
   Simulator job compiled commit `81e437c`, the tree `main` merged as `e897380` (#282), on
   2026-11-23 (run 45260987425); the same run built the Android debug APK
   ([Builds of the merged tree](README.md#builds-of-the-merged-tree)). After wave 14 merged, run
   45327838056 compiled `main` at `8deb264` with wave 14's changes to `ScanARPlugin.swift` and
-  `Info.plist`. No device build has been made: that needs a Mac with Xcode and the owner's Apple
-  signing team, and the build host here has no Xcode.
+  `Info.plist`. On 2026-11-25 `9872ccb` was built on a Mac with Xcode 27.2: for the Simulator, where
+  it started, and for a device, development-signed with the owner's team
+  ([Builds of 9872ccb](README.md#builds-of-9872ccb-2026-11-25)). No workflow builds for a device.
 - **Sign-in: on the simulator only.** The full round trip, the status row after a restart and the
   return from the sheet ran on the iOS simulator against a local stand-in for the Portal, not the
   real one ([mobile/README.md](../../mobile/README.md#companion-account-sign-in)).
@@ -91,8 +99,9 @@ Capabilities, and run on the phone. `cap sync ios` takes the Swift Package Manag
 1. Give the app its Scan server on the first-run Server row (Add server, then
    `https://<host>:5173` for a dev box), unless the build named one. An address saved on the phone
    beats the build's.
-2. Tap Walk the room, pick or create a Place, and confirm. The camera and motion prompts should
-   appear.
+2. Tap Walk the room: the location prompt comes as the Place picker opens, not at launch (in the
+   app WebKit names the page "localhost" in it). Pick or create a Place, and confirm. The camera
+   and motion prompts should follow.
 3. To drive the plugin, turn on Web Inspector on the phone (Settings, Safari, Advanced) and use
    the console from Safari's Develop menu on the Mac.
 
@@ -114,8 +123,8 @@ Capabilities, and run on the phone. `cap sync ios` takes the Swift Package Manag
 
 From [mobile/README.md](../../mobile/README.md#not-done):
 
-- `ScanAR` on a device, and a signed device build from Xcode: the merged tree has only been
-  compiled for the simulator.
+- `ScanAR` on a device: a development-signed build exists, and Checklist D has not run on it.
+  A distribution build for TestFlight has not been made.
 - A saved world map is not linked to the Place's frame: a map's origin is where its first session
   started (ADR 0010).
 - The keyframe upload does not send the depth map yet (`FrameObservation.depthUrl`).

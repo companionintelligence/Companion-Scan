@@ -5,7 +5,7 @@ Manual test protocol for real phones against a tailnet server (see
 browser: **iPhone Safari** runs the 8th Wall SLAM scanner; **Android Chrome** runs the
 native WebXR scanner. The Scan shells (the iOS and Android apps) start on a third, the
 phone's own ARKit or ARCore session through the `ScanAR` plugin, and fall back to 8th Wall,
-then WebXR, when it cannot start: Checklist D.
+then WebXR, when it cannot start: Checklist D for the iOS app, Checklist E for the Android app.
 
 ## Prerequisites
 
@@ -316,7 +316,40 @@ ADR 0010).
 **In the Android app**, row 4 reads differently. ARCore has no relocalization state, so after a
 resume a session that had already tracked reports `notAvailable`, then plain `limited`, with no
 reason, until it tracks again; the page reads that as LIMITED with no reason
-(`ScanARRules.java`, `everTracked`). Not run on a device.
+(`ScanARRules.java`, `everTracked`). Not run on a device. The Android app has a checklist of its
+own: Checklist E.
+
+## Checklist E — native ARCore (Scan Android app)
+
+The Android app (`mobile/android`) runs `ScanARPlugin.java` (ARCore) and falls back to 8th Wall,
+then WebXR, when the native session cannot start. Install the debug APK with `adb install -r`:
+`mobile/android/app/build/outputs/apk/debug/app-debug.apk`, or the device kit's ARCore build. Use
+a phone or tablet with Google Play Services for AR installed (the Galaxy Tab S8 Ultra and S9
+Ultra) for rows 1 to 12, and a device without ARCore, such as a Beam Pro, for row 13.
+
+To drive the plugin, open `chrome://inspect` in Chrome on the Mac with the device on adb, choose
+the app's WebView, and use its console: a debug build lets Chrome inspect it. The commands below
+run there.
+
+| # | Step | Expected result |
+|---|------|-----------------|
+| 1 | Launch the app | The start screen appears, with no location prompt: the app asks for location when the Place picker opens (row 4). The first-run Server row names the Scan server, or "None set" when the build named none |
+| 2 | Before AR starts: `await Capacitor.Plugins.ScanAR.capabilities()` | `platform` is `android`, `engine` is `arcore`, `supported` is true and `checking` is false. `depth` says whether the device has the ARCore depth API. Right after launch `checking` can still be true: ask again a second later, as the page does |
+| 3 | Read the status line before AR starts | It reads "ARCore ready", which says only that the native runtime was chosen |
+| 4 | Tap Walk the room, pick or create a Place, confirm, and allow the camera | Android asks for location as the Place picker opens, and the list then puts the Places within 100 m first. It asks for the camera when the session starts. The camera shows behind the web view, fitted whole (contain fit), with the HUD on top. The console shows `[native-ar] trackingStatus:` lines and no `[native-ar] the native session did not start; using the web runtime:` warning |
+| 5 | Walk slowly around the room | The overlay moves with the phone and the HUD tracking reads NORMAL. The point cloud and the hit samples grow |
+| 6 | Aim at a wall: `await Capacitor.Plugins.ScanAR.hitTest({ x: 0.5, y: 0.5 })` | `hit` is true; `rotation` is not `[0,0,0,1]`, and its Y axis is horizontal (the wall's normal), so a placed item faces the wall |
+| 7 | Press Home, wait 10 s, then return to the app | While the app is away, another camera app can open the camera: the paused session released it. On return the console logs `[native-ar] trackingStatus: NOT_AVAILABLE`, then `LIMITED` with no reason, then `NORMAL` once ARCore tracks again. Record whether the overlay sits on the same spot of the floor |
+| 8 | With the floor in the middle of the view: `await Capacitor.Plugins.ScanAR.setOriginAnchor({ x: 0.5, y: 0.5, heading: 0 })`, then `await Capacitor.Plugins.ScanAR.getOriginAnchor()` | Both resolve with `anchor` set; the second gives the pose as ARCore last refined it. `adb shell run-as com.companionintelligence.scan ls files` lists `scan-origin-anchor.json`. Pointed at empty sky, `setOriginAnchor` rejects |
+| 9 | Only where row 2 said `depth: true`: quit the app, relaunch, then `await Capacitor.Plugins.ScanAR.start({ depth: true, hitGrid: 20 })` and `await Capacitor.Plugins.ScanAR.captureFrame({ depth: true })` | The start resolves, and the frame has a `depth` payload with `width`, `height` and `metersBase64`. Where row 2 said `depth: false`, the start rejects: "This device has no ARCore depth support, so depth capture is unavailable." |
+| 10 | Take the camera back (`adb shell pm revoke com.companionintelligence.scan android.permission.CAMERA`), relaunch, start AR and choose Don't allow | `start()` rejects with "Camera permission was not granted, so AR cannot start.", the console shows `[native-ar] the native session did not start; using the web runtime:`, and the scanner goes on in 8th Wall |
+| 11 | On a Scan server with sign-in on (`PORTAL_OIDC_ENABLED`), tap Sign in with Companion Account | Custom Tabs opens the server's sign-in. After CI-Portal, Android returns to the app on `com.companionintelligence.scan://auth`, the tab closes and the Sign-in row reads "Signed in." Skip it on a server with sign-in off |
+| 12 | Install the 8th Wall build over the app (`scan-android-8thwall-debug.apk`, or `npm run build:8thwall` in `mobile/` and Gradle) and repeat rows 3 to 5 | The status line reads "8th Wall ready", and no `[native-ar] trackingStatus:` line appears. `[8thwall] Camera status:` lines say whether the start got past `hasStream` to `hasVideo`, then `[8thwall] trackingStatus:` reads NORMAL. Press Start again if it stalls at `hasStream` (on a Beam Pro in Chrome, about 2 starts in 8 reach video) |
+| 13 | On a device without ARCore, or with Google Play Services for AR uninstalled: launch, read `capabilities()` and the status line, then start AR | `supported` is false, and `reason` says why: "This device does not support ARCore." or "ARCore is not installed. Install or update Google Play Services for AR." Where ARCore can run but is missing, `installable` is true and the status line reads "ARCore is not installed, using 8th Wall". The scanner runs on 8th Wall |
+
+Rows 2, 6, 8 and 9 test the plugin directly. An install signed with the same key keeps the app's
+scans; one signed with another key needs the app uninstalled first, which deletes them. Not run on
+a device yet.
 
 ## Results matrix
 

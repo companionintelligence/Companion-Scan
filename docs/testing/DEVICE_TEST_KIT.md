@@ -1,10 +1,13 @@
 # Device test kit
 
-Start here before any phone, tablet, headset or Mac test. Run the preflight first, from the box that serves the app.
+Start here before any phone, tablet, headset or Mac test. Run the preflight first, on the box that serves the app or from a dev machine.
 
 ```bash
-npm run device:preflight
+npm run device:preflight                                     # on the box
+TAILSCALE_HOSTNAME=<box>.<tailnet>.ts.net API_URL=http://<box>.<tailnet>.ts.net:8000 npm run device:preflight   # from another machine
 ```
+
+From another machine, `API_URL` sends the direct API check to the box. Without it, the check asks this machine's own API, and when nothing answers there it warns instead of failing, as long as the check through the box's proxy passed.
 
 It checks the Tailscale host, the HTTPS origin, the Vite proxy into the API, the CORS answer Vite gives the two phone shells' origins (`capacitor://localhost` and `https://localhost`), the mobile shell bundle's host, the Android APK, the iOS manifest and permission keys, and the iOS Swift syntax. It exits non-zero on a real failure and prints the phone URLs. It names the host from `TAILSCALE_HOSTNAME`, then `VITE_HOSTNAME`, then the Tailscale CLI, the way the server and `npm run qr` do.
 
@@ -22,9 +25,9 @@ Each feature is listed below with what was checked on the dev box and what only 
 | Surface | Entry point | Checked on the dev box | You run on a device |
 | --- | --- | --- | --- |
 | iPhone Safari, web scanner | `scanner.html?world=default` | Page answers 200 over Tailscale HTTPS; API through the proxy; Vite's CORS answer for the two phone shells' origins. Pins now map through the camera canvas (unit-tested) | 8th Wall tracking, camera, motion permission, pin alignment at the top and bottom of the frame, capture, keyframe streaming |
-| iOS Capacitor shell | `mobile/ios` | `cap sync ios` works (the `CapApp-SPM` manifest is tracked). Permission keys present. `ScanARPlugin.swift` is in the Xcode target and `ScanBridgeViewController` registers it. The Mobile Build workflow's iOS Simulator job compiled this tree (commit `81e437c`, the tree `main` merged as `e897380`, run 45260987425, 2026-11-23; [targets/README.md](../targets/README.md#builds-of-the-merged-tree)) | Build and run in Xcode on a Mac. In the Web Inspector read `Capacitor.Plugins.ScanAR.capabilities()`: `supported` should be true. The page then chooses the native runtime when it loads (its status line reads "ARKit ready" before AR starts, which says only that it was chosen). A native start shows `[native-ar] trackingStatus:` lines in the console and no `the native session did not start` warning; that warning means it fell back to the 8th Wall path. Neither has run on a phone (see "AR in the shells") |
+| iOS Capacitor shell | `mobile/ios` | `cap sync ios` works (the `CapApp-SPM` manifest is tracked). Permission keys present. `ScanARPlugin.swift` is in the Xcode target and `ScanBridgeViewController` registers it. The Mobile Build workflow's iOS Simulator job compiled this tree (commit `81e437c`, the tree `main` merged as `e897380`, run 45260987425, 2026-11-23; [targets/README.md](../targets/README.md#builds-of-the-merged-tree)). On 2026-11-25 `9872ccb` was built on a Mac for the Simulator, where it started, and development-signed for a device ([targets/README.md](../targets/README.md#builds-of-9872ccb-2026-11-25)) | Build and run in Xcode on a Mac. In the Web Inspector read `Capacitor.Plugins.ScanAR.capabilities()`: `supported` should be true. The page then chooses the native runtime when it loads (its status line reads "ARKit ready" before AR starts, which says only that it was chosen). A native start shows `[native-ar] trackingStatus:` lines in the console and no `the native session did not start` warning; that warning means it fell back to the 8th Wall path. Neither has run on a phone (see "AR in the shells") |
 | Android Chrome, WebXR | `webxr.html` | Page answers 200 | An ARCore-backed `immersive-ar` session, tracking and capture |
-| Android Capacitor shell | `mobile/android` | `MainActivity` registers `ScanARPlugin`, and ARCore is declared once (`arcoreVersion` in `mobile/android/variables.gradle`). The debug APK built from this tree, locally and in the Mobile Build workflow (commit `81e437c`, run 45260987425, 2026-11-23). Not observed on this tree: an install and launch on an Android 16 emulator, and the start screen (both were observed before the branches were merged, on a tree that registered a different plugin) | Install on an ARCore-capable phone with Google Play Services for AR installed. Read `Capacitor.Plugins.ScanAR.capabilities()` in the WebView console (Chrome's `chrome://inspect`, on the debug build): `supported` is true only when ARCore is installed, and `reason` says why not. The page then chooses the native runtime when it loads (its status line reads "ARCore ready" before AR starts, which says only that it was chosen), or the 8th Wall path when `supported` is false. A native start shows `[native-ar] trackingStatus:` lines in the console and no `the native session did not start` warning; that warning means it fell back to the 8th Wall path (see "AR in the shells") |
+| Android Capacitor shell | `mobile/android` | `MainActivity` registers `ScanARPlugin`, and ARCore is declared once (`arcoreVersion` in `mobile/android/variables.gradle`). The debug APK built from this tree, locally and in the Mobile Build workflow (commit `81e437c`, run 45260987425, 2026-11-23). On 2026-11-25 the debug APKs of `9872ccb` installed and started on an Android 16 emulator, which has no ARCore and no camera pose | Install on an ARCore-capable phone with Google Play Services for AR installed. Read `Capacitor.Plugins.ScanAR.capabilities()` in the WebView console (Chrome's `chrome://inspect`, on the debug build): `supported` is true only when ARCore is installed, and `reason` says why not. The page then chooses the native runtime when it loads (its status line reads "ARCore ready" before AR starts, which says only that it was chosen), or the 8th Wall path when `supported` is false. A native start shows `[native-ar] trackingStatus:` lines in the console and no `the native session did not start` warning; that warning means it fell back to the 8th Wall path (see "AR in the shells") |
 | Quest headset, scan | `webxr.html` | Page answers 200 | An `immersive-ar` scan with keyframes |
 | Quest headset, edit | `xr-world.html?world=<slug>` | Three Playwright tests on the iwer Quest 3 emulator: enter VR, select, relabel, move, saved as patches; a refused save reverts; no immersive-vr says so | Enter VR on a real Quest. Select, move and relabel a Thing. Reload the desktop catalogue and check the change |
 | Desktop catalogue | `viewer.html` (Things tab) | One Playwright test on a mocked world: search, label and scan filters, relabel, clear | Your own multi-scan place: search, filter, relabel and clear across real rooms |
@@ -57,7 +60,8 @@ The whole-Place file holds every scan's geometry, so `GET /worlds/<slug>/export.
 1. `cd mobile && npm run build:web && npx cap sync android && (cd android && ./gradlew assembleDebug)`. To start the app on this box, put `VITE_API_BASE=https://<host>:5173` before `npm run build:web` (see "Building the shells").
 2. Install `mobile/android/app/build/outputs/apk/debug/app-debug.apk` on an ARCore-capable phone.
 3. Give the app its Scan server as for iOS, unless the build named one.
-4. Expected: the start screen renders and the Server row names this box. Tap Walk the room, pick or create a Place, and confirm. The camera, motion and location prompts should appear and the scanner should start on the ARCore session when `Capacitor.Plugins.ScanAR.capabilities()` reports `supported` (`[native-ar] trackingStatus:` lines and no `the native session did not start` warning), and on 8th Wall (status line "8th Wall ready") when it does not. Write down what `capabilities()` returns (`supported` and `reason`) and what happens.
+4. Expected: the start screen renders and the Server row names this box. Tap Walk the room: the location prompt comes as the Place picker opens. Pick or create a Place, and confirm. The camera and motion prompts should appear and the scanner should start on the ARCore session when `Capacitor.Plugins.ScanAR.capabilities()` reports `supported` (`[native-ar] trackingStatus:` lines and no `the native session did not start` warning), and on 8th Wall (status line "8th Wall ready") when it does not. Write down what `capabilities()` returns (`supported` and `reason`) and what happens.
+5. Then run [Checklist E](DEVICE_TESTING.md#checklist-e--native-arcore-scan-android-app) in DEVICE_TESTING.md, the Android app's own checklist.
 
 ### Quest headset, edit a place
 1. Open `https://<host>:5173/xr-world.html?world=<slug>` in the Quest browser and press Enter VR.
@@ -104,8 +108,8 @@ adb shell monkey -p com.companionintelligence.scan -c android.intent.category.LA
 ```
 
 - The device name is whatever `avdmanager list device` shows. On the SDK that recipe was run with, it was `pixel_6`, not `pixel_7`.
-- The emulator needs read and write access to `/dev/kvm`.
-- The location prompt appears on first launch. Accept it, then the app continues.
+- The emulator needs read and write access to `/dev/kvm` on Linux. An Apple Silicon Mac runs arm64 images instead (`system-images;android-36.1;google_apis_playstore;arm64-v8a`), with no `/dev/kvm`.
+- The location prompt appears when the Place picker first opens (Walk the room, Upload or the tripod sweep), not at launch. Accept it, then the picker lists the nearby Places.
 
 ## Recording a run
 
@@ -116,7 +120,7 @@ adb shell monkey -p com.companionintelligence.scan -c android.intent.category.LA
 ## Not verified by anyone yet
 
 - Real-device AR on a phone or a headset: the native `ScanAR` session on both platforms (ARKit, and ARCore), and the 8th Wall path that takes over in the shells when it cannot start. The unregistered `ArSession` plugin has not run either.
-- A signed device build of the iOS shell from Xcode, and a run of it on a phone (no Mac here). The Mobile Build workflow's simulator job compiled this tree on 2026-11-23 (run 45260987425).
+- A run of the iOS app on a phone. A development-signed device build of `9872ccb` (2026-11-25) is installed on one iPhone, and Checklist D has not run on it.
 - AMD ROCm, Apple MPS and Intel XPU hardware runs. Only fake-torch tests cover them; use the GPU report on each machine.
 - The catalogue on real multi-scan places. The Playwright test uses mocked data.
 - Consumers of the whole-Place file other than the Khronos validator.

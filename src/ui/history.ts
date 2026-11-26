@@ -42,6 +42,9 @@ export class SessionHistory {
 
   mount(): void {
     this.trigger.addEventListener('click', () => this.toggle())
+    // index.html ships the button disabled, as it does the Walk the room button: until this
+    // line a tap on it reached no handler and was lost without a word.
+    this.trigger.disabled = false
     document.getElementById('history-close')?.addEventListener('click', () => this.close())
 
     // Close on backdrop tap

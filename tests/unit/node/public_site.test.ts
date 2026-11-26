@@ -8,9 +8,11 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { PUBLIC_SITE_EXCLUDED, prunePublicSite } from '../../../scripts/public-site.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8')
@@ -41,8 +43,35 @@ test('every same-origin link in the shipped pages resolves without the server', 
     for (const [, path] of read(page).matchAll(/href="(\/[^"?#]*)/g)) {
       // viewer.ts removes the one sign-in link when the server has no such route.
       if (path!.startsWith('/authenticate/')) continue
-      const resolves = path === '/' || known.has(path!) || existsSync(join(ROOT, 'public', path!)) || existsSync(join(ROOT, path!))
+      const pruned = Object.keys(PUBLIC_SITE_EXCLUDED).some((name) => path!.startsWith(`/${name}/`))
+      const resolves = !pruned && (path === '/' || known.has(path!) || existsSync(join(ROOT, 'public', path!)) || existsSync(join(ROOT, path!)))
       assert.ok(resolves, `${page} links to ${path}, which Pages would answer with the 404 page`)
     }
   }
+})
+
+// ── What the public site leaves out (scripts/public-site.mjs) ─────────────────
+
+test('the public build leaves out what the apps leave out, and keeps the site', () => {
+  const out = mkdtempSync(join(tmpdir(), 'public-site-'))
+  try {
+    for (const dir of ['assets', 'test-fixtures', 'real-camera-artifacts', 'models/LiquidAI']) mkdirSync(join(out, dir), { recursive: true })
+    for (const file of ['index.html', '404.html', 'sw.js', 'assets/main.js', 'test-fixtures/xr8-mock.js', 'real-camera-artifacts/s8-ultra-scan-camera.png']) {
+      writeFileSync(join(out, file), 'x')
+    }
+    assert.deepEqual(prunePublicSite(out).sort(), ['models', 'real-camera-artifacts', 'test-fixtures'])
+    for (const kept of ['index.html', '404.html', 'sw.js', 'assets/main.js']) assert.ok(existsSync(join(out, kept)), `${kept} was removed`)
+    for (const gone of ['test-fixtures', 'real-camera-artifacts', 'models']) assert.ok(!existsSync(join(out, gone)), `${gone}/ is still there`)
+    assert.deepEqual(prunePublicSite(out), [], 'a second run finds nothing to remove')
+  } finally {
+    rmSync(out, { recursive: true, force: true })
+  }
+})
+
+test('the public site is built by build:public-site, and DEPLOY.md deploys that build', () => {
+  const scripts = JSON.parse(read('package.json')).scripts as Record<string, string>
+  assert.match(scripts['build:public-site'] ?? '', /^npm run build && node scripts\/public-site\.mjs dist$/)
+  const deploy = read('docs/operations/DEPLOY.md')
+  const section = deploy.slice(deploy.indexOf('## The public site'))
+  assert.match(section, /npm run build:public-site\s*\nnpx wrangler pages deploy dist --project-name=ci-spatial-scan/)
 })
