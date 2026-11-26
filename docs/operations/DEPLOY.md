@@ -113,9 +113,14 @@ Cloudflare Pages project `ci-spatial-scan` with nothing behind it. It only chang
 when someone deploys it:
 
 ```bash
-npm run build
+npm run build:public-site
 npx wrangler pages deploy dist --project-name=ci-spatial-scan --branch=main
 ```
+
+`npm run build:public-site` is `npm run build`, then `scripts/public-site.mjs`, which takes out of `dist/` what the
+apps leave out too: the test fixtures, the device-test screenshots and any model weights. A Scan server's own
+`npm run build` keeps them, because device tests against it fetch `/test-fixtures/`. Until 2026-11-25 the site was
+built with `npm run build` alone, and served both folders.
 
 So the page runs there. Everything that needs the API server does not: sign-in,
 saved projects, Companion Memory and the vision model. The first-run screen says

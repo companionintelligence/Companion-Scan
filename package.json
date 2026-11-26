@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
+    "build:public-site": "npm run build && node scripts/public-site.mjs dist",
     "typecheck:tests": "tsc --noEmit -p tsconfig.tests.json",
     "typecheck:server": "tsc --noEmit -p tsconfig.server.json && tsc --noEmit -p tests/unit/server",
     "test:server": "node --test --test-concurrency=1 'tests/unit/server/*.test.ts'",
