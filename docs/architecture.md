@@ -16,7 +16,7 @@ Companion Scan is a mobile-first, privacy-respecting Augmented Reality (AR) appl
 
 The following block diagram represents the modular structure of the Companion Scan system, showing the boundary between client-side components running in the mobile browser and server-side components running on the local host.
 
-Inference is **engine-agnostic**: the server exposes one `/infer` contract and `INFERENCE_MODE` selects the backend. The default is `ollama` (running whatever `OLLAMA_MODEL` is set to — `qwen3-vl:4b` out of the box; see `npm run setup:models`); `onnx` runs the bundled `LiquidAI/LFM2.5-VL-1.6B-ONNX` via `onnxruntime-node`; `mock` is a deterministic colour-blob CV engine for CI and tests. There is no `llama.cpp` in the system.
+Inference is **engine-agnostic**: the server exposes one `/infer` contract and `INFERENCE_MODE` selects the backend. The default is `ollama` (running whatever `OLLAMA_MODEL` is set to — `qwen3-vl:4b` out of the box; see `npm run setup:models`); `onnx` runs the bundled `LiquidAI/LFM2.5-VL-1.6B-ONNX` via `onnxruntime-node`; `mock` is a deterministic colour-blob CV engine for CI and tests; `grounding-dino` sends the frame to the detection service (`scripts/grounding_dino_server.py`, `POST /detect`) at `GDINO_URL`. There is no `llama.cpp` in the system.
 
 ```mermaid
 graph TB
@@ -119,7 +119,7 @@ sequenceDiagram
         Inf->>Inf: Run on-device ONNX in Web Worker
     else Server mode (Default)
         Inf->>Server: POST /infer (image/jpeg)
-        Server->>Server: Inference engine (INFERENCE_MODE): ollama / onnx / mock
+        Server->>Server: Inference engine (INFERENCE_MODE): ollama / onnx / mock / grounding-dino
         Server-->>Inf: RawDetection[] (JSON bboxes & labels)
     end
     Inf-->>UI: RawDetection[]
@@ -287,7 +287,7 @@ graph LR
     end
 
     subgraph engine ["Inference Engine — INFERENCE_MODE"]
-        Infer[ollama qwen3-vl:4b / onnx LFM2.5-VL / mock CV]
+        Infer[ollama qwen3-vl:4b / onnx LFM2.5-VL / mock CV / grounding-dino service]
     end
 
     UI -- HTTPS POST/GET --> Vite
@@ -307,6 +307,7 @@ The server exposes one `/infer` contract; `INFERENCE_MODE` picks the backend at 
 | `ollama` (**default**) | Local Ollama daemon over HTTP | `OLLAMA_MODEL`, defaults to **`qwen3-vl:4b`** (install candidates with `npm run setup:models`, pick with `npm run bench:models`) | Production inference on the host GPU. |
 | `onnx` | `onnxruntime-node`, in-process | Bundled **`LiquidAI/LFM2.5-VL-1.6B-ONNX`** (~1.5 GB via `download_models.py`) | Self-contained inference with no external daemon. |
 | `mock` | Deterministic colour-blob CV | none | CI, unit tests, and offline development. |
+| `grounding-dino` | The detection service over HTTPS (`POST /detect` at `GDINO_URL`, bearer `GDINO_TOKEN` if set; `server/grounding_dino.ts`) | Whatever the service runs, `IDEA-Research/grounding-dino-base` by default | Open-vocabulary boxes for the scanner's own labels (`CORE_LABELS`) on a GPU box, about 0.25 s a frame (docs/operations/GPU_BACKENDS.md). |
 
 On the client, WebGPU (on-device ONNX in a Web Worker) versus server inference is **opt-in via the localStorage key `infer-mode`** (`src/inference/router.ts`); server-side is the default. It is not auto-selected by pinging `/health` or probing `navigator.gpu`.
 
@@ -524,7 +525,7 @@ work from one), so keep secrets out of any `VITE_` name. Values below come from 
 - `TAILSCALE_HOSTNAME`: auto-detected from `tailscale status`; used to build the default CORS origin.
 - `ALLOWED_ORIGIN_PREFIX`: base origin for CORS filtering. Defaults to `https://$TAILSCALE_HOSTNAME` (auto-detected by `server/origin.ts`, and in parallel by `vite.config.ts`: the setting, then `tailscale status`, then a certificate file); when nothing names a host it falls back to `localhost`, with a warning at boot, and admits no tailnet origin.
 - `API_TARGET`: upstream the Vite proxy forwards to (defaults to `http://localhost:8000`).
-- `INFERENCE_MODE`: `ollama` (default), `onnx`, or `mock` (see section 4).
+- `INFERENCE_MODE`: `ollama` (default), `onnx`, `mock` or `grounding-dino` (see section 4). `grounding-dino` also needs `GDINO_URL`, and `GDINO_TOKEN` when the service has one.
 - `OLLAMA_HOST`: address of the local Ollama daemon (defaults to `http://localhost:11434`).
 - `OLLAMA_MODEL`: vision model Ollama serves in `ollama` mode. **Defaults to `qwen3-vl:4b`.**
 - `INFER_MAX_IMAGE_BYTES`: reject inbound inference images larger than this (defaults to `12000000`).
@@ -586,7 +587,7 @@ router does **not** probe `navigator.gpu` or ping `/health` at startup to choose
 selection is explicit. This keeps the fast path predictable and makes the
 on-device path a deliberate, testable choice rather than a device-fingerprint
 guess. The server engine itself is chosen by `INFERENCE_MODE` (`ollama` /
-`onnx` / `mock`; see section 4).
+`onnx` / `mock` / `grounding-dino`; see section 4).
 
 ### HTTPS via the Vite proxy
 

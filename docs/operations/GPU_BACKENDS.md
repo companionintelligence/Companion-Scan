@@ -140,7 +140,7 @@ client posts a camera frame and the names of the things to find, and gets boxes 
 the open weights of Grounding DINO (`IDEA-Research/grounding-dino-base` by default, Apache-2.0)
 through transformers, on the device `_torch_device.py` resolves. It stands in for NVIDIA's
 hosted NV-Grounding-DINO, which the Unity-MetaXR-AI-ZeroShot reference calls, so frames stay on
-the tailnet. It is not an `INFERENCE_MODE` engine: the scanner's own `/infer` is unchanged.
+the tailnet. The Scan server can use it as its `/infer` engine too (`INFERENCE_MODE=grounding-dino`, below).
 
 - **Contract.** `POST /detect` takes `{"prompt", "threshold", "max_detections",
   "image_base64"}` and answers `{"frame_width", "frame_height", "detections": [{"label",
@@ -159,8 +159,19 @@ the tailnet. It is not an `INFERENCE_MODE` engine: the scanner's own `/infer` is
   `scripts/install-services.sh --with-gdino` adds the `cscan-gdino` user unit, which serves
   HTTPS with the box's Tailscale cert. The first start downloads the weights (933 MB for base,
   689 MB for `grounding-dino-tiny`) into the Hugging Face cache.
+- **As the Scan server's engine.** Set `INFERENCE_MODE=grounding-dino` and `GDINO_URL` to the
+  service's address (for example `https://<host>.<tailnet>.ts.net:8010`), and `GDINO_TOKEN` if the
+  service has one: the same variable, so one env file serves both. `/infer` then sends each frame
+  with the scanner's own labels (`CORE_LABELS` in `server/prompt.ts`) as the prompt, and the boxes
+  go through the same label folding, confidence floor and cap as the Ollama engine's
+  (`server/grounding_dino.ts`). It has no description to give, so each detection reads "A <label>".
+  At start the server asks `GET /health`: a service that does not answer leaves the server without
+  inference, as an unreachable Ollama does, and one that answers before its model is in is used
+  anyway, with `/infer` passing on its 503 until the model loads. The capability report's
+  `inference-engine` row shows the address and whether the model is ready.
 - **Test.** `npm run test:python:gdino` covers the request rules and the HTTP layer with a fake
-  model, so it needs no torch.
+  model, so it needs no torch. `tests/unit/server/inference_grounding_dino.test.ts` covers the
+  Scan server's side against a fake service.
 
 ## Sources for the vendor install commands
 
