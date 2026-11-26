@@ -1,10 +1,13 @@
 # Device test kit
 
-Start here before any phone, tablet, headset or Mac test. Run the preflight first, from the box that serves the app.
+Start here before any phone, tablet, headset or Mac test. Run the preflight first, on the box that serves the app or from a dev machine.
 
 ```bash
-npm run device:preflight
+npm run device:preflight                                     # on the box
+TAILSCALE_HOSTNAME=<box>.<tailnet>.ts.net API_URL=http://<box>.<tailnet>.ts.net:8000 npm run device:preflight   # from another machine
 ```
+
+From another machine, `API_URL` sends the direct API check to the box. Without it, the check asks this machine's own API, and when nothing answers there it warns instead of failing, as long as the check through the box's proxy passed.
 
 It checks the Tailscale host, the HTTPS origin, the Vite proxy into the API, the CORS answer Vite gives the two phone shells' origins (`capacitor://localhost` and `https://localhost`), the mobile shell bundle's host, the Android APK, the iOS manifest and permission keys, and the iOS Swift syntax. It exits non-zero on a real failure and prints the phone URLs. It names the host from `TAILSCALE_HOSTNAME`, then `VITE_HOSTNAME`, then the Tailscale CLI, the way the server and `npm run qr` do.
 
