@@ -1058,10 +1058,14 @@
       }
 
       /* ── Viewport ── */
+      /* isolation: the object chips take z-index from their depth (up to 1,000,000, viewer.ts), which escaped the
+         view and painted them over the toolbar's menus and, on a phone, over the bottom sheets. Inside their own
+         stacking context they still sort among themselves, and the view clips its overflow anyway. */
       #viewport {
         flex: 1;
         position: relative;
         overflow: hidden;
+        isolation: isolate;
       }
 
       #viewer-canvas {
@@ -1089,10 +1093,13 @@
       }
 
       /* ── HUD overlays ── */
+      /* z-index: above the object chips, which take up to 1,000,000 from their depth (viewer.ts), so a chip never
+         lies over a button. #world-hud takes the same level. */
       #hud-controls {
         position: absolute;
         bottom: 14px;
         right: 14px;
+        z-index: 1000001;
         display: flex;
         gap: 6px;
         flex-wrap: wrap;
@@ -1140,7 +1147,7 @@
         bottom: 12px;
         display: grid;
         gap: 8px;
-        z-index: 5;
+        z-index: 1000001;
         pointer-events: none;
       }
 
@@ -2433,6 +2440,46 @@
           right: 10px;
           bottom: 12px;
           max-width: 190px;
+        }
+
+        /* The menus' panels above are position: fixed, but the toolbar's backdrop-filter made the toolbar their
+           containing block, and the toolbar's own overflow (it scrolls sideways here) clipped them away: View, Share
+           and Workspace opened onto nothing, and a tap meant for them reached the 3D view. Without the filter the
+           viewport holds them again, and the toolbar's level puts them over the two sheets (40 and 41). */
+        #top-toolbar {
+          backdrop-filter: none;
+          background: rgba(4, 22, 32, 0.97);
+          z-index: 45;
+        }
+
+        .view-menu-panel,
+        .share-menu-panel,
+        .workspace-menu-panel {
+          max-height: calc(100dvh - 76px);
+          overflow-y: auto;
+        }
+
+        /* The HUD's two clusters sat at the foot of the 3D view, under the open sheet or, with both sheets shut,
+           under their reopen tabs: the bounds button and its row could not be tapped. With a sheet open, the
+           buttons go in one row just above it, and the compass, scale and measure wait for the sheet to shut,
+           since the sheet leaves too little of the view to measure in. */
+        #hud-controls {
+          bottom: 72px;
+          max-width: calc(100% - 20px);
+          flex-wrap: nowrap;
+          overflow-x: auto;
+        }
+
+        #world-hud { bottom: 68px; }
+
+        #main-area:has(> #sidebar:not(.collapsed)) #hud-controls,
+        #main-area:has(> #details-drawer:not(.collapsed)) #hud-controls {
+          bottom: calc(min(58vh, 500px) + 8px);
+        }
+
+        #main-area:has(> #sidebar:not(.collapsed)) #world-hud,
+        #main-area:has(> #details-drawer:not(.collapsed)) #world-hud {
+          display: none;
         }
       }
 
