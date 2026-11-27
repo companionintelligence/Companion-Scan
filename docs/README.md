@@ -33,6 +33,12 @@ description it fits rather than at this level.
 | [roadmap.md](roadmap.md) | The **only** owner of timelines and status — what has shipped vs. what is planned. |
 | [FACTORY.md](FACTORY.md) | The Factory ticket workflow, the atlas, and how a wave justifies itself. |
 
+## audits/ — dated reviews
+
+| Doc | What it covers |
+|---|---|
+| [audits/2026-11-27-mobile-room-scan-parity.md](audits/2026-11-27-mobile-room-scan-parity.md) | Phone/LiDAR room scanning, a static Quest scan-app comparison, open-source options, and a staged parity plan. |
+
 ## targets/ — device targets
 
 | Doc | What it covers |
