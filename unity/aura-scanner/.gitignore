@@ -1,0 +1,32 @@
+# Unity generated folders (anchored to this project)
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+
+# Generated IDE files, at the project root only (the harness csproj lives under Tests/ and is kept)
+/*.csproj
+/*.unityproj
+/*.sln
+/*.suo
+/*.user
+/*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Build output of the Core harness
+Tests/CoreHarness/bin/
+Tests/CoreHarness/obj/
+
+# OS files
+.DS_Store
