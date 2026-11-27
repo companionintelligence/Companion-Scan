@@ -1,0 +1,15 @@
+{
+  "dependencies": {
+    "com.google.xr.extensions": "https://github.com/android/android-xr-unity-package.git#v1.5.0",
+    "com.unity.render-pipelines.universal": "17.3.0",
+    "com.unity.xr.androidxr-openxr": "1.4.1",
+    "com.unity.xr.management": "4.7.0",
+    "com.unity.xr.openxr": "1.18.0",
+    "com.unity.modules.androidjni": "1.0.0",
+    "com.unity.modules.imageconversion": "1.0.0",
+    "com.unity.modules.imgui": "1.0.0",
+    "com.unity.modules.jsonserialize": "1.0.0",
+    "com.unity.modules.unitywebrequest": "1.0.0",
+    "com.unity.modules.xr": "1.0.0"
+  }
+}
