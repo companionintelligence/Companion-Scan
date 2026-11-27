@@ -166,6 +166,10 @@ Larger bets that are not yet scoped for delivery.
   (e.g. Redis Streams) with CPU/GPU worker capability advertising.
 - **AR glasses support** — adapt the provider for WebXR hand-tracking headsets;
   detection pins become volumetric objects.
+- **Depth-backed room models** — persist phone depth with frame pose and
+  intrinsics, add confidence-aware reconstruction, and replace the semantic
+  placeholder with a normalized room model. See the [mobile room-scan parity
+  review](audits/2026-11-27-mobile-room-scan-parity.md).
 - **One-click world export** — a labelled button in the editor that downloads the
   `.world.glb` `export-world` already writes (see Shipped), instead of fetching it by URL.
 
