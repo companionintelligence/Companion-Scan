@@ -1,0 +1,11 @@
+{
+  "name": "companion-scan-spec-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned verification tools for spec/, kept out of the app's install. Install with `npm run spec:install` at the repo root.",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "type": "module",
+  "devDependencies": {
+    "@informalsystems/quint": "0.34.0"
+  }
+}
