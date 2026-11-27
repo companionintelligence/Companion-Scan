@@ -8,7 +8,9 @@ This review compares Companion Scan’s current capture and reconstruction path 
 
 ## Where Companion Scan stands
 
-Companion Scan already records poses and color keyframes, reconstructs scans with COLMAP/LingBot-Map and Brush 3DGS, exposes editable scan layers, and has a working floor-plan job that emits JSON and SVG from point-cloud geometry. The floor-plan output is a derived wall/outline representation rather than a parametric BIM model. The native iOS and Android bridges can expose sensor depth, but the mobile target notes say depth is not uploaded with the scan package. `semantic-pass` and `depth-reconstruct` remain placeholder jobs.
+Companion Scan already records poses and color keyframes, reconstructs scans with COLMAP/LingBot-Map and Brush 3DGS, exposes typed scan layers with visibility controls, and has an implemented floor-plan job that emits JSON and SVG from point-cloud geometry. The floor-plan output is derived wall/outline geometry, not a parametric BIM model; runtime quality and dimensional accuracy were not remeasured in this review. Object detections, labels, and panoptic jobs already exist. Room-structure semantics such as walls, openings, and merged room models remain a gap.
+
+The native iOS/Android bridges can return sensor depth, but the normal `NativeARProvider.captureFrame()` path requests `depth: false`; `captureDepth()` is a separate read returning dimensions and Float32 metre values. It does not currently form a synchronized color/depth observation with one timestamp, pose, intrinsics, and confidence, and depth is not uploaded with the scan package.
 
 References: [architecture](../architecture.md), [floor-plan worker](../../scripts/floor_plan_worker.py), [iOS target](../targets/ios.md), [Android ARCore target](../targets/android-arcore.md), [mobile bridge notes](../../mobile/README.md).
 
@@ -38,12 +40,12 @@ Apple’s ARKit scene mesh can classify faces such as floor, wall, ceiling, door
 
 | Priority | Work | Current state | Concrete exit gate |
 |---|---|---|---|
-| P0 | Persist phone depth observations | Native bridges expose depth; it is not carried through the upload path. | Version the scan package with timestamped depth, color-frame reference, pose, intrinsics, and confidence when available. A scan without supported depth still imports cleanly. |
-| P1 | Depth-aware coverage and rescan guidance | Existing quality monitoring covers capture readiness; sensor-depth coverage is not represented in the package. | Show low-coverage/low-confidence regions in the editor and link them to capture recommendations. Validate against a repeatable room fixture. |
-| P1 | Semantic room-model adapter | Floor-plan job exists; `semantic-pass` is a placeholder. | Add a RoomPlan-backed iOS adapter and normalize room surfaces/openings into a platform-neutral schema. Preserve source labels and dimensions. |
+| P0 | Persist synchronized phone depth observations | Native depth is a separate read from ordinary color capture, so the current path lacks a registered same-frame observation. | Add an atomic capture payload with RGB/depth association, timestamp, pose, intrinsics, depth scale/registration, and confidence when available. A scan without supported depth still imports cleanly. |
+| P1 | Depth-aware coverage and rescan guidance | Existing quality monitoring covers capture readiness; sensor-depth coverage and confidence are not represented in the package. | Show low-coverage/low-confidence regions in the editor and link them to capture recommendations. Validate against a repeatable room fixture. |
+| P1 | Semantic room-model adapter | Object detections and panoptic output exist; normalized room surfaces/openings are not yet produced by the semantic jobs. | Add a RoomPlan-backed iOS adapter and normalize room surfaces/openings into a platform-neutral schema. Preserve source labels and dimensions. |
 | P2 | Multi-room plan merge and correction | No verified multi-room semantic merge path. | Merge room models in a shared metric frame and let users correct walls/openings before export. Record measurement provenance and an accuracy band. |
 | P2 | Optional RGB-D mesh refinement | COLMAP/Brush and point-cloud reconstruction already exist; depth reconstruction is a placeholder. | Evaluate Open3D TSDF/registration on the same captured sessions and keep the job selectable by device capability and quality result. |
-| P2 | Splat camera-pose correction | Companion Scan already has COLMAP/Brush and a splat alignment stage. | Measure pose relocation before/after training on a repeatable capture; retain transform and source observations in job provenance. |
+| P2 | AR/COLMAP pose reconciliation | COLMAP already solves camera poses before training. `splat-align` is a post-training similarity transform into the metric Place frame. | Compare AR poses with COLMAP on a repeatable capture, record residual/drift and provenance, and keep metric splat alignment as a separate stage. |
 
 The target is reviewable room geometry with honest measurement quality. Phone and headset capture should not inherit professional scanner tolerances from a service brochure.
 
