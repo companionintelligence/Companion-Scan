@@ -28,7 +28,9 @@ import { resolveCaptureDevice, describeCaptureDevice } from './device-config.mjs
 import { PHONE_TELEMETRY, isPhoneTelemetry, normalizePhoneTelemetry, withoutLocation } from '../protocol/phone_telemetry.mjs';
 import { STREAM_STALE_MS } from '../protocol/link_state.mjs';
 import { decodeFrame } from '../protocol/duml.mjs';
-import { motionRefusal, moveRefusal, MotionRefusedError, isStopFrame } from '../protocol/motion_gate.mjs';
+import {
+  motionRefusal, moveRefusal, captureStartRefusal, advanceRefusal, MotionRefusedError, isStopFrame,
+} from '../protocol/motion_gate.mjs';
 import { parseAccessSettings, describeAccess, decideAccess, corsHeaders } from './access.mjs';
 
 const PORT = Number(process.env.BACKEND_PORT) || 8788;
@@ -1243,31 +1245,18 @@ const routes = {
   // two answers to "the capture is parked" are genuinely different outcomes, not one control
   // with a flag.
   'POST /api/grid-advance': async () => {
-    if (!stationGate) {
-      return [409, {
-        error: gridRunning
-          ? 'The capture is sweeping a station, not waiting for one.'
-          : 'No capture is running.',
-        remediation: 'Wait for the "move the tripod" prompt before advancing.',
-      }];
-    }
-    // Checked here, not after the loop wakes: a link that dropped during the pause means the
-    // next station would drive nothing and report a wall of non-converged positions. Saying so
-    // while the operator is still standing at the rig is worth more than a diagnosis later.
-    if (!transport.connected) {
-      return [409, {
-        error: 'The BLE link to the gimbal dropped while the capture was parked, so the next station would sweep nothing.',
-        remediation: 'Reconnect the gimbal (scan -> connect), then advance again. The stations already captured are safe.',
-      }];
-    }
-    // A move or probe started from outside while the capture was parked can still be driving the same
-    // motors. Refused here, before the gate opens, so the next station cannot start on top of it.
-    if (externalMotions.size > 0) {
-      return [409, {
-        error: 'A move or probe is still driving the gimbal, so the next station would overlap it.',
-        remediation: 'Wait for it to finish, then advance again. It stops on its own.',
-      }];
-    }
+    // The link is checked here, not after the loop wakes: a link that dropped during the pause means the
+    // next station would drive nothing and report a wall of non-converged positions. Saying so while the
+    // operator is still standing at the rig is worth more than a diagnosis later. A move or probe started
+    // from outside while the capture was parked can still be driving the same motors, so that is refused
+    // here too, before the gate opens, so the next station cannot start on top of it. See advanceRefusal.
+    const refused = advanceRefusal({
+      scanRunning: gridRunning,
+      parked: stationGate !== null,
+      streaming: transport.connected,
+      outsideMotion: externalMotions.size > 0,
+    });
+    if (refused) return [409, refused];
     const gate = stationGate;
     stationGate = null;
     gate.release('advance');
@@ -1495,13 +1484,11 @@ const routes = {
     if (device && !device.ok) return [400, { error: device.error, remediation: device.remediation }];
     const refusal = linkRefusal('stream');
     if (refusal) return refusal;
-    if (gridRunning) return [409, { error: 'A capture is already running and owns the gimbal.', remediation: 'Stop it (POST /api/grid-stop) before starting another.' }];
-    // A move or probe the backend started on its own is still driving the same motors. Checked here,
-    // with no await between this line and gridRunning = true below, so nothing can start in between.
-    if (externalMotions.size > 0) return [409, {
-      error: 'A move or probe is still driving the gimbal.',
-      remediation: 'Wait for it to finish, then start the capture.',
-    }];
+    // A second capture, or a move or probe the backend started on its own that is still driving the same
+    // motors. Checked here, with no await between this line and gridRunning = true below, so nothing can
+    // start in between. See captureStartRefusal.
+    const startRefused = captureStartRefusal({ scanRunning: gridRunning, outsideMotion: externalMotions.size > 0 });
+    if (startRefused) return [409, startRefused];
 
     // Capped at 12: a station is a physical walk plus a full dome, so a hundred of them is a
     // typo, not a plan. Three to five is what a room takes.
