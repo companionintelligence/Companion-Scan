@@ -21,7 +21,9 @@ const PORT = process.env.QUINT_SERVER_PORT ?? '8846'
 const RUN = { samples: 20000, steps: 40 }
 const WITNESS = { samples: 100000, steps: 40 }
 const MBT = { traces: 300, steps: 60 }
-const DEPTH = 9
+/** Apalache depths: every invariant to 6 (about 70 s on a laptop); the planted bug needs 8 steps, so 9 (about 16 s). */
+const DEPTH = 6
+const BUG_DEPTH = 9
 
 const args = new Set(process.argv.slice(2))
 for (const arg of args) if (!['--deep', '--refresh-fixtures'].includes(arg)) {
@@ -111,8 +113,8 @@ if (deep) {
   gate.step(`quint verify (Apalache): every invariant to depth ${DEPTH}, port ${PORT}`, quint, [
     'verify', '--main', 'gimbalInterlock', join(REPO, MODEL), '--max-steps', String(DEPTH), `--server-endpoint=localhost:${PORT}`, '--verbosity', '1',
   ], { code: 0, lines: [/\[ok\] No violation found/] }, { cwd, timeoutMs: 900_000 })
-  gate.step(`quint verify (Apalache): the planted bug is found by depth ${DEPTH}`, quint, [
-    'verify', '--main', 'gimbalInterlockBug', join(REPO, MODEL), '--max-steps', String(DEPTH), '--invariant', 'parkedScanHasAtMostOneOutsideDriver', `--server-endpoint=localhost:${PORT}`, '--verbosity', '1',
+  gate.step(`quint verify (Apalache): the planted bug is found by depth ${BUG_DEPTH}`, quint, [
+    'verify', '--main', 'gimbalInterlockBug', join(REPO, MODEL), '--max-steps', String(BUG_DEPTH), '--invariant', 'parkedScanHasAtMostOneOutsideDriver', `--server-endpoint=localhost:${PORT}`, '--verbosity', '1',
   ], { code: 1, lines: [/\[violation\]/, /❌ parkedScanHasAtMostOneOutsideDriver/] }, { cwd, timeoutMs: 900_000 })
   rmSync(cwd, { recursive: true, force: true })
 }
@@ -121,5 +123,5 @@ rmSync(traces, { recursive: true, force: true })
 gate.finish([
   `verification: gimbal-interlock at ${commit()}; quint ${QUINT_VERSION}, rust backend, seed ${SEED}; `
     + `run ${RUN.samples} x ${RUN.steps} steps; witnesses up to ${WITNESS.samples} x ${WITNESS.steps}; `
-    + `replay of ${MBT.traces} traces x ${MBT.steps} steps${deep ? `; Apalache depth ${DEPTH}` : ''}`,
+    + `replay of ${MBT.traces} traces x ${MBT.steps} steps${deep ? `; Apalache depth ${DEPTH}, planted bug by ${BUG_DEPTH}` : ''}`,
 ])

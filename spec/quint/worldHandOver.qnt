@@ -347,9 +347,13 @@ module handOverModel {
     ROUTES.forall(r => routes.get(r).phase == Sleeping
       implies (routes.get(r).sleepMs == HAND_OVER_WAIT_MS * (routes.get(r).attempt + 1) and routes.get(r).attempt + 1 < HAND_OVER_ATTEMPTS))
 
+  /** 2 to the power n for the timer's attempts, as a table: Apalache's solver cannot take a variable exponent. */
+  pure def doubled(n: int): int =
+    if (n <= 0) 1 else if (n == 1) 2 else if (n == 2) 4 else if (n == 3) 8 else if (n == 4) 16 else 32
+
   /** The timer chain doubles from HAND_OVER_RETRY_FIRST_MS and stops after HAND_OVER_RETRIES. */
   invariant timerChainIsBounded =
-    timer.armed implies (timer.attempt < HAND_OVER_RETRIES and timer.ms == HAND_OVER_RETRY_FIRST_MS * 2 ^ timer.attempt)
+    timer.armed implies (timer.attempt < HAND_OVER_RETRIES and timer.ms == HAND_OVER_RETRY_FIRST_MS * doubled(timer.attempt))
 
   /** The scans handed over with a kept placement are the ones not placed by their record, with their placement in A. */
   invariant keptIsKeptPlacements = kept.forall(s => not(byRecord.get(s)) and worldA.placements.contains(s))

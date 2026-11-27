@@ -21,7 +21,11 @@ const RUN = { samples: 10000, steps: 40 }
 const WITNESS = { samples: 100000, steps: 40 }
 const TRACES = 300
 
-/** Each model: its main module, the module its definitions live in, its replay, and its planted bugs. */
+/**
+ * Each model: its main module, the module its definitions live in, its replay, and its planted bugs. `depth` is the
+ * Apalache bound for --deep, measured on a laptop: handOver 6 in about 60 s, worldLock 5 in about 50 s (8 did not end
+ * in 10 minutes), frames 6 in about 7 s.
+ */
 const MODELS = [
   {
     main: 'handOver',
@@ -38,7 +42,7 @@ const MODELS = [
     main: 'worldLock',
     module: 'worldLockModel',
     steps: 50,
-    depth: 8,
+    depth: 5,
     replay: 'tests/unit/server/world_lock_trace.test.ts',
     env: 'LOCK_ITF_DIR',
     fixtures: 'worldLock',
