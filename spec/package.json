@@ -6,6 +6,7 @@
   "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "devDependencies": {
-    "@informalsystems/quint": "0.34.0"
+    "@informalsystems/quint": "0.34.0",
+    "lemmascript": "0.6.14"
   }
 }

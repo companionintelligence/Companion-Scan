@@ -107,7 +107,7 @@
     "loop:full": "node scripts/loop.mjs --tier=5",
     "loop:baseline": "node scripts/loop.mjs --only=ui-full --update-baseline",
     "test:gimbal:stall": "node --experimental-strip-types --no-warnings --test tests/unit/node/gimbal_stall.test.ts",
-    "test:gimbal:control": "node --experimental-strip-types --no-warnings --test tests/unit/node/gimbal_control.test.ts",
+    "test:gimbal:control": "node --experimental-strip-types --no-warnings --test tests/unit/node/gimbal_control.test.ts tests/unit/node/gimbal_control_sign.test.ts",
     "test:gimbal:link": "node --experimental-strip-types --no-warnings --test tests/unit/node/gimbal_link_state.test.ts",
     "test:gimbal:interlock": "node --experimental-strip-types --no-warnings --test tests/unit/node/gimbal_interlock_trace.test.ts",
     "test:gimbal:protocol": "node --test subsystems/osmo-ble/protocol/duml.test.mjs subsystems/osmo-ble/protocol/dome.test.mjs subsystems/osmo-ble/protocol/device_registry.test.mjs",
@@ -163,7 +163,8 @@
     "test:tap:spread": "node --experimental-strip-types --no-warnings --test tests/unit/node/tap_spread_sigma.test.ts",
     "spec:install": "npm ci --prefix spec",
     "spec:gimbal": "node spec/quint/check-gimbal.mjs",
-    "spec:world": "node spec/quint/check-world.mjs"
+    "spec:world": "node spec/quint/check-world.mjs",
+    "spec:sign": "node spec/lemmascript/check-sign.mjs"
   },
   "dependencies": {
     "@gltf-transform/core": "^4.4.0",
