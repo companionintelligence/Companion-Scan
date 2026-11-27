@@ -127,3 +127,47 @@ export function moveRefusal({ scanRunning, parked = false, outsideMotion = false
   if (!parked) return new MotionRefusedError(SCAN_OWNS_GIMBAL);
   return outsideMotion ? new MotionRefusedError(OUTSIDE_MOTION_BUSY) : null;
 }
+
+/**
+ * The ruling POST /api/grid-capture makes once its link check has passed: a second capture is refused, and so is
+ * one that would start while a move or probe the backend started is still driving the motors. The route asks this
+ * with no await between the answer and `gridRunning = true`, so nothing can start in between.
+ *
+ * @param {{scanRunning: boolean, outsideMotion: boolean}} state
+ * @returns {{error: string, remediation: string}|null}  the 409 body, or null when the capture may start
+ */
+export function captureStartRefusal({ scanRunning, outsideMotion }) {
+  if (scanRunning) return { error: 'A capture is already running and owns the gimbal.', remediation: 'Stop it (POST /api/grid-stop) before starting another.' };
+  if (outsideMotion) return { error: 'A move or probe is still driving the gimbal.', remediation: 'Wait for it to finish, then start the capture.' };
+  return null;
+}
+
+/**
+ * The ruling POST /api/grid-advance makes: the capture has to be parked, the link has to be streaming (a link that
+ * dropped during the pause would sweep nothing), and no move or probe started from outside may still be driving the
+ * motors, or the next station would start on top of it.
+ *
+ * @param {{scanRunning: boolean, parked: boolean, streaming: boolean, outsideMotion: boolean}} state
+ * @returns {{error: string, remediation: string}|null}  the 409 body, or null when the capture may go on
+ */
+export function advanceRefusal({ scanRunning, parked, streaming, outsideMotion }) {
+  if (!parked) {
+    return {
+      error: scanRunning ? 'The capture is sweeping a station, not waiting for one.' : 'No capture is running.',
+      remediation: 'Wait for the "move the tripod" prompt before advancing.',
+    };
+  }
+  if (!streaming) {
+    return {
+      error: 'The BLE link to the gimbal dropped while the capture was parked, so the next station would sweep nothing.',
+      remediation: 'Reconnect the gimbal (scan -> connect), then advance again. The stations already captured are safe.',
+    };
+  }
+  if (outsideMotion) {
+    return {
+      error: 'A move or probe is still driving the gimbal, so the next station would overlap it.',
+      remediation: 'Wait for it to finish, then advance again. It stops on its own.',
+    };
+  }
+  return null;
+}

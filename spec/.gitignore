@@ -1,0 +1,5 @@
+# Apalache writes its logs and counterexamples here when quint verify runs from this folder.
+_apalache-out/
+# quint run --out-itf traces written by hand; the committed fixtures live under traces/.
+*.itf.json
+!quint/traces/**/*.itf.json

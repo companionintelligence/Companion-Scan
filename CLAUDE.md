@@ -161,3 +161,27 @@ persisted user data or an external integration instead of erroring.
 If one of these truly needs to change, it's a coordinated migration (data
 backfill, IdP update, or image-tag redirect), not a rename — treat it as its
 own ticket, not a drive-by cleanup.
+
+<!-- agent-sync:specs:begin -->
+<!-- Managed by CI Agent Sync from .agent-configs/specs.toml. Edit the registry, then run `agentctl spec block --apply`. -->
+## Specifications and verification
+
+This repository keeps its formal and executable specifications in `.agent-configs/specs.toml`. Each entry names its tool, its artefacts, the code it covers and its `check` command.
+
+1. Before you change behaviour that a registry entry covers, read the entry and its artefacts.
+2. If the change alters a rule, change the spec first and make its check pass. A counterexample becomes a regression test before the fix.
+3. Before you push, run each entry's check, or `agentctl spec check --repo .` where CI Agent Sync is installed. A skipped check is not a pass, and a check that cannot find its toolchain fails.
+4. A doc claim about behaviour cites a spec id, a claim id or a test. Do not type product facts by hand.
+5. Do not weaken a spec without the owner's review: no assume, axiom, havoc, {:verify false}, deleted invariant, lowered bound or gate downgrade.
+6. The PR body carries a verification block: which entries ran, on which commit, with which seed, bound or depth.
+
+| Entry | Tool | Status | Gate |
+| --- | --- | --- | --- |
+| `gimbal-interlock` | quint | conformance | advisory |
+| `world-hand-over` | quint | conformance | advisory |
+| `gimbal-correction-sign` | lemmascript | conformance | advisory |
+
+Planned: `duml-codec-round-trip` (dafny, SC-3), `events-capture-wire` (effect-schema, SC-4), `tracking-epoch-upload` (quint, X-3).
+
+The registry format, the verification policy and the toolchain recipes are in CI-Agent-Sync's [integrations/verification/](https://github.com/companionintelligence/CI-Agent-Sync/tree/main/integrations/verification). Its skills are in [skills/](https://github.com/companionintelligence/CI-Agent-Sync/tree/main/skills): `npx skills add companionintelligence/CI-Agent-Sync`.
+<!-- agent-sync:specs:end -->
