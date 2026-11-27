@@ -26,14 +26,6 @@ You need Unity 6000.3.14f1 (`ProjectSettings/ProjectVersion.txt`), Android Build
 4. Make a scene with an empty GameObject that has `AuraScanController`. Set `serverUrl` to the server's HTTPS tailnet address, because Android blocks cleartext HTTP by default. Do not commit a real `bearerToken`, since the scene file keeps it.
 5. First run: tick `placeholderFrames`. It sends generated JPEGs, which checks the upload path without a camera. Those frames show no room, so do not reconstruct from them.
 
-## Capture transport decision
-
-The Aura client sends pose-tagged snapshots to the existing `/sessions` API. It does not need continuous video for room reconstruction, and the current server already accepts keyframes. `Unity-QuestVisionStream` is a separate Quest 3 live-detection demo built around Meta XR/MRUK and an unauthenticated WebRTC service; it is not a drop-in camera path for this Android XR project. Its stream, signalling server and Meta-specific packages are not included here.
-
-The capture interface stays behind `IFrameSource`, so an Aura-specific camera implementation can replace `WebCamTexture` if the headset does not expose its camera through Unity's webcam API. The current source does not provide an exposure timestamp: the saved pose is the latest tracked head pose when the frame is read. Treat pose alignment and the default 60° field of view as unverified until they are calibrated on the Aura. Do not use these keyframes for trusted reconstruction before those device checks pass.
-
-The controller permits `http://` only for loopback development. Remote servers must use `https://`; the app refuses to send camera frames or bearer tokens to a remote cleartext endpoint.
-
 ## Server contract
 
 When sign-in is on, every `/sessions` route sits behind the Companion session guard (`server/main.ts`, `SESSION_GUARDED_PATHS`). Send the session token as `Authorization: Bearer`.

@@ -74,12 +74,7 @@ namespace AuraScanner.Runtime
                 _lastError = "the last upload is still finishing; try again in a moment";
                 return;
             }
-            if (!TryGetServerBase(out string baseUrl, out string urlError))
-            {
-                _lastError = urlError;
-                return;
-            }
-            _client = new CompanionClient(baseUrl, bearerToken);
+            _client = new CompanionClient(serverUrl, bearerToken);
             _schedule = new KeyframeSchedule(minIntervalSeconds, float.PositiveInfinity, minMoveMetres, minTurnDegrees);
             _lastError = "";
             _phase = Phase.Opening;
@@ -334,32 +329,6 @@ namespace AuraScanner.Runtime
         {
             if (_frames != null) _frames.Dispose();
             _frames = null;
-        }
-
-        /// Camera frames and bearer credentials must not leave the device over cleartext HTTP. Loopback remains available
-        /// for Editor-only development; every remote endpoint must use HTTPS. Query and fragment components are rejected
-        /// so credentials cannot be placed in the URL instead of the Authorization header.
-        private bool TryGetServerBase(out string baseUrl, out string error)
-        {
-            baseUrl = (serverUrl ?? "").Trim().TrimEnd('/');
-            error = "";
-            if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out Uri endpoint) ||
-                (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
-            {
-                error = "server URL must be an absolute HTTP or HTTPS URL";
-                return false;
-            }
-            if (endpoint.UserInfo.Length > 0 || endpoint.Query.Length > 0 || endpoint.Fragment.Length > 0)
-            {
-                error = "server URL cannot contain credentials, a query or a fragment";
-                return false;
-            }
-            if (endpoint.Scheme != Uri.UriSchemeHttps && !endpoint.IsLoopback)
-            {
-                error = "remote Companion Scan servers require HTTPS to protect camera frames and session tokens";
-                return false;
-            }
-            return true;
         }
     }
 }
