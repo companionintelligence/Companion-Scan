@@ -162,7 +162,8 @@
     "test:quarantine": "node --experimental-strip-types --no-warnings --test tests/unit/node/engine_internals_quarantine.test.ts",
     "test:tap:spread": "node --experimental-strip-types --no-warnings --test tests/unit/node/tap_spread_sigma.test.ts",
     "spec:install": "npm ci --prefix spec",
-    "spec:gimbal": "node spec/quint/check-gimbal.mjs"
+    "spec:gimbal": "node spec/quint/check-gimbal.mjs",
+    "spec:world": "node spec/quint/check-world.mjs"
   },
   "dependencies": {
     "@gltf-transform/core": "^4.4.0",
