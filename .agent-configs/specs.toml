@@ -1,0 +1,193 @@
+#:schema https://raw.githubusercontent.com/companionintelligence/CI-Agent-Sync/main/integrations/verification/specs.schema.json
+# Spec registry: the formal and executable specifications this repo keeps.
+# Format: CI-Agent-Sync integrations/verification/. Check it with `agentctl spec validate --repo .`.
+#
+# The tools install from spec/ with their own lockfile: `npm run spec:install`. Quint needs QUINT_HOME seeded
+# with its evaluator (and Apalache for --deep), from the checksummed releases in CI-Agent-Sync's toolchains.yaml;
+# the gates refuse to let Quint download them unchecked. LemmaScript needs Dafny 4.11.0 (DAFNY or PATH). For
+# `agentctl spec check`, put spec/node_modules/.bin on PATH: its toolchain probe looks only in the root's node_modules/.bin and on PATH.
+version = 1
+repo = "Companion-Scan"
+
+[[spec]]
+id = "gimbal-interlock"
+title = "Gimbal motion interlock and BLE link levels: the capture, outside moves and probes, a parked scan, the link"
+kind = "state-machine"
+tool = "quint"
+status = "conformance"
+gate = "advisory"
+artefacts = [
+  "spec/quint/gimbalInterlock.qnt",
+  "spec/quint/gimbalInterlockTest.qnt",
+  "spec/quint/check-gimbal.mjs",
+  "spec/quint/traces/gimbal",
+  "tests/unit/node/gimbal_interlock_trace.test.ts",
+]
+covers = [
+  "subsystems/osmo-ble/protocol/motion_gate.mjs",
+  "subsystems/osmo-ble/protocol/link_state.mjs",
+  "subsystems/osmo-ble/server/backend.mjs",
+  "subsystems/osmo-ble/server/ble-transport.mjs",
+  "subsystems/osmo-ble/server/mcp-server.mjs",
+]
+docs = [
+  "subsystems/osmo-ble/README.md",
+  "docs/adr/0005-spatial-frames-are-established-by-geometry-and-verified-by-measurement.md",
+]
+requires = ["node", "quint"]
+check = ["npm", "run", "--silent", "spec:gimbal"]
+timeout_seconds = 300
+properties = [
+  "noOutsideDriveWhileScanSweeps",
+  "sweepingScanHasNoOutsideDriver",
+  "parkedScanHasAtMostOneOutsideDriver",
+  "parkedOutsideDriveIsAlone",
+  "closedLoopNeedsStreaming",
+  "writesNeedALink",
+  "cancelledMotionSendsOnlyStops",
+  "registeredMotionsAreOnTheCurrentLink",
+  "pulsesAreOnTheirOwnLink",
+  "firstFrameOnALinkIsAStop",
+  "noLoopWaitsPastTheAbort",
+  "streamingMeansRecentTelemetry",
+  "stopsAreNeverRefused",
+  "levelIsDerived",
+  "drainsToQuietTest (progress: the interlock never deadlocks the session)",
+]
+conformance = "tests/unit/node/gimbal_interlock_trace.test.ts replays the committed traces and, from the gate, 300 seeded quint run --mbt traces against deriveLinkState, motionRefusal on the frames' own bytes, moveRefusal, and the door rules captureStartRefusal and advanceRefusal (extracted from backend.mjs without a change in behaviour); the gate also requires the replay to refuse the planted bug's traces"
+target = "SC-2"
+notes = "One model tick is one second; STREAM_STALE_MS and NO_TELEMETRY_ABORT_MS are 3 and 6 ticks. Two outside controller slots (move-to or arc probe, and the test command probe; the MCP server is an HTTP client of these routes) beside the capture's own closed loop and POST /api/command. Each action is a stretch of code between two awaits. The replay ties the decisions to the code; the ordering of awaits, the registration and cancellation of outside motions and the run loop are the model's reading of backend.mjs, covered there by the wp-f* server tests. With no scan running the interlock does not apply, so two outside moves can drive at once (witness twoOutsideDriversWithoutAScan). The move-to and arc-probe routes check the link before reading their body, so a move can be admitted on the link after the one it was checked against (witness moveAdmittedAfterItsLinkWent). POST /api/disconnect awaits its stop before the teardown, so a drive loop's pulse can land between them and stay latched until the next connect's stop (witness latchedAtOperatorDisconnect). Planted bug: gimbalInterlockBug (a parked scan admits a second driver, as before F5-1). `node spec/quint/check-gimbal.mjs --deep` adds Apalache to depth 9 (Java 21, port 8846)."
+
+[[spec]]
+id = "world-hand-over"
+title = "World files: per-slug lock, atomic saves and their generations, the non-waiting hand-over of scans, and frame generations"
+kind = "protocol"
+tool = "quint"
+status = "conformance"
+gate = "advisory"
+artefacts = [
+  "spec/quint/worldHandOver.qnt",
+  "spec/quint/worldHandOverTest.qnt",
+  "spec/quint/check-world.mjs",
+  "spec/quint/traces/handOver",
+  "spec/quint/traces/worldLock",
+  "spec/quint/traces/frames",
+  "tests/unit/server/world_hand_over_trace.test.ts",
+  "tests/unit/server/world_lock_trace.test.ts",
+  "tests/unit/server/frame_generations_trace.test.ts",
+]
+covers = [
+  "server/world/world_lock.ts",
+  "server/world/world_hand_over.ts",
+  "server/world/scan_carry.ts",
+  "server/main.ts",
+  "server/wp-a-projects.ts",
+  "server/place_frames.ts",
+  "src/world/frame-generations.ts",
+  "src/viewer/frame-banner.ts",
+]
+docs = [
+  "docs/adr/0004-world-file-writes-are-serialized-per-slug.md",
+  "docs/adr/0011-frame-generations.md",
+]
+requires = ["node", "quint"]
+check = ["npm", "run", "--silent", "spec:world"]
+timeout_seconds = 600
+properties = [
+  "aReaderNeverSeesAPartlyWrittenWorld",
+  "generationsOnlyIncrease",
+  "aStaleSnapshotNeverOverwritesANewerGeneration",
+  "onlyTheLockHolderTouchesAWorld",
+  "queuedCyclesWaitTheirTurn",
+  "notesAreNeverLost",
+  "placementsAreNeverDestroyed",
+  "aScanThatLeftHasArrived",
+  "waitingScansStayWhereTheyWere",
+  "noPendingMeansHandedOver",
+  "keptPlacementsAreThere",
+  "sleepsAreAsDocumented",
+  "timerChainIsBounded",
+  "keptIsKeptPlacements",
+  "aStaleWriteIsNeverStored",
+  "aSupersededGenerationNeverReturns",
+  "scansOfASupersededGenerationAreListed",
+  "crossedHandOversDrainTest (progress: the non-waiting hand-over never deadlocks)",
+]
+conformance = "Three replays of committed and seeded quint run --mbt traces: tests/unit/server/world_hand_over_trace.test.ts drives the real createWorldHandOver (and scan_carry.ts) with its worlds, sleep and later stood in for; tests/unit/server/world_lock_trace.test.ts runs the real withWorldLock and tryWithWorldLock with every await gated; tests/unit/server/frame_generations_trace.test.ts calls applySpatialFrameWrite and frameChipFor. The gate also requires each replay to refuse its planted bug's traces"
+target = "SC-1"
+notes = "Three models in one file. handOverModel: House A's world hands two scans to House B's; the stand-in readWorld does what main.ts's refreshWorldScans does around handOver (evict, hand over, put back, save when changed), which the model assumes and the replay mirrors. worldLockModel: two world files, two plain cycles and two refreshes that hand scans over; a save is a temp file and a rename (writeWorldUnlocked in main.ts), each one generation; GET /worlds reads without the lock. frameModel: one Place, two phones, frame ids 1 to 3 and frames with no id, the compare-and-swap on spatialFrameRevision. Planted bugs: handOverBug (records dropped before the other world has them), worldLockTornWrite (written in place), worldLockUnlockedHandOver (ADR 0004's lost update), worldLockWaitingHandOver (the hand-over waits for the other world's lock; worldLockDeadlockTest must fail), framesWithoutRevisionCheck. Frames with no id can replace each other with nothing recorded, as the server allows (witness legacyFrameReplacedWithoutARecord). `node spec/quint/check-world.mjs --deep` adds Apalache (Java 21, port 8846)."
+
+[[spec]]
+id = "gimbal-correction-sign"
+title = "Gimbal correction sign convention: the command's direction, and a learned sign that never flips on an overshoot"
+kind = "algorithm"
+tool = "lemmascript"
+status = "conformance"
+gate = "advisory"
+artefacts = [
+  "spec/lemmascript/controlSign.ts",
+  "spec/lemmascript/proofs/controlSign.dfy",
+  "spec/lemmascript/proofs/controlSign.dfy.gen",
+  "spec/lemmascript/lemmascript.json",
+  "spec/lemmascript/LemmaScript-files.txt",
+  "spec/lemmascript/check-sign.mjs",
+  "tests/unit/node/gimbal_control_sign.test.ts",
+]
+covers = ["subsystems/osmo-ble/protocol/control.mjs"]
+requires = ["node", "lemmascript", "dafny"]
+check = ["npm", "run", "--silent", "spec:sign"]
+timeout_seconds = 300
+properties = [
+  "correctionDirection: zero inside the tolerance, the error's side times the learned sign outside it",
+  "shouldFlip: never without a previous error or on a change of side; exactly when the error grew on the same side",
+  "overshootReversesOnce",
+  "the correction's size is between the deadband floor and the speed (property test only)",
+]
+conformance = "tests/unit/node/gimbal_control_sign.test.ts compares control.mjs's computeCorrection and shouldFlipSign with the proved functions on 20,000 seeded random doubles each, and checks the proved properties on control.mjs itself"
+target = "B16"
+notes = "Proved over mathematical integers, on a twin of control.mjs's direction logic (LemmaScript does not read .mjs), so the property test is what ties the proof to the shipped doubles. Its domain is the move loop's: a finite error, a tolerance of 0 or more, a speed above 0, a learned sign of 1 or -1. POST /api/move-to passes speedDegPerSec and toleranceDeg from the request body unchecked; with a speed of 0 the loop commands nothing and then reports a jam. Not proved: that a move converges within a bounded number of ticks, which depends on how the hardware answers. Needs Dafny 4.11.0 (DAFNY or PATH)."
+
+[[spec]]
+id = "duml-codec-round-trip"
+title = "DUML codec: a decoded encoded frame is the frame, any CRC mismatch is rejected, reassembly ignores chunking"
+kind = "algorithm"
+tool = "dafny"
+status = "planned"
+covers = [
+  "subsystems/osmo-ble/protocol/duml.mjs",
+  "subsystems/osmo-ble/protocol/dome.mjs",
+]
+target = "SC-3"
+notes = "A Dafny reference model of encodeFrame, decodeFrame, the CRC8 and CRC16 parameters and FrameReassembler, with a differential test against duml.mjs on random frames and random chunkings. LemmaScript does not read .mjs."
+
+[[spec]]
+id = "events-capture-wire"
+title = "The /events WebSocket messages and the session and keyframe requests, decoded at runtime against one schema"
+kind = "data-contract"
+tool = "effect-schema"
+status = "planned"
+covers = [
+  "server/main.ts",
+  "server/wp-a-keyframes.ts",
+  "src/world/types.ts",
+  "src/capture/keyframes.ts",
+]
+docs = ["docs/factory/02-typed-event-payloads/README.md"]
+target = "SC-4"
+notes = "Effect Schema, with a self-contained JSON Schema document exported for the Quest app (Kotlin) and the Unity capture package (C#), tested against known-bad documents. Wave 02 typed the payloads at compile time only."
+
+[[spec]]
+id = "tracking-epoch-upload"
+title = "Tracking epoch and keyframe upload: when the epoch advances, and which uploads are retried"
+kind = "state-machine"
+tool = "quint"
+status = "planned"
+covers = [
+  "src/ar/frame-epoch.ts",
+  "src/capture/keyframes.ts",
+  "server/register/session_priors.ts",
+  "meta/app/src/main/java/com/companionintelligence/scan/quest/pose/EpochTracker.kt",
+  "android-xr/probe/src/main/java/com/companionintelligence/scan/androidxr/probe/TrackingGate.kt",
+]
+target = "X-3"
+notes = "A model parameterised by device class (web, headset), with ITF vectors for node --test and JUnit. The epoch advances when tracking returns after a loss or an unexplained jump passes the class's threshold, never twice within 500 ms; an upload is retried only on status 0, 5xx, 408 or 429, at most UPLOAD_RETRIES times."
