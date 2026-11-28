@@ -139,6 +139,10 @@ Realistic next steps that build directly on shipped surfaces.
 - **Close the export loop** — after Export GLB, add a `View in 3D →` link back
   into the world (reuse the video-upload open pattern); gate manual export
   behind a confirm when status is `needs-rescan`.
+- **OpenVPS for one private Place** — qualify a retained photo reference for
+  HLOC and measure return localization on independent images. Scan owns map
+  build and revocation. Compass consumes an authorized map revision and offers
+  alignment after pose checks. See the [OpenVPS pilot plan](pipelines/openvps.md).
 - **Auth / JWT** — optional token auth on the server so scans and worlds
   can be namespaced per user (minimal email + magic-link UI). No auth today.
 - **Shared world links polish** — role-scoped links
