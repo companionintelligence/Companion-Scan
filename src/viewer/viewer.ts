@@ -384,7 +384,10 @@ async function ensureSplat4DLayer(scanId: string, scan: ScanManifest) {
       // other scan kind that routinely has no GLB, so its root is exactly the
       // detached one that made the static splat invisible.
       const root = ensureScanRootInWorld(scan)
-      if (root && mesh.mesh.parent !== root) root.add(mesh.mesh)
+      if (scene && root && mesh.mesh.parent !== root) {
+        attachSparkRenderer(renderer, scene)
+        root.add(mesh.mesh)
+      }
     },
   }, withAccessToken)
   // A Place switch while the sequence loaded: it belongs to the Place that was left.
@@ -610,7 +613,6 @@ function initWorldScene(): void {
 
   scene = new THREE.Scene()
   scene.name = 'Companion Scan World'
-  attachSparkRenderer(renderer, scene)
 
   const ambient = new THREE.AmbientLight(0xffffff, 0.62)
   const sun = new THREE.DirectionalLight(0xffffff, 1.15)
@@ -2882,11 +2884,7 @@ async function refreshSplatLayerPanel(scanId: string): Promise<void> {
       if (fetched) {
         layer = fetched
         scanSplatLayers.set(scanId, layer)
-        if (layer.loaded) {
-          const root = ensureScanRootInWorld(scan)
-          if (root) root.add(layer.loaded.mesh)
-          layer.loaded.mesh.visible = scanSplatVisible
-        }
+        if (layer.loaded) layer.loaded.mesh.visible = scanSplatVisible
       }
     } catch (e) {
       if (gen !== worldGen) return
@@ -2903,7 +2901,10 @@ async function refreshSplatLayerPanel(scanId: string): Promise<void> {
   // unchanged) costs nothing.
   if (layer?.loaded) {
     const root = ensureScanRootInWorld(scan)
-    if (root && layer.loaded.mesh.parent !== root) root.add(layer.loaded.mesh)
+    if (scene && root && layer.loaded.mesh.parent !== root) {
+      attachSparkRenderer(renderer, scene)
+      root.add(layer.loaded.mesh)
+    }
   }
 
   // A person capture may also carry a 4D sequence. Attached here rather than in
@@ -3444,11 +3445,12 @@ async function addSplat(source: Parameters<typeof loadSplat>[0]): Promise<void> 
   try {
     const loaded = await loadSplat(source)
     // A Place switch while the splat loaded: it belongs to the scene that was replaced. Free it.
-    if (gen !== worldGen) {
+    if (gen !== worldGen || !scene) {
       disposeSplat(loaded)
+      if (gen === worldGen) throw new Error('scene not ready')
       return
     }
-    if (!scene) throw new Error('scene not ready')
+    attachSparkRenderer(renderer, scene)
     scene.add(loaded.mesh)
     loadedSplats.set(loaded.id, loaded)
     if (status) status.textContent = ''

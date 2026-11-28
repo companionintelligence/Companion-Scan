@@ -1,5 +1,6 @@
 import type { CheckedBy, FitSummary, TapEvidence } from './calibration-evidence.ts'
 import type { ScaleKind, ScaleMode } from './scale-mode.ts'
+import type { CaptureGuidanceCode } from '../shared/capture-guidance.ts'
 
 export type LayerType =
   | 'points'
@@ -1063,6 +1064,8 @@ export interface ScanQualitySummary {
   trackingLost: boolean
   status: ScanReviewStatus
   recommendations: string[]
+  /** Ordered capture signals behind recommendations. Older captures may omit this field. */
+  guidanceCodes?: CaptureGuidanceCode[]
   capturedAt: string
 }
 

@@ -22,10 +22,8 @@
  *    yields an arbitrary-unit number wearing a metre suffix.
  *  - **Trained splats — not measurable at all.** SparkJS's `SplatMesh` extends
  *    `SplatGenerator extends THREE.Object3D`, so the filter in `handleClick`
- *    never returns one. Note the inversion this leaves: `SparkRenderer` *does*
- *    extend `THREE.Mesh` (a 2x2 double-sided quad at the scene origin, added
- *    unconditionally by `attachSparkRenderer`) and is NOT excluded here, so a
- *    ray through the origin can snap to it instead of to real geometry.
+ *    never returns one. `attachSparkRenderer` suppresses ray hits against the
+ *    compositor mesh, whose triangles are only used to draw splats.
  *
  * Making the readout state its own frame — the way `splat-layer.ts`'s
  * `formatAlignmentStatus` does for a splat — is unfinished work, not a decision.

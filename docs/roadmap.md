@@ -149,6 +149,12 @@ Realistic next steps that build directly on shipped surfaces.
   `merge-points` workers (alignment is a local-grid placeholder today).
 - **Multi-scan align + merge UX** — surface the manual placement and
   align/merge flow in the editor beyond code comments; wire the Open3D refiner.
+- **Capture evidence for assistants** — publish typed quality signals with the
+  existing scan summary, then expose a read-only view of the capture, jobs and
+  reconstruction evidence. See the [capture and editor integration plan](product/CAPTURE_ENGINE_INTEGRATIONS.md).
+- **Spark editor on phone and desktop** — keep the shared editor renderer and
+  establish device budgets for compressed assets, alignment, and repeated Place
+  switches. See the [capture and editor integration plan](product/CAPTURE_ENGINE_INTEGRATIONS.md#spark-in-the-editor).
 
 ---
 
@@ -166,6 +172,9 @@ Larger bets that are not yet scoped for delivery.
   (e.g. Redis Streams) with CPU/GPU worker capability advertising.
 - **AR glasses support** — adapt the provider for WebXR hand-tracking headsets;
   detection pins become volumetric objects.
+- **Quest live inference** — compare a separate, opt-in WebRTC inference stream
+  with the existing pose-paired keyframe upload and on-device inference.
+  See the [capture and editor integration plan](product/CAPTURE_ENGINE_INTEGRATIONS.md#quest-capture-and-live-inference).
 - **Depth-backed room models** — persist phone depth with frame pose and
   intrinsics, add confidence-aware reconstruction, and replace the semantic
   placeholder with a normalized room model. See the [mobile room-scan parity
