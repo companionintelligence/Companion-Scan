@@ -17,15 +17,22 @@
  * landed.)
  */
 import * as THREE from 'three'
-import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark'
+import type { SplatMesh } from '@sparkjsdev/spark'
 import { isMatrix16 } from '../world/mat4.ts'
 
-/** Creates the scene's SparkRenderer and adds it. Call once per scene. */
-export function attachSparkRenderer(renderer: THREE.WebGLRenderer, scene: THREE.Scene): SparkRenderer {
-  const spark = new SparkRenderer({ renderer })
+let sparkModule: typeof import('@sparkjsdev/spark') | undefined
+const scenesWithSpark = new WeakSet<THREE.Scene>()
+
+/** Attach the compositor when the scene receives its first decoded splat. */
+export function attachSparkRenderer(renderer: THREE.WebGLRenderer, scene: THREE.Scene): void {
+  if (scenesWithSpark.has(scene)) return
+  if (!sparkModule) throw new Error('Load a splat before attaching the Spark renderer')
+  const spark = new sparkModule.SparkRenderer({ renderer })
   spark.name = 'spark-renderer'
+  // Spark's compositor mesh draws the splats. Its own triangles are not scene geometry.
+  spark.raycast = () => {}
   scene.add(spark)
-  return spark
+  scenesWithSpark.add(scene)
 }
 
 export interface LoadedSplat {
@@ -47,12 +54,19 @@ let nextSplatId = 0
 
 /** Loads a splat and resolves once it's ready to render (or rejects on failure). */
 export async function loadSplat(source: SplatSource): Promise<LoadedSplat> {
+  // Ordinary geometry and measurement can start before Spark's worker bundle is needed.
+  const { SplatMesh } = (sparkModule ??= await import('@sparkjsdev/spark'))
   const label = source.kind === 'url' ? (source.url.split('/').pop() || source.url) : source.fileName
   const mesh = source.kind === 'url'
     ? new SplatMesh({ url: source.url })
     : new SplatMesh({ fileBytes: source.fileBytes, fileName: source.fileName })
   mesh.name = `splat: ${label}`
-  await mesh.initialized
+  try {
+    await mesh.initialized
+  } catch (error) {
+    mesh.dispose()
+    throw error
+  }
   return { id: `splat-${nextSplatId++}`, label, mesh }
 }
 

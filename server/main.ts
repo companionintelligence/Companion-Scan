@@ -244,6 +244,7 @@ import {
 } from './memory_push.ts'
 import { calibrationFromMeta, calibrationGroundYFromMeta, calibrationScaleFromMeta, asOutsidePlaceFrame, withReplacedCalibration } from './calibration_fields.ts'
 import { frameEpochFieldsFromMeta } from './frame_epoch_fields.ts'
+import { readCaptureGuidanceCodes } from '../src/shared/capture-guidance.ts'
 import {
   PlacementRefused,
   cleanTransform,
@@ -2689,6 +2690,7 @@ function qualitySummaryFromMeta(meta: Record<string, unknown>): ScanQualitySumma
   if (embedded && typeof embedded === 'object') {
     const summary = embedded as Partial<ScanQualitySummary>
     if (typeof summary.coverageScore === 'number' && typeof summary.status === 'string') {
+      const guidanceCodes = readCaptureGuidanceCodes(summary.guidanceCodes)
       return {
         coverageScore: summary.coverageScore,
         coverageText: summary.coverageText ?? coverageLabel(summary.coverageScore),
@@ -2705,6 +2707,7 @@ function qualitySummaryFromMeta(meta: Record<string, unknown>): ScanQualitySumma
         recommendations: Array.isArray(summary.recommendations)
           ? summary.recommendations.filter((item): item is string => typeof item === 'string')
           : asStringArray(meta['qualityRecommendations']),
+        ...(guidanceCodes === undefined ? {} : { guidanceCodes }),
         capturedAt: summary.capturedAt ?? asString(meta['capturedAt']) ?? new Date().toISOString(),
         // Whether tracking was interrupted while the scan was recorded, and whether its cloud spans more than one stretch of it.
         ...frameEpochFieldsFromMeta(meta),

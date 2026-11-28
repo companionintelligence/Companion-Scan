@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ScanQualityMonitor } from '../../../src/capture/quality-monitor.ts'
+import { CAPTURE_GUIDANCE } from '../../../src/shared/capture-guidance.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8')
@@ -22,6 +23,7 @@ const read = (path: string) => readFileSync(join(ROOT, path), 'utf8')
 test('C1-8: a sparse point cloud is told to collect more before export', () => {
   const summary = new ScanQualityMonitor().summary({ pointCount: 10, detectionCount: 0, poseCount: 0, keyframeCount: 1 })
   assert.ok(summary.recommendations.includes('Collect more tracking points before export'))
+  assert.ok(summary.guidanceCodes?.includes('low-point-count'))
 })
 
 test('C1-8: a full point cloud is not asked for more', () => {
@@ -30,14 +32,11 @@ test('C1-8: a full point cloud is not asked for more', () => {
 })
 
 test('C1-8: the reflective-surfaces advice names the action to take', () => {
-  const quality = read('src/capture/quality-monitor.ts')
-  assert.match(quality, /recommendations\.push\('Review reflective surfaces for false geometry'\)/)
-  assert.doesNotMatch(quality, /'Reflective surfaces can add false geometry'/, 'the line that named no action is gone')
+  assert.equal(CAPTURE_GUIDANCE['reflective-surfaces'], 'Review reflective surfaces for false geometry')
 })
 
 test('C1-8: the advice lines are short instructions, with no sentence stop and no engine jargon', () => {
-  const quality = read('src/capture/quality-monitor.ts')
-  const lines = [...quality.matchAll(/recommendations\.push\('([^']+)'\)/g)].map((m) => m[1])
+  const lines = Object.values(CAPTURE_GUIDANCE)
   assert.ok(lines.length >= 7, 'the advice list is still there')
   for (const line of lines) {
     assert.ok(!line.endsWith('.'), `no sentence stop in advice line: ${line}`)

@@ -513,10 +513,11 @@ for (const entry of ['src/world/types.ts', 'src/world/spatial-frame.ts', 'src/wo
   })
 }
 
-test('the hub imports the leaf and the unit module, and the leaf imports nothing', () => {
+test('the hub imports the expected shared modules, and the calibration and guidance leaves import nothing', () => {
   const hub = importsOf(join(ROOT, 'src/world/types.ts')).map((file) => file.slice(ROOT.length + 1)).sort()
-  assert.deepEqual(hub, ['src/world/calibration-evidence.ts', 'src/world/manifests.ts', 'src/world/scale-mode.ts'])
+  assert.deepEqual(hub, ['src/shared/capture-guidance.ts', 'src/world/calibration-evidence.ts', 'src/world/manifests.ts', 'src/world/scale-mode.ts'])
   assert.deepEqual(importsOf(join(ROOT, 'src/world/calibration-evidence.ts')), [])
+  assert.deepEqual(importsOf(join(ROOT, 'src/shared/capture-guidance.ts')), [])
 })
 
 test('source shape: the two modules that build a tap and a fit re-export the leaf\'s types under the names they always had', () => {

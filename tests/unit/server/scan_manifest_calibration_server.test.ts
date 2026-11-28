@@ -543,7 +543,10 @@ function sidecarWithFrames(scanName: string, frames: { frameShifts: number; mixe
     status: frames && frames.frameShifts > 0 ? 'needs-review' : 'ready',
     recommendations: frames && frames.frameShifts > 0 ? ['Tracking was interrupted: parts may be shifted'] : [],
     capturedAt: '2026-11-17T09:30:00.000Z',
-    ...(frames ? { frameShifts: frames.frameShifts } : {}),
+    ...(frames ? {
+      frameShifts: frames.frameShifts,
+      guidanceCodes: frames.frameShifts > 0 ? ['tracking-interrupted', 'unknown', 'tracking-interrupted'] : [],
+    } : {}),
   }
   if (frames) base['frameEpochs'] = { version: 1, baseEpoch: 0, calibrationEpoch: 0, currentEpoch: frames.frameShifts, mixedEpochs: frames.mixedEpochs }
   return JSON.stringify(base)
@@ -562,14 +565,17 @@ test('real server: a scan whose tracking was interrupted reaches the editor with
       assertEquals(interrupted?.frameShifts, 2, 'the scan list reads "Tracking interrupted 2 times" from this')
       assertEquals(interrupted?.mixedEpochs, true)
       assertEquals(interrupted?.status, 'needs-review', 'the verdict the phone gave is untouched')
+      assertEquals(interrupted?.guidanceCodes, ['tracking-interrupted'])
 
       const ended = byName(world, 'ended-at-it').qualitySummary
       assertEquals(ended?.frameShifts, 0, 'counted, and none: a scan that was ended at the interruption says so')
       assertEquals(ended?.mixedEpochs, false)
+      assertEquals(ended?.guidanceCodes, [])
 
       const before = byName(world, 'before-epochs').qualitySummary
       assert(before, 'the scan has a summary')
       assert(!('frameShifts' in before) && !('mixedEpochs' in before), 'a scan nobody counted has neither key')
+      assert(!('guidanceCodes' in before), 'an older summary has no structured guidance')
       assertEquals(before?.coverageScore, 0.74, 'and the rest of its summary is as it was')
     } finally {
       await server.stop()

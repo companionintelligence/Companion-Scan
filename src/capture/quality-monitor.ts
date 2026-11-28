@@ -24,6 +24,7 @@
 import type { ARProvider } from '../ar/provider'
 import { trackingIsUsable } from '../ar/tracking-quality.ts'
 import type { PointCloud } from '../scene/pointcloud'
+import { CAPTURE_GUIDANCE, type CaptureGuidanceCode } from '../shared/capture-guidance.ts'
 import type { ScanQualitySummary } from '../world/types'
 
 export type DriftRisk = 'low' | 'medium' | 'high'
@@ -383,7 +384,7 @@ export class ScanQualityMonitor {
     const trackingLost = snap?.trackingLostSustained ?? false
     const frameShifts = Number.isFinite(input.frameShifts) ? Math.max(0, Math.floor(input.frameShifts as number)) : 0
     const limitedMs = Number.isFinite(input.limitedMs) ? Math.max(0, Math.round(input.limitedMs as number)) : undefined
-    const recommendations: string[] = []
+    const guidanceCodes: CaptureGuidanceCode[] = []
 
     // Each line says what to do. Wave 1 shortened these; the two that had lost
     // their action (before export, review) are restored here.
@@ -392,35 +393,33 @@ export class ScanQualityMonitor {
     // frame. What the code knows is that the runtime lost tracking and got it back, or
     // reported or showed a shift of its origin; whether anything actually moved it does not
     // know (see the top of src/ar/frame-epoch.ts), so the line says "may".
-    if (frameShifts > 0) recommendations.push('Tracking was interrupted: parts may be shifted')
-    if (input.closureExceeded === true) recommendations.push('A drift check found a gap: parts may be shifted')
+    if (frameShifts > 0) guidanceCodes.push('tracking-interrupted')
+    if (input.closureExceeded === true) guidanceCodes.push('closure-gap')
     // The verdict below is 'needs-rescan' for this, so it says what to do about it.
     if (trackingLost) {
-      recommendations.push(snap?.trackingNotStarted
-        ? 'Tracking has not started: wait for it, then scan'
-        : 'Tracking is lost: hold still until it returns')
+      guidanceCodes.push(snap?.trackingNotStarted ? 'tracking-not-started' : 'tracking-lost')
     }
-    if (input.pointCount < 150) recommendations.push('Collect more tracking points before export')
-    if (coverageScore < 0.55) recommendations.push('Sweep the room more slowly')
-    if (missingAreas >= 4) recommendations.push('Rescan sparse floor areas from another angle')
+    if (input.pointCount < 150) guidanceCodes.push('low-point-count')
+    if (coverageScore < 0.55) guidanceCodes.push('low-coverage')
+    if (missingAreas >= 4) guidanceCodes.push('sparse-floor')
     if (this._tooDarkSeen > 0) {
       // A different sentence, because it is a different problem: at this tier
       // the frames carried no trackable signal, so "revisit dark surfaces"
       // would understate it.
-      recommendations.push('Too dark to track: turn on a light and rescan')
+      guidanceCodes.push('too-dark')
     } else if (this._counts.lowLightFrames > 0) {
-      recommendations.push('Add light, or check the dark surfaces')
+      guidanceCodes.push('low-light')
     }
-    if (this._counts.fastMotionEvents > 0) recommendations.push('Move slower to reduce drift')
-    if (this._counts.reflectiveWarnings > 0) recommendations.push('Review reflective surfaces for false geometry')
+    if (this._counts.fastMotionEvents > 0) guidanceCodes.push('fast-motion')
+    if (this._counts.reflectiveWarnings > 0) guidanceCodes.push('reflective-surfaces')
     // Said only while frames are being sent and none has reached the server: that is something the code has seen and the
     // person can act on. Not sending at all is not a defect of the scan, so it says nothing and does not move the verdict.
-    if (input.keyframesOn === true && input.keyframeCount === 0) recommendations.push('No camera frame has reached your server yet')
+    if (input.keyframesOn === true && input.keyframeCount === 0) guidanceCodes.push('no-uploaded-keyframe')
 
     let status: ScanQualitySummary['status'] = 'ready'
     if (input.pointCount < 75 || coverageScore < 0.25 || trackingLost) {
       status = 'needs-rescan'
-    } else if (recommendations.length > 0 || coverageScore < 0.8) {
+    } else if (guidanceCodes.length > 0 || coverageScore < 0.8) {
       // Any frame shift pushed its line above, so it lands here: a scan is not 'ready' while
       // parts of it may be in another frame.
       status = 'needs-review'
@@ -444,7 +443,8 @@ export class ScanQualityMonitor {
       missingAreas,
       trackingLost,
       status,
-      recommendations,
+      recommendations: guidanceCodes.map((code) => CAPTURE_GUIDANCE[code]),
+      guidanceCodes,
       capturedAt: new Date().toISOString(),
     }
   }
